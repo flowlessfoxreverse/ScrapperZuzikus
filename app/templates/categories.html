@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Category Editor</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Configuration</p>
+          <h1>Category Editor</h1>
+          <p class="subtle">OSM tag pairs drive Overpass discovery. Search terms are stored for later search-engine enrichment.</p>
+        </div>
+        <a class="ghost-button" href="/">Back</a>
+      </section>
+
+      <section class="grid category-grid">
+        <div class="panel">
+          <h2>Existing Categories</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Label</th>
+                <th>Vertical</th>
+                <th>OSM Tags</th>
+                <th>Search Terms</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for category in categories %}
+              <tr>
+                <td>{{ category.label }}</td>
+                <td>{{ category.vertical.value }}</td>
+                <td>{{ category.osm_tags }}</td>
+                <td>{{ category.search_terms }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="panel">
+          <h2>Add Category</h2>
+          <form action="/categories" method="post" class="stack">
+            <label>
+              <span>Slug</span>
+              <input type="text" name="slug" required />
+            </label>
+            <label>
+              <span>Label</span>
+              <input type="text" name="label" required />
+            </label>
+            <label>
+              <span>Vertical</span>
+              <select name="vertical">
+                <option value="vehicle">vehicle</option>
+                <option value="tourism">tourism</option>
+              </select>
+            </label>
+            <label>
+              <span>OSM Tags</span>
+              <textarea name="osm_tags" rows="5" placeholder="amenity=car_rental&#10;shop=travel_agency"></textarea>
+            </label>
+            <label>
+              <span>Search Terms</span>
+              <input type="text" name="search_terms" placeholder="travel agency, tour operator" />
+            </label>
+            <button type="submit">Save Category</button>
+          </form>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
+

@@ -1,0 +1,29 @@
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+
+from app.config import get_settings
+from app.db import Base, SessionLocal, engine
+from app.routers.api import router as api_router
+from app.routers.ui import router as ui_router
+from app.seed import seed_defaults
+
+
+settings = get_settings()
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    with SessionLocal() as session:
+        seed_defaults(session)
+    yield
+
+
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+app.include_router(ui_router)
+app.include_router(api_router)

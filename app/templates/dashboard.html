@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scrapper Zuzikus</title>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Lead Discovery Console</p>
+          <h1>Scrapper Zuzikus</h1>
+          <p class="subtle">Region-scoped discovery, crawl tracking, email extraction, and form flags in one place.</p>
+        </div>
+        <div class="hero-actions">
+          <a class="ghost-button" href="/regions">Edit Regions</a>
+          <a class="ghost-button" href="/categories">Edit Categories</a>
+        </div>
+      </section>
+
+      <section class="panel">
+        <form action="/runs" method="post" class="run-form">
+          <label>
+            <span>Region</span>
+            <select name="region_id">
+              {% for region in regions %}
+              <option value="{{ region.id }}" {% if region.id == selected_region %}selected{% endif %}>{{ region.name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+
+          <fieldset>
+            <legend>Categories</legend>
+            <div class="checkbox-grid">
+              {% for category in categories %}
+              <label class="checkbox-card">
+                <input type="checkbox" name="category_ids" value="{{ category.id }}" checked />
+                <span>{{ category.label }}</span>
+                <small>{{ category.vertical.value }}</small>
+              </label>
+              {% endfor %}
+            </div>
+          </fieldset>
+
+          <button type="submit">Run Scrape</button>
+        </form>
+      </section>
+
+      <section class="grid">
+        <div class="panel">
+          <div class="section-heading">
+            <h2>Recent Runs</h2>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Status</th>
+                <th>Queries</th>
+                <th>Discovered</th>
+                <th>Crawled</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for run in runs %}
+              <tr>
+                <td>{{ run.id }}</td>
+                <td><span class="badge">{{ run.status.value }}</span></td>
+                <td>{{ run.overpass_queries_used }}</td>
+                <td>{{ run.discovered_count }}</td>
+                <td>{{ run.crawled_count }}</td>
+              </tr>
+              {% else %}
+              <tr><td colspan="5">No runs yet.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="panel">
+          <div class="section-heading">
+            <h2>Emails In Region</h2>
+            <span>{{ emails|length }} records</span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Email</th>
+                <th>Company</th>
+                <th>Website</th>
+                <th>Validation</th>
+                <th>Form</th>
+                <th>Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in emails %}
+              <tr>
+                <td>{{ item.email }}</td>
+                <td>{{ item.company_name }}</td>
+                <td>
+                  {% if item.company_website %}
+                  <a href="{{ item.company_website }}" target="_blank" rel="noreferrer">{{ item.company_website }}</a>
+                  {% else %}
+                  <span class="subtle">No website</span>
+                  {% endif %}
+                </td>
+                <td id="email-status-{{ item.id }}">
+                  {% include "partials/email_status.html" %}
+                </td>
+                <td>
+                  {% if item.has_contact_form %}
+                  <span class="badge warn">form detected</span>
+                  {% else %}
+                  <span class="badge muted">none</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <div>{{ item.source_type }}</div>
+                  <small class="subtle">{{ item.crawl_status }}</small>
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="6">No emails yet for this region.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

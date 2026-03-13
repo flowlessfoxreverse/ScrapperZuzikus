@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Region Editor</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Configuration</p>
+          <h1>Region Editor</h1>
+          <p class="subtle">Regions are country-level by default. Country code must match the ISO code used in OSM relations.</p>
+        </div>
+        <a class="ghost-button" href="/">Back</a>
+      </section>
+
+      <section class="grid category-grid">
+        <div class="panel">
+          <h2>Available Regions</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Code</th>
+                <th>Country Code</th>
+                <th>OSM Admin Level</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for region in regions %}
+              <tr>
+                <td>{{ region.name }}</td>
+                <td>{{ region.code }}</td>
+                <td>{{ region.country_code }}</td>
+                <td>{{ region.osm_admin_level }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="panel">
+          <h2>Add Region</h2>
+          <form action="/regions" method="post" class="stack">
+            <label>
+              <span>Code</span>
+              <input type="text" name="code" placeholder="TH" required />
+            </label>
+            <label>
+              <span>Name</span>
+              <input type="text" name="name" placeholder="Thailand" required />
+            </label>
+            <label>
+              <span>Country Code</span>
+              <input type="text" name="country_code" placeholder="TH" required />
+            </label>
+            <label>
+              <span>OSM Admin Level</span>
+              <input type="number" name="osm_admin_level" value="2" min="2" max="10" required />
+            </label>
+            <button type="submit">Save Region</button>
+          </form>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
