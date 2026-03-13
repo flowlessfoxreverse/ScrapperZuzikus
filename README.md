@@ -47,11 +47,14 @@ docker compose up --build -d
 - The app connects to Postgres using `DATABASE_URL`
 - The app connects to Redis using `REDIS_URL`
 - Redis is password-protected with `REDIS_PASSWORD`
+- Production defaults keep `APP_RELOAD=0` and `WORKER_PROCESSES=1`, `WORKER_THREADS=1`
+- If you scale scraping later, add separate proxy-backed worker pools with distinct egress instead of raising concurrency against the public Overpass endpoint
 
 Example local `.env` values:
 
 ```env
 APP_HOST_PORT=8000
+APP_RELOAD=0
 POSTGRES_DB=scrapperzuzikus
 POSTGRES_USER=scrapper
 POSTGRES_PASSWORD=use-a-strong-password
@@ -60,6 +63,8 @@ DATABASE_URL=postgresql+psycopg://scrapper:use-a-strong-password@db:5432/scrappe
 REDIS_PASSWORD=use-a-different-strong-password
 REDIS_HOST_PORT=6380
 REDIS_URL=redis://:use-a-different-strong-password@redis:6379/0
+WORKER_PROCESSES=1
+WORKER_THREADS=1
 ```
 
 ## Notes

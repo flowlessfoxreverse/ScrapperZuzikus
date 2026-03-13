@@ -3,7 +3,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: >
+      sh -c "if [ \"$APP_RELOAD\" = \"1\" ]; then
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload;
+      else
+      uvicorn app.main:app --host 0.0.0.0 --port 8000;
+      fi"
     env_file:
       - .env
     ports:
@@ -18,7 +23,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: python -m dramatiq app.tasks
+    command: python -m dramatiq --processes ${WORKER_PROCESSES:-1} --threads ${WORKER_THREADS:-1} app.tasks
     env_file:
       - .env
     volumes:

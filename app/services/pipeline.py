@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -124,6 +126,7 @@ def execute_run(session: Session, run_id: int, overpass_cap: int) -> None:
     if region is None:
         run.status = RunStatus.FAILED
         run.note = "Region not found."
+        run.finished_at = datetime.now(timezone.utc)
         session.commit()
         return
 
@@ -142,6 +145,7 @@ def execute_run(session: Session, run_id: int, overpass_cap: int) -> None:
         if not allowed:
             run.status = RunStatus.SKIPPED
             run.note = f"Daily Overpass cap reached ({usage.units_used}/{usage.cap})."
+            run.finished_at = datetime.now(timezone.utc)
             break
 
         try:
@@ -149,6 +153,7 @@ def execute_run(session: Session, run_id: int, overpass_cap: int) -> None:
         except Exception as exc:
             run.status = RunStatus.FAILED
             run.note = str(exc)[:2000]
+            run.finished_at = datetime.now(timezone.utc)
             session.add(run)
             session.commit()
             return
@@ -175,4 +180,5 @@ def execute_run(session: Session, run_id: int, overpass_cap: int) -> None:
     run.discovered_count = discovered
     run.crawled_count = crawled
     run.overpass_queries_used = queries_used
+    run.finished_at = datetime.now(timezone.utc)
     session.commit()

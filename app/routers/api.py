@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import Category, Email, Region, RunCategory, ScrapeRun, ValidationStatus
 from app.schemas import CategoryCreate, CategoryOut, EmailStatusUpdate, RegionCreate, RegionOut, RunCreate, RunOut
+from app.services.runs import find_active_run
 from app.tasks import run_scrape
 
 
@@ -59,6 +60,12 @@ def create_run(payload: RunCreate, db: Session = Depends(get_db)) -> ScrapeRun:
         raise HTTPException(status_code=404, detail="Region not found.")
     if not payload.category_ids:
         raise HTTPException(status_code=400, detail="Select at least one category.")
+    active_run = find_active_run(db, payload.region_id)
+    if active_run is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Run {active_run.id} is already {active_run.status.value} for this region.",
+        )
 
     run = ScrapeRun(region_id=payload.region_id)
     db.add(run)

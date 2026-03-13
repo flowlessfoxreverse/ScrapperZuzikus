@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import Category, Company, Email, Region, RunCategory, ScrapeRun, ValidationStatus, Vertical
 from app.schemas import EmailRow
+from app.services.runs import find_active_run
 from app.tasks import run_scrape
 
 
@@ -48,7 +49,12 @@ def build_email_rows(db: Session, region_id: int | None = None) -> list[EmailRow
 
 
 @router.get("/", response_class=HTMLResponse)
-def dashboard(request: Request, region_id: int | None = None, db: Session = Depends(get_db)) -> HTMLResponse:
+def dashboard(
+    request: Request,
+    region_id: int | None = None,
+    message: str | None = None,
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
     regions = db.scalars(select(Region).where(Region.is_active.is_(True)).order_by(Region.name)).all()
     categories = db.scalars(select(Category).where(Category.is_active.is_(True)).order_by(Category.vertical, Category.label)).all()
     selected_region = region_id or (regions[0].id if regions else None)
@@ -63,6 +69,7 @@ def dashboard(request: Request, region_id: int | None = None, db: Session = Depe
             "selected_region": selected_region,
             "emails": emails,
             "runs": runs,
+            "message": message,
             "validation_statuses": list(ValidationStatus),
         },
     )
@@ -74,6 +81,13 @@ def queue_run(
     category_ids: list[int] = Form(...),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    active_run = find_active_run(db, region_id)
+    if active_run is not None:
+        return RedirectResponse(
+            url=f"/?region_id={region_id}&message=Run+{active_run.id}+is+already+{active_run.status.value}+for+this+region.",
+            status_code=303,
+        )
+
     run = ScrapeRun(region_id=region_id)
     db.add(run)
     db.flush()

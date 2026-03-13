@@ -22,6 +22,9 @@
       </section>
 
       <section class="panel">
+        {% if message %}
+        <div class="notice">{{ message }}</div>
+        {% endif %}
         <form action="/runs" method="post" class="run-form">
           <label>
             <span>Region</span>

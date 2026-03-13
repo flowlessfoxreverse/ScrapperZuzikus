@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     app_name: str = "Scrapper Zuzikus"
     app_host: str = "0.0.0.0"
     app_port: int = 8000
+    app_reload: bool = False
     app_host_port: int = 8000
     postgres_db: str = "scrapperzuzikus"
     postgres_user: str = "scrapper"
@@ -28,6 +29,8 @@ class Settings(BaseSettings):
     request_timeout_seconds: int = 20
     max_pages_per_site: int = 12
     max_emails_per_company: int = 10
+    worker_processes: int = 1
+    worker_threads: int = 1
 
 
 @lru_cache

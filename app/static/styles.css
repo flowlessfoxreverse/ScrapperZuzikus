@@ -79,6 +79,16 @@ legend {
   box-shadow: var(--shadow);
 }
 
+.notice {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid #f59e0b;
+  border-radius: 14px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 14px;
+}
+
 .grid {
   grid-template-columns: 320px 1fr;
 }
