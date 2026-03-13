@@ -23,11 +23,21 @@ def get_or_create_daily_usage(session: Session, provider: str, cap: int) -> Dail
 
 
 def can_consume(session: Session, provider: str, cap: int, units: int = 1) -> tuple[bool, DailyUsage]:
+    if cap <= 0:
+        usage = get_or_create_daily_usage(session, provider=provider, cap=cap)
+        return True, usage
     usage = get_or_create_daily_usage(session, provider=provider, cap=cap)
     return (usage.units_used + units) <= usage.cap, usage
 
 
 def consume_units(session: Session, provider: str, cap: int, units: int = 1) -> DailyUsage:
+    if cap <= 0:
+        usage = get_or_create_daily_usage(session, provider=provider, cap=cap)
+        usage.cap = cap
+        session.add(usage)
+        session.commit()
+        session.refresh(usage)
+        return usage
     usage = get_or_create_daily_usage(session, provider=provider, cap=cap)
     usage.units_used += units
     usage.cap = cap
@@ -35,4 +45,3 @@ def consume_units(session: Session, provider: str, cap: int, units: int = 1) -> 
     session.commit()
     session.refresh(usage)
     return usage
-

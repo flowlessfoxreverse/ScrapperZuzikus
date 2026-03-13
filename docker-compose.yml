@@ -18,6 +18,7 @@ services:
     depends_on:
       - db
       - redis
+      - overpass
 
   worker:
     build:
@@ -31,6 +32,7 @@ services:
     depends_on:
       - db
       - redis
+      - overpass
 
   db:
     image: postgres:16-alpine
@@ -51,5 +53,22 @@ services:
     ports:
       - "${REDIS_HOST_PORT:-6380}:6379"
 
+  overpass:
+    image: wiktorn/overpass-api:0.7.62
+    environment:
+      OVERPASS_META: "no"
+      OVERPASS_MODE: ${OVERPASS_MODE:-init}
+      OVERPASS_PLANET_URL: ${OVERPASS_PLANET_URL}
+      OVERPASS_DIFF_URL: ${OVERPASS_DIFF_URL}
+      OVERPASS_PLANET_PREPROCESS: ${OVERPASS_PLANET_PREPROCESS:-}
+      OVERPASS_RULES_LOAD: ${OVERPASS_RULES_LOAD:-10}
+      OVERPASS_UPDATE_SLEEP: ${OVERPASS_UPDATE_SLEEP:-3600}
+    ports:
+      - "${OVERPASS_HOST_PORT:-12346}:80"
+    volumes:
+      - overpassdb:/db
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  overpassdb:

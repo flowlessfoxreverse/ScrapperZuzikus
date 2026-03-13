@@ -62,6 +62,7 @@ class Region(Base):
 
     companies: Mapped[list["Company"]] = relationship(back_populates="region")
     runs: Mapped[list["ScrapeRun"]] = relationship(back_populates="region")
+    category_states: Mapped[list["RegionCategoryState"]] = relationship(back_populates="region")
 
 
 class Category(Base):
@@ -78,6 +79,7 @@ class Category(Base):
 
     companies: Mapped[list["CompanyCategory"]] = relationship(back_populates="category")
     run_items: Mapped[list["RunCategory"]] = relationship(back_populates="category")
+    region_states: Mapped[list["RegionCategoryState"]] = relationship(back_populates="category")
 
 
 class Company(Base):
@@ -234,3 +236,23 @@ class DailyUsage(Base):
     units_used: Mapped[int] = mapped_column(Integer, default=0)
     cap: Mapped[int] = mapped_column(Integer)
     metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class RegionCategoryState(Base):
+    __tablename__ = "region_category_states"
+    __table_args__ = (
+        UniqueConstraint("region_id", "category_id", name="uq_region_category_state"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    region_id: Mapped[int] = mapped_column(ForeignKey("regions.id"), index=True)
+    category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"), index=True)
+    last_run_id: Mapped[int | None] = mapped_column(ForeignKey("scrape_runs.id"), nullable=True)
+    last_discovery_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_discovery_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_result_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(32), default="never_run")
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    region: Mapped["Region"] = relationship(back_populates="category_states")
+    category: Mapped["Category"] = relationship(back_populates="region_states")

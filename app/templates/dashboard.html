@@ -65,6 +65,7 @@
                 <th>Queries</th>
                 <th>Discovered</th>
                 <th>Crawled</th>
+                <th>Note</th>
               </tr>
             </thead>
             <tbody>
@@ -75,9 +76,10 @@
                 <td>{{ run.overpass_queries_used }}</td>
                 <td>{{ run.discovered_count }}</td>
                 <td>{{ run.crawled_count }}</td>
+                <td><small class="subtle">{{ run.note or "-" }}</small></td>
               </tr>
               {% else %}
-              <tr><td colspan="5">No runs yet.</td></tr>
+              <tr><td colspan="6">No runs yet.</td></tr>
               {% endfor %}
             </tbody>
           </table>

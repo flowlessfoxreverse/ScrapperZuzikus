@@ -23,8 +23,10 @@ class Settings(BaseSettings):
     redis_password: str = "change-me-redis"
     redis_host_port: int = 6380
     redis_url: str = "redis://redis:6379/0"
-    overpass_url: str = "https://overpass-api.de/api/interpreter"
-    overpass_daily_query_cap: int = 80
+    overpass_url: str = "http://overpass/api/interpreter"
+    overpass_daily_query_cap: int = 0
+    discovery_cooldown_hours: int = 168
+    crawl_recrawl_hours: int = 168
     user_agent: str = "ScrapperZuzikusBot/0.1 (+contact@example.com)"
     request_timeout_seconds: int = 20
     max_pages_per_site: int = 12

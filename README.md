@@ -8,7 +8,7 @@ Dockerized lead discovery stack for rental and tourism businesses, starting with
 - Jinja2 + HTMX for a simple region/status dashboard
 - PostgreSQL for normalized storage
 - Redis + Dramatiq for background scrape runs
-- Overpass API for OSM-based business discovery
+- Self-hosted Overpass for OSM-based business discovery
 - `httpx` + BeautifulSoup for polite website crawling and email extraction
 
 ## What is implemented
@@ -16,7 +16,9 @@ Dockerized lead discovery stack for rental and tourism businesses, starting with
 - Region seed for Thailand
 - Category seed for vehicle rental and tourism niches
 - Daily Overpass query cap guard
+- Self-hosted Overpass service in Docker Compose
 - Overpass business discovery by region/category
+- Region/category discovery cache with cooldowns
 - Website crawl for emails, social links, and contact form hints
 - Email dedupe per company
 - Admin pages for:
@@ -30,7 +32,7 @@ Dockerized lead discovery stack for rental and tourism businesses, starting with
 2. Set strong values for `POSTGRES_PASSWORD` and `REDIS_PASSWORD`
 3. If host port `5432` is already in use, keep `POSTGRES_HOST_PORT=5433` or choose another free host port
 4. Run `docker compose up --build`
-5. Open `http://localhost:8000`
+5. Open `http://localhost:<APP_HOST_PORT>`
 
 Later, to pull updates on that server:
 
@@ -47,8 +49,11 @@ docker compose up --build -d
 - The app connects to Postgres using `DATABASE_URL`
 - The app connects to Redis using `REDIS_URL`
 - Redis is password-protected with `REDIS_PASSWORD`
+- Overpass is served internally at `OVERPASS_URL` and exposed on `OVERPASS_HOST_PORT`
 - Production defaults keep `APP_RELOAD=0` and `WORKER_PROCESSES=1`, `WORKER_THREADS=1`
-- If you scale scraping later, add separate proxy-backed worker pools with distinct egress instead of raising concurrency against the public Overpass endpoint
+- Discovery is cached per `region + category` and only refreshed after `DISCOVERY_COOLDOWN_HOURS`
+- Website recrawls are limited by `CRAWL_RECRAWL_HOURS`
+- If you scale scraping later, add separate proxy-backed worker pools with distinct egress for website crawling only
 
 Example local `.env` values:
 
@@ -63,9 +68,31 @@ DATABASE_URL=postgresql+psycopg://scrapper:use-a-strong-password@db:5432/scrappe
 REDIS_PASSWORD=use-a-different-strong-password
 REDIS_HOST_PORT=6380
 REDIS_URL=redis://:use-a-different-strong-password@redis:6379/0
+OVERPASS_URL=http://overpass/api/interpreter
+OVERPASS_DAILY_QUERY_CAP=0
+OVERPASS_MODE=init
+OVERPASS_HOST_PORT=12346
+OVERPASS_PLANET_URL=https://download.geofabrik.de/asia/thailand-latest.osm.pbf
+OVERPASS_PLANET_PREPROCESS=osmium cat -o /db/planet.osm.bz2 -f osm.bz2 /db/planet.osm.pbf
+OVERPASS_DIFF_URL=https://download.geofabrik.de/asia/thailand-updates/
+DISCOVERY_COOLDOWN_HOURS=168
+CRAWL_RECRAWL_HOURS=168
 WORKER_PROCESSES=1
 WORKER_THREADS=1
 ```
+
+## Discovery Model
+
+- One run per region can be active at a time
+- Discovery is cached per `region + category` and reused until the cooldown expires
+- Repeated runs focus on stale or failed company crawls instead of querying Overpass again
+- Self-hosted Overpass removes dependence on the shared public endpoint for normal operation
+
+## Overpass Bootstrap
+
+- First startup can take time because the Overpass container needs to import the Thailand extract before it can answer queries
+- Keep `OVERPASS_MODE=init` for the first bootstrap; after the database is initialized you can leave it as-is unless you intentionally rebuild the Overpass volume
+- If you replace the Overpass volume, the import process starts from scratch again
 
 ## Notes
 
