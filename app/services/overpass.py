@@ -19,20 +19,16 @@ class OverpassResult:
 
 def _tag_clause(tag_map: dict[str, str]) -> str:
     key, value = next(iter(tag_map.items()))
-    return f'["{key}"="{value}"]'
+    return f'nwr["{key}"="{value}"](area.searchArea);'
 
 
 def build_query(region: Region, category: Category) -> str:
     tag_clauses = "\n".join(
-        [
-            f'  nwr(area.searchArea){_tag_clause(tag_map)};'
-            for tag_map in category.osm_tags
-        ]
+        [f"  {_tag_clause(tag_map)}" for tag_map in category.osm_tags]
     )
     return f"""
 [out:json][timeout:90];
-rel["boundary"="administrative"]["admin_level"="{region.osm_admin_level}"]["ISO3166-1"="{region.country_code}"]->.country;
-map_to_area .country -> .searchArea;
+area["ISO3166-1"="{region.country_code}"]["admin_level"="{region.osm_admin_level}"]->.searchArea;
 (
 {tag_clauses}
 );
@@ -45,7 +41,13 @@ def fetch_places(region: Region, category: Category) -> OverpassResult:
     headers = {"User-Agent": settings.user_agent}
     with httpx.Client(timeout=settings.request_timeout_seconds, headers=headers) as client:
         response = client.post(settings.overpass_url, content=query)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            detail = response.text.strip()
+            raise RuntimeError(
+                f"Overpass request failed with status {response.status_code} for category "
+                f"{category.slug} in region {region.code}. Query: {query.strip()} Response: {detail}"
+            ) from exc
         payload = response.json()
     return OverpassResult(query=query, elements=payload.get("elements", []))
-

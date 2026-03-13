@@ -144,7 +144,14 @@ def execute_run(session: Session, run_id: int, overpass_cap: int) -> None:
             run.note = f"Daily Overpass cap reached ({usage.units_used}/{usage.cap})."
             break
 
-        result = fetch_places(region=region, category=category)
+        try:
+            result = fetch_places(region=region, category=category)
+        except Exception as exc:
+            run.status = RunStatus.FAILED
+            run.note = str(exc)[:2000]
+            session.add(run)
+            session.commit()
+            return
         consume_units(session, provider="overpass", cap=overpass_cap, units=1)
         queries_used += 1
         discovered += len(result.elements)
@@ -169,4 +176,3 @@ def execute_run(session: Session, run_id: int, overpass_cap: int) -> None:
     run.crawled_count = crawled
     run.overpass_queries_used = queries_used
     session.commit()
-
