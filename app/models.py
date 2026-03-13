@@ -49,6 +49,14 @@ class SubmissionStatus(str, Enum):
     MANUAL_REVIEW = "manual_review"
 
 
+class RunCompanyStatus(str, Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
 class Region(Base):
     __tablename__ = "regions"
 
@@ -109,6 +117,7 @@ class Company(Base):
     pages: Mapped[list["Page"]] = relationship(back_populates="company", cascade="all, delete-orphan")
     emails: Mapped[list["Email"]] = relationship(back_populates="company", cascade="all, delete-orphan")
     forms: Mapped[list["Form"]] = relationship(back_populates="company", cascade="all, delete-orphan")
+    run_companies: Mapped[list["RunCompany"]] = relationship(back_populates="company", cascade="all, delete-orphan")
 
 
 class CompanyCategory(Base):
@@ -208,6 +217,7 @@ class ScrapeRun(Base):
 
     region: Mapped["Region"] = relationship(back_populates="runs")
     categories: Mapped[list["RunCategory"]] = relationship(back_populates="run", cascade="all, delete-orphan")
+    companies: Mapped[list["RunCompany"]] = relationship(back_populates="run", cascade="all, delete-orphan")
 
 
 class RunCategory(Base):
@@ -256,3 +266,38 @@ class RegionCategoryState(Base):
 
     region: Mapped["Region"] = relationship(back_populates="category_states")
     category: Mapped["Category"] = relationship(back_populates="region_states")
+
+
+class RunCompany(Base):
+    __tablename__ = "run_companies"
+    __table_args__ = (
+        UniqueConstraint("run_id", "company_id", name="uq_run_company"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("scrape_runs.id"), index=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    status: Mapped[RunCompanyStatus] = mapped_column(SqlEnum(RunCompanyStatus), default=RunCompanyStatus.QUEUED, index=True)
+    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    run: Mapped["ScrapeRun"] = relationship(back_populates="companies")
+    company: Mapped["Company"] = relationship(back_populates="run_companies")
+
+
+class RequestMetric(Base):
+    __tablename__ = "request_metrics"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("scrape_runs.id"), nullable=True, index=True)
+    company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id"), nullable=True, index=True)
+    provider: Mapped[str] = mapped_column(String(32), index=True)
+    request_kind: Mapped[str] = mapped_column(String(32), index=True)
+    method: Mapped[str] = mapped_column(String(8))
+    url: Mapped[str] = mapped_column(String(500))
+    status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_ms: Mapped[int] = mapped_column(Integer)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

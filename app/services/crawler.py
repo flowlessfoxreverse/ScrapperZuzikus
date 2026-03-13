@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass
 from html import unescape
 from urllib.parse import urljoin, urlparse
@@ -86,7 +87,7 @@ def extract_forms(soup: BeautifulSoup, page_url: str) -> tuple[bool, list[dict]]
     return bool(forms), forms
 
 
-def crawl_site(website_url: str) -> CrawlSiteResult:
+def crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
     website_url = normalize_url(website_url)
     if not fetch_robots_allowed(website_url):
         return CrawlSiteResult(pages=[], crawl_status="blocked_by_robots")
@@ -105,8 +106,18 @@ def crawl_site(website_url: str) -> CrawlSiteResult:
             if candidate in seen:
                 continue
             seen.add(candidate)
+            started = time.perf_counter()
             try:
                 response = client.get(candidate)
+                duration_ms = int((time.perf_counter() - started) * 1000)
+                if on_request:
+                    on_request(
+                        method="GET",
+                        url=str(response.url),
+                        status_code=response.status_code,
+                        duration_ms=duration_ms,
+                        error=None,
+                    )
                 soup = BeautifulSoup(response.text, "html.parser")
                 title = soup.title.text.strip() if soup.title and soup.title.text else None
                 text = unescape(soup.get_text(" ", strip=True))
@@ -134,6 +145,15 @@ def crawl_site(website_url: str) -> CrawlSiteResult:
                     )
                 )
             except Exception as exc:
+                duration_ms = int((time.perf_counter() - started) * 1000)
+                if on_request:
+                    on_request(
+                        method="GET",
+                        url=candidate,
+                        status_code=None,
+                        duration_ms=duration_ms,
+                        error=str(exc),
+                    )
                 pages.append(
                     CrawlPageResult(
                         url=candidate,
@@ -149,4 +169,3 @@ def crawl_site(website_url: str) -> CrawlSiteResult:
 
     crawl_status = "completed" if any(page.status_code for page in pages) else "failed"
     return CrawlSiteResult(pages=pages, crawl_status=crawl_status)
-

@@ -20,11 +20,25 @@ services:
       - redis
       - overpass
 
-  worker:
+  discovery_worker:
     build:
       context: .
       dockerfile: Dockerfile
-    command: python -m dramatiq --processes ${WORKER_PROCESSES:-1} --threads ${WORKER_THREADS:-1} app.tasks
+    command: python -m dramatiq --processes ${WORKER_PROCESSES:-1} --threads ${WORKER_THREADS:-1} --queues discovery,maintenance app.tasks
+    env_file:
+      - .env
+    volumes:
+      - .:/workspace
+    depends_on:
+      - db
+      - redis
+      - overpass
+
+  crawl_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m dramatiq --processes ${CRAWL_WORKER_PROCESSES:-1} --threads ${CRAWL_WORKER_THREADS:-1} --queues crawl app.tasks
     env_file:
       - .env
     volumes:

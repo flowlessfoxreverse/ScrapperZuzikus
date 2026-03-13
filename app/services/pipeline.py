@@ -5,10 +5,12 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Category, Company, CompanyCategory, Email, Form, Page, Region, RunCategory, RunStatus, ScrapeRun
+from app.models import Category, Company, CompanyCategory, Email, Form, Page, Region, RunCategory, RunCompanyStatus, RunStatus, ScrapeRun
 from app.services.discovery_state import ensure_utc, get_or_create_region_category_state, should_refresh_discovery
 from app.services.crawler import crawl_site
+from app.services.metrics import record_request_metric
 from app.services.overpass import fetch_places
+from app.services.run_companies import mark_run_company_finished, mark_run_company_running, maybe_complete_run, queue_company_for_run
 from app.services.usage import can_consume, consume_units
 
 
@@ -58,13 +60,23 @@ def upsert_company_from_element(
     return company
 
 
-def persist_crawl(session: Session, company: Company) -> None:
+def persist_crawl(session: Session, company: Company, run_id: int | None = None) -> None:
     if not company.website_url:
         company.crawl_status = "no_website"
         session.add(company)
         return
 
-    result = crawl_site(company.website_url)
+    def on_request(**metric):
+        record_request_metric(
+            session,
+            provider="website",
+            request_kind="crawl",
+            run_id=run_id,
+            company_id=company.id,
+            **metric,
+        )
+
+    result = crawl_site(company.website_url, on_request=on_request)
     company.crawl_status = result.crawl_status
     company.has_contact_form = any(page.has_contact_form for page in result.pages)
     session.add(company)
@@ -156,12 +168,13 @@ def should_recrawl_company(session: Session, company: Company, recrawl_hours: in
     return last_crawled_at <= datetime.now(timezone.utc) - timedelta(hours=recrawl_hours)
 
 
-def execute_run(
+def execute_discovery(
     session: Session,
     run_id: int,
     overpass_cap: int,
     discovery_cooldown_hours: int,
     crawl_recrawl_hours: int,
+    enqueue_crawl,
 ) -> None:
     run = session.get(ScrapeRun, run_id)
     if run is None:
@@ -204,7 +217,18 @@ def execute_run(
                 break
 
             try:
-                result = fetch_places(region=region, category=category)
+                result = fetch_places(
+                    region=region,
+                    category=category,
+                    on_request=lambda **metric: record_request_metric(
+                        session,
+                        provider="overpass",
+                        request_kind="discovery",
+                        run_id=run.id,
+                        company_id=None,
+                        **metric,
+                    ),
+                )
             except Exception as exc:
                 run.status = RunStatus.FAILED
                 run.note = str(exc)[:2000]
@@ -243,15 +267,39 @@ def execute_run(
 
         for company in companies_for_category(session, region.id, category.id):
             if should_recrawl_company(session, company, crawl_recrawl_hours):
-                persist_crawl(session=session, company=company)
-                crawled += 1
+                if queue_company_for_run(session, run.id, company.id):
+                    enqueue_crawl(run.id, company.id)
                 session.commit()
-
-    if run.status == RunStatus.RUNNING:
-        run.status = RunStatus.COMPLETED
 
     run.discovered_count = discovered
     run.crawled_count = crawled
     run.overpass_queries_used = queries_used
-    run.finished_at = datetime.now(timezone.utc)
+    run.note = run.note or "Discovery completed."
+    maybe_complete_run(session, run.id)
+    session.commit()
+
+
+def execute_crawl(session: Session, run_id: int, company_id: int) -> None:
+    run = session.get(ScrapeRun, run_id)
+    company = session.get(Company, company_id)
+    if run is None or company is None:
+        return
+
+    if not company.website_url:
+        mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.SKIPPED, "No website available.")
+        maybe_complete_run(session, run_id)
+        session.commit()
+        return
+
+    mark_run_company_running(session, run_id, company_id)
+    session.commit()
+
+    try:
+        persist_crawl(session=session, company=company, run_id=run_id)
+        mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.COMPLETED)
+    except Exception as exc:
+        company.crawl_status = "failed"
+        session.add(company)
+        mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.FAILED, str(exc))
+    maybe_complete_run(session, run_id)
     session.commit()

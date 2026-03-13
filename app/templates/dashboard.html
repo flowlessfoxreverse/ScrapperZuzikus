@@ -87,53 +87,83 @@
 
         <div class="panel">
           <div class="section-heading">
-            <h2>Emails In Region</h2>
-            <span>{{ emails|length }} records</span>
+            <h2>Scraped Regions</h2>
           </div>
           <table>
             <thead>
               <tr>
-                <th>Email</th>
-                <th>Company</th>
-                <th>Website</th>
-                <th>Validation</th>
-                <th>Form</th>
-                <th>Source</th>
+                <th>Region</th>
+                <th>Companies</th>
+                <th>Emails</th>
+                <th>Valid</th>
+                <th>Last Run</th>
               </tr>
             </thead>
             <tbody>
-              {% for item in emails %}
+              {% for region in region_stats %}
               <tr>
-                <td>{{ item.email }}</td>
-                <td>{{ item.company_name }}</td>
-                <td>
-                  {% if item.company_website %}
-                  <a href="{{ item.company_website }}" target="_blank" rel="noreferrer">{{ item.company_website }}</a>
-                  {% else %}
-                  <span class="subtle">No website</span>
-                  {% endif %}
-                </td>
-                <td id="email-status-{{ item.id }}">
-                  {% include "partials/email_status.html" %}
-                </td>
-                <td>
-                  {% if item.has_contact_form %}
-                  <span class="badge warn">form detected</span>
-                  {% else %}
-                  <span class="badge muted">none</span>
-                  {% endif %}
-                </td>
-                <td>
-                  <div>{{ item.source_type }}</div>
-                  <small class="subtle">{{ item.crawl_status }}</small>
-                </td>
+                <td><a href="/?region_id={{ region.id }}">{{ region.name }}</a></td>
+                <td>{{ region.total_companies }}</td>
+                <td>{{ region.total_emails }}</td>
+                <td>{{ region.valid_emails }}</td>
+                <td><span class="badge muted">{{ region.last_run_status or "-" }}</span></td>
               </tr>
               {% else %}
-              <tr><td colspan="6">No emails yet for this region.</td></tr>
+              <tr><td colspan="5">No scraped regions yet.</td></tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Emails In Region</h2>
+          <span>{{ emails|length }} records</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Email</th>
+              <th>Company</th>
+              <th>Website</th>
+              <th>Validation</th>
+              <th>Form</th>
+              <th>Source</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in emails %}
+            <tr>
+              <td>{{ item.email }}</td>
+              <td>{{ item.company_name }}</td>
+              <td>
+                {% if item.company_website %}
+                <a href="{{ item.company_website }}" target="_blank" rel="noreferrer">{{ item.company_website }}</a>
+                {% else %}
+                <span class="subtle">No website</span>
+                {% endif %}
+              </td>
+              <td id="email-status-{{ item.id }}">
+                {% include "partials/email_status.html" %}
+              </td>
+              <td>
+                {% if item.has_contact_form %}
+                <span class="badge warn">form detected</span>
+                {% else %}
+                <span class="badge muted">none</span>
+                {% endif %}
+              </td>
+              <td>
+                <div>{{ item.source_type }}</div>
+                <small class="subtle">{{ item.crawl_status }}</small>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6">No emails yet for this region.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </section>
     </main>
   </body>

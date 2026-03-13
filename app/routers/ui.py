@@ -1,20 +1,33 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models import Category, Company, Email, Region, RunCategory, ScrapeRun, ValidationStatus, Vertical
 from app.schemas import EmailRow
 from app.services.runs import find_active_run
-from app.tasks import run_scrape
+from app.tasks import run_scrape, sync_region_catalog_task
 
 
 templates = Jinja2Templates(directory="app/templates")
 router = APIRouter(tags=["ui"])
+
+
+@dataclass
+class RegionStatsRow:
+    id: int
+    name: str
+    code: str
+    total_companies: int
+    total_emails: int
+    valid_emails: int
+    last_run_status: str | None
 
 
 def build_email_rows(db: Session, region_id: int | None = None) -> list[EmailRow]:
@@ -48,6 +61,39 @@ def build_email_rows(db: Session, region_id: int | None = None) -> list[EmailRow
     return rows
 
 
+def build_region_stats(db: Session) -> list[RegionStatsRow]:
+    rows = []
+    regions = db.scalars(select(Region).where(Region.is_active.is_(True)).order_by(Region.name)).all()
+    for region in regions:
+        total_companies = db.scalar(select(func.count()).select_from(Company).where(Company.region_id == region.id)) or 0
+        total_emails = db.scalar(
+            select(func.count()).select_from(Email).join(Company, Email.company_id == Company.id).where(Company.region_id == region.id)
+        ) or 0
+        valid_emails = db.scalar(
+            select(func.count()).select_from(Email).join(Company, Email.company_id == Company.id).where(
+                Company.region_id == region.id,
+                Email.validation_status == ValidationStatus.VALID,
+            )
+        ) or 0
+        last_run = db.scalar(
+            select(ScrapeRun.status).where(ScrapeRun.region_id == region.id).order_by(ScrapeRun.started_at.desc()).limit(1)
+        )
+        if total_companies == 0 and total_emails == 0 and last_run is None:
+            continue
+        rows.append(
+            RegionStatsRow(
+                id=region.id,
+                name=region.name,
+                code=region.code,
+                total_companies=total_companies,
+                total_emails=total_emails,
+                valid_emails=valid_emails,
+                last_run_status=last_run.value if last_run else None,
+            )
+        )
+    return rows
+
+
 @router.get("/", response_class=HTMLResponse)
 def dashboard(
     request: Request,
@@ -60,6 +106,7 @@ def dashboard(
     selected_region = region_id or (regions[0].id if regions else None)
     emails = build_email_rows(db, selected_region)
     runs = db.scalars(select(ScrapeRun).order_by(desc(ScrapeRun.started_at)).limit(10)).all()
+    region_stats = build_region_stats(db)
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
@@ -69,6 +116,7 @@ def dashboard(
             "selected_region": selected_region,
             "emails": emails,
             "runs": runs,
+            "region_stats": region_stats,
             "message": message,
             "validation_statuses": list(ValidationStatus),
         },
@@ -128,12 +176,18 @@ def category_editor(request: Request, db: Session = Depends(get_db)) -> HTMLResp
 
 @router.get("/regions", response_class=HTMLResponse)
 def region_editor(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
-    regions = db.scalars(select(Region).order_by(Region.name)).all()
+    regions = db.scalars(select(Region).order_by(Region.country_code, Region.name)).all()
     return templates.TemplateResponse(
         request=request,
         name="regions.html",
         context={"regions": regions},
     )
+
+
+@router.post("/regions/sync", response_class=HTMLResponse)
+def sync_regions_html() -> RedirectResponse:
+    sync_region_catalog_task.send()
+    return RedirectResponse(url="/regions", status_code=303)
 
 
 @router.post("/categories", response_class=HTMLResponse)

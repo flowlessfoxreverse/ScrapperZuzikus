@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     overpass_daily_query_cap: int = 0
     discovery_cooldown_hours: int = 168
     crawl_recrawl_hours: int = 168
+    region_catalog_countries: str = "TH"
     user_agent: str = "ScrapperZuzikusBot/0.1 (+contact@example.com)"
     request_timeout_seconds: int = 20
     max_pages_per_site: int = 12

@@ -12,9 +12,14 @@
         <div>
           <p class="eyebrow">Configuration</p>
           <h1>Region Editor</h1>
-          <p class="subtle">Regions are country-level by default. Country code must match the ISO code used in OSM relations.</p>
+          <p class="subtle">The catalog is generated from open ISO country and subdivision data. Active regions are controlled by the configured country list.</p>
         </div>
-        <a class="ghost-button" href="/">Back</a>
+        <div class="hero-actions">
+          <form action="/regions/sync" method="post">
+            <button type="submit" class="ghost-button">Sync Catalog</button>
+          </form>
+          <a class="ghost-button" href="/">Back</a>
+        </div>
       </section>
 
       <section class="grid category-grid">

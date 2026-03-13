@@ -10,6 +10,7 @@ from app.db import Base, SessionLocal, engine
 from app.routers.api import router as api_router
 from app.routers.ui import router as ui_router
 from app.seed import seed_defaults
+from app.services.region_catalog import sync_region_catalog
 
 
 settings = get_settings()
@@ -20,6 +21,7 @@ async def lifespan(_app: FastAPI):
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as session:
         seed_defaults(session)
+        sync_region_catalog(session)
     yield
 
 

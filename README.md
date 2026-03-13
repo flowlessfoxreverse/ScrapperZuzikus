@@ -77,13 +77,17 @@ OVERPASS_PLANET_PREPROCESS=osmium cat -o /db/planet.osm.bz2 -f osm.bz2 /db/plane
 OVERPASS_DIFF_URL=https://download.geofabrik.de/asia/thailand-updates/
 DISCOVERY_COOLDOWN_HOURS=168
 CRAWL_RECRAWL_HOURS=168
+REGION_CATALOG_COUNTRIES=TH
 WORKER_PROCESSES=1
 WORKER_THREADS=1
+CRAWL_WORKER_PROCESSES=1
+CRAWL_WORKER_THREADS=1
 ```
 
 ## Discovery Model
 
 - One run per region can be active at a time
+- Discovery and website crawling run on separate Dramatiq queues and separate worker services
 - Discovery is cached per `region + category` and reused until the cooldown expires
 - Repeated runs focus on stale or failed company crawls instead of querying Overpass again
 - Self-hosted Overpass removes dependence on the shared public endpoint for normal operation
