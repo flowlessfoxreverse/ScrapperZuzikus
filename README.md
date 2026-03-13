@@ -27,8 +27,40 @@ Dockerized lead discovery stack for rental and tourism businesses, starting with
 ## Start
 
 1. Copy `.env.example` to `.env`
-2. Run `docker compose up --build`
-3. Open `http://localhost:8000`
+2. Set strong values for `POSTGRES_PASSWORD` and `REDIS_PASSWORD`
+3. If host port `5432` is already in use, keep `POSTGRES_HOST_PORT=5433` or choose another free host port
+4. Run `docker compose up --build`
+5. Open `http://localhost:8000`
+
+Later, to pull updates on that server:
+
+cd ScrapperZuzikus
+git pull origin main
+docker compose up --build -d
+
+
+## Ports and auth
+
+- The app listens on container port `8000` and maps to `APP_HOST_PORT`
+- PostgreSQL listens on container port `5432` and maps to `POSTGRES_HOST_PORT`
+- Redis listens on container port `6379` and maps to `REDIS_HOST_PORT`
+- The app connects to Postgres using `DATABASE_URL`
+- The app connects to Redis using `REDIS_URL`
+- Redis is password-protected with `REDIS_PASSWORD`
+
+Example local `.env` values:
+
+```env
+APP_HOST_PORT=8000
+POSTGRES_DB=scrapperzuzikus
+POSTGRES_USER=scrapper
+POSTGRES_PASSWORD=use-a-strong-password
+POSTGRES_HOST_PORT=5433
+DATABASE_URL=postgresql+psycopg://scrapper:use-a-strong-password@db:5432/scrapperzuzikus
+REDIS_PASSWORD=use-a-different-strong-password
+REDIS_HOST_PORT=6380
+REDIS_URL=redis://:use-a-different-strong-password@redis:6379/0
+```
 
 ## Notes
 
