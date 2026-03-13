@@ -60,6 +60,7 @@ class EmailRow(BaseModel):
     id: int
     email: str
     company_name: str
+    company_city: str | None
     company_website: str | None
     region_name: str
     validation_status: ValidationStatus

@@ -99,6 +99,17 @@ legend {
   background: #fff;
 }
 
+.detail-block {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.small-button {
+  min-width: 0;
+  padding: 8px 12px;
+}
+
 .grid {
   grid-template-columns: 320px 1fr;
 }

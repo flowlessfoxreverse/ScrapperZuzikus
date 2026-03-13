@@ -48,6 +48,7 @@ def build_email_rows(db: Session, region_id: int | None = None) -> list[EmailRow
                 id=email.id,
                 email=email.email,
                 company_name=email.company.name,
+                company_city=email.company.city,
                 company_website=email.company.website_url,
                 region_name=region.name,
                 validation_status=email.validation_status,
@@ -104,8 +105,9 @@ def dashboard(
 ) -> HTMLResponse:
     regions = db.scalars(select(Region).where(Region.is_active.is_(True)).order_by(Region.name)).all()
     categories = db.scalars(select(Category).where(Category.is_active.is_(True)).order_by(Category.vertical, Category.label)).all()
-    selected_region = region_id or (regions[0].id if regions else None)
-    emails = build_email_rows(db, selected_region)
+    form_region_id = region_id or (regions[0].id if regions else None)
+    detail_region = db.get(Region, region_id) if region_id else None
+    emails = build_email_rows(db, detail_region.id if detail_region else None)
     runs = db.scalars(select(ScrapeRun).order_by(desc(ScrapeRun.started_at)).limit(10)).all()
     region_stats = build_region_stats(db)
     overpass_status = fetch_status()
@@ -115,7 +117,8 @@ def dashboard(
         context={
             "regions": regions,
             "categories": categories,
-            "selected_region": selected_region,
+            "selected_region": form_region_id,
+            "detail_region": detail_region,
             "emails": emails,
             "runs": runs,
             "region_stats": region_stats,

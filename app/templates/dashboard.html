@@ -117,7 +117,7 @@
             <tbody>
               {% for region in region_stats %}
               <tr>
-                <td><a href="/?region_id={{ region.id }}">{{ region.name }}</a></td>
+                <td><a href="/?region_id={{ region.id }}#region-detail">{{ region.name }}</a></td>
                 <td>{{ region.total_companies }}</td>
                 <td>{{ region.total_emails }}</td>
                 <td>{{ region.valid_emails }}</td>
@@ -128,12 +128,69 @@
               {% endfor %}
             </tbody>
           </table>
+
+          {% if detail_region %}
+          <div id="region-detail" class="detail-block">
+            <div class="section-heading">
+              <div class="hero-actions">
+                <a class="ghost-button small-button" href="/">&#8592; Back</a>
+              </div>
+              <span class="subtle">{{ detail_region.name }}</span>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Company</th>
+                  <th>City</th>
+                  <th>Website</th>
+                  <th>Validation</th>
+                  <th>Form</th>
+                  <th>Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in emails %}
+                <tr>
+                  <td>{{ item.email }}</td>
+                  <td>{{ item.company_name }}</td>
+                  <td>{{ item.company_city or "-" }}</td>
+                  <td>
+                    {% if item.company_website %}
+                    <a href="{{ item.company_website }}" target="_blank" rel="noreferrer">{{ item.company_website }}</a>
+                    {% else %}
+                    <span class="subtle">No website</span>
+                    {% endif %}
+                  </td>
+                  <td id="email-status-embedded-{{ item.id }}">
+                    {% include "partials/email_status.html" %}
+                  </td>
+                  <td>
+                    {% if item.has_contact_form %}
+                    <span class="badge warn">form detected</span>
+                    {% else %}
+                    <span class="badge muted">none</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    <div>{{ item.source_type }}</div>
+                    <small class="subtle">{{ item.crawl_status }}</small>
+                  </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="7">No emails yet for this region.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% endif %}
         </div>
       </section>
 
+      {% if not detail_region %}
       <section class="panel">
         <div class="section-heading">
-          <h2>Emails In Region</h2>
+          <h2>All Emails</h2>
           <span>{{ emails|length }} records</span>
         </div>
         <table>
@@ -141,6 +198,7 @@
             <tr>
               <th>Email</th>
               <th>Company</th>
+              <th>City</th>
               <th>Website</th>
               <th>Validation</th>
               <th>Form</th>
@@ -152,6 +210,7 @@
             <tr>
               <td>{{ item.email }}</td>
               <td>{{ item.company_name }}</td>
+              <td>{{ item.company_city or "-" }}</td>
               <td>
                 {% if item.company_website %}
                 <a href="{{ item.company_website }}" target="_blank" rel="noreferrer">{{ item.company_website }}</a>
@@ -175,11 +234,12 @@
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="6">No emails yet for this region.</td></tr>
+            <tr><td colspan="7">No emails yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>
       </section>
+      {% endif %}
     </main>
   </body>
 </html>
