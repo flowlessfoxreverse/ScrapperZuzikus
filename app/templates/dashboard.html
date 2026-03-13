@@ -25,6 +25,18 @@
         {% if message %}
         <div class="notice">{{ message }}</div>
         {% endif %}
+        <div class="status-strip">
+          <div>
+            <strong>Overpass</strong>
+            <span class="badge {% if overpass_status.ok %}muted{% else %}warn{% endif %}">{{ overpass_status.summary }}</span>
+          </div>
+          <small class="subtle">
+            {% if overpass_status.status_code %}
+            HTTP {{ overpass_status.status_code }}:
+            {% endif %}
+            {{ overpass_status.detail }}
+          </small>
+        </div>
         <form action="/runs" method="post" class="run-form">
           <label>
             <span>Region</span>
@@ -48,7 +60,10 @@
             </div>
           </fieldset>
 
-          <button type="submit">Run Scrape</button>
+          <div class="hero-actions">
+            <button type="submit">Run Scrape</button>
+            <button type="submit" name="force_refresh" value="1" class="ghost-button">Force Refresh Selected</button>
+          </div>
         </form>
       </section>
 

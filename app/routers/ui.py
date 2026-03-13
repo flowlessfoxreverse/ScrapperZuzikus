@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import Category, Company, Email, Region, RunCategory, ScrapeRun, ValidationStatus, Vertical
 from app.schemas import EmailRow
+from app.services.overpass import fetch_status
 from app.services.runs import find_active_run
 from app.tasks import run_scrape, sync_region_catalog_task
 
@@ -107,6 +108,7 @@ def dashboard(
     emails = build_email_rows(db, selected_region)
     runs = db.scalars(select(ScrapeRun).order_by(desc(ScrapeRun.started_at)).limit(10)).all()
     region_stats = build_region_stats(db)
+    overpass_status = fetch_status()
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
@@ -117,6 +119,7 @@ def dashboard(
             "emails": emails,
             "runs": runs,
             "region_stats": region_stats,
+            "overpass_status": overpass_status,
             "message": message,
             "validation_statuses": list(ValidationStatus),
         },
@@ -127,6 +130,7 @@ def dashboard(
 def queue_run(
     region_id: int = Form(...),
     category_ids: list[int] = Form(...),
+    force_refresh: str | None = Form(None),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
     active_run = find_active_run(db, region_id)
@@ -142,7 +146,8 @@ def queue_run(
     for category_id in category_ids:
         db.add(RunCategory(run_id=run.id, category_id=category_id))
     db.commit()
-    run_scrape.send(run.id)
+    force_refresh_category_ids = category_ids if force_refresh == "1" else []
+    run_scrape.send(run.id, force_refresh_category_ids=force_refresh_category_ids)
     return RedirectResponse(url=f"/?region_id={region_id}", status_code=303)
 
 

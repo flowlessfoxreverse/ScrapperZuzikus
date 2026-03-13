@@ -174,6 +174,7 @@ def execute_discovery(
     overpass_cap: int,
     discovery_cooldown_hours: int,
     crawl_recrawl_hours: int,
+    force_refresh_category_ids: set[int] | None,
     enqueue_crawl,
 ) -> None:
     run = session.get(ScrapeRun, run_id)
@@ -197,6 +198,7 @@ def execute_discovery(
     discovered = 0
     crawled = 0
     queries_used = 0
+    force_refresh_category_ids = force_refresh_category_ids or set()
 
     for category in categories:
         state = get_or_create_region_category_state(session, region.id, category.id)
@@ -205,7 +207,8 @@ def execute_discovery(
         session.add(state)
         session.commit()
 
-        if should_refresh_discovery(state, discovery_cooldown_hours):
+        force_refresh = category.id in force_refresh_category_ids
+        if force_refresh or should_refresh_discovery(state, discovery_cooldown_hours):
             allowed, usage = can_consume(session, provider="overpass", cap=overpass_cap, units=1)
             if not allowed:
                 run.status = RunStatus.SKIPPED
@@ -245,8 +248,12 @@ def execute_discovery(
             discovered += len(result.elements)
             state.last_discovery_success_at = datetime.now(timezone.utc)
             state.last_result_count = len(result.elements)
-            state.status = "fresh"
-            state.note = f"Discovery refreshed for category {category.slug}."
+            state.status = "fresh_forced" if force_refresh else "fresh"
+            state.note = (
+                f"Discovery force-refreshed for category {category.slug}."
+                if force_refresh
+                else f"Discovery refreshed for category {category.slug}."
+            )
             session.add(state)
 
             for element in result.elements:
@@ -274,7 +281,11 @@ def execute_discovery(
     run.discovered_count = discovered
     run.crawled_count = crawled
     run.overpass_queries_used = queries_used
-    run.note = run.note or "Discovery completed."
+    run.note = run.note or (
+        "Discovery completed."
+        if not force_refresh_category_ids
+        else f"Discovery completed with force refresh for category ids: {sorted(force_refresh_category_ids)}."
+    )
     maybe_complete_run(session, run.id)
     session.commit()
 

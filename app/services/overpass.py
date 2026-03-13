@@ -18,6 +18,14 @@ class OverpassResult:
     elements: list[dict]
 
 
+@dataclass
+class OverpassStatus:
+    ok: bool
+    status_code: int | None
+    summary: str
+    detail: str
+
+
 def _tag_clause(tag_map: dict[str, str]) -> str:
     key, value = next(iter(tag_map.items()))
     return f'nwr["{key}"="{value}"](area.searchArea);'
@@ -39,6 +47,43 @@ def build_query(region: Region, category: Category) -> str:
 );
 out center tags;
 """
+
+
+def status_url() -> str:
+    if settings.overpass_url.endswith("/interpreter"):
+        return settings.overpass_url[: -len("/interpreter")] + "/status"
+    return settings.overpass_url.rstrip("/") + "/status"
+
+
+def fetch_status() -> OverpassStatus:
+    url = status_url()
+    headers = {"User-Agent": settings.user_agent}
+    try:
+        with httpx.Client(timeout=min(settings.request_timeout_seconds, 10), headers=headers) as client:
+            response = client.get(url)
+        lines = [line.strip() for line in response.text.splitlines() if line.strip()]
+        detail = " | ".join(lines[:4])[:500] if lines else "No status details returned."
+        summary = "healthy" if response.is_success else "unavailable"
+        lowered = response.text.lower()
+        if "currently running queries" in lowered or "slots available now" in lowered:
+            summary = "healthy"
+        elif "rate_limited" in lowered or "rate limited" in lowered:
+            summary = "rate_limited"
+        elif "dispatcher" in lowered or "database not opened" in lowered or "not ready" in lowered:
+            summary = "bootstrapping"
+        return OverpassStatus(
+            ok=response.is_success,
+            status_code=response.status_code,
+            summary=summary,
+            detail=detail,
+        )
+    except Exception as exc:
+        return OverpassStatus(
+            ok=False,
+            status_code=None,
+            summary="unreachable",
+            detail=str(exc)[:500],
+        )
 
 
 def fetch_places(region: Region, category: Category, on_request=None) -> OverpassResult:

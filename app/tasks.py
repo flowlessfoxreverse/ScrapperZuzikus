@@ -15,7 +15,7 @@ dramatiq.set_broker(redis_broker)
 
 
 @dramatiq.actor(queue_name="discovery")
-def run_scrape(run_id: int) -> None:
+def run_scrape(run_id: int, force_refresh_category_ids: list[int] | None = None) -> None:
     with SessionLocal() as session:
         execute_discovery(
             session=session,
@@ -23,6 +23,7 @@ def run_scrape(run_id: int) -> None:
             overpass_cap=settings.overpass_daily_query_cap,
             discovery_cooldown_hours=settings.discovery_cooldown_hours,
             crawl_recrawl_hours=settings.crawl_recrawl_hours,
+            force_refresh_category_ids=set(force_refresh_category_ids or []),
             enqueue_crawl=lambda queued_run_id, company_id: crawl_company.send(queued_run_id, company_id),
         )
 

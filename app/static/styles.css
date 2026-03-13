@@ -89,6 +89,16 @@ legend {
   font-size: 14px;
 }
 
+.status-strip {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+}
+
 .grid {
   grid-template-columns: 320px 1fr;
 }
