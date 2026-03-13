@@ -5,14 +5,14 @@
 >
   <select name="validation_status" onchange="this.form.submit()">
     {% set current = item.validation_status.value if item is defined else email.validation_status.value %}
-    {% for status in validation_statuses if validation_statuses is defined else [] %}
+    {% if validation_statuses is defined %}
+    {% for status in validation_statuses %}
     <option value="{{ status.value }}" {% if status.value == current %}selected{% endif %}>{{ status.value }}</option>
     {% endfor %}
-    {% if validation_statuses is not defined %}
+    {% else %}
     {% for raw in ["unknown", "pending", "valid", "invalid", "risky"] %}
     <option value="{{ raw }}" {% if raw == current %}selected{% endif %}>{{ raw }}</option>
     {% endfor %}
     {% endif %}
   </select>
 </form>
-
