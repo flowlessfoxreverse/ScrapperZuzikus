@@ -152,6 +152,15 @@
         <div class="panel">
           <div class="section-heading">
             <h2>Scraped Regions</h2>
+            {% if detail_region %}
+            <a class="ghost-button small-button" href="/?country_code={{ selected_country_code }}&region_id={{ detail_region.id }}{% if not show_all %}&show_all=1{% endif %}#region-detail">
+              {% if show_all %}Show emails only{% else %}Show all records{% endif %}
+            </a>
+            {% else %}
+            <a class="ghost-button small-button" href="/?country_code={{ selected_country_code }}{% if not show_all %}&show_all=1{% endif %}">
+              {% if show_all %}Show emails only{% else %}Show all records{% endif %}
+            </a>
+            {% endif %}
           </div>
           <table>
             <thead>
@@ -182,10 +191,52 @@
           <div id="region-detail" class="detail-block">
             <div class="section-heading">
               <div class="hero-actions">
-                <a class="ghost-button small-button" href="/?country_code={{ selected_country_code }}">&#8592; Back</a>
+                <a class="ghost-button small-button" href="/?country_code={{ selected_country_code }}{% if show_all %}&show_all=1{% endif %}">&#8592; Back</a>
               </div>
               <span class="subtle">{{ detail_region.name }}</span>
             </div>
+            {% if show_all %}
+            <table>
+              <thead>
+                <tr>
+                  <th>Company</th>
+                  <th>City</th>
+                  <th>Website</th>
+                  <th>Emails</th>
+                  <th>Latest Email</th>
+                  <th>Form</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in company_rows %}
+                <tr>
+                  <td>{{ item.company_name }}</td>
+                  <td>{{ item.company_city or "-" }}</td>
+                  <td>
+                    {% if item.company_website %}
+                    <a href="{{ item.company_website }}" target="_blank" rel="noreferrer">{{ item.company_website }}</a>
+                    {% else %}
+                    <span class="subtle">No website</span>
+                    {% endif %}
+                  </td>
+                  <td>{{ item.email_count }}</td>
+                  <td>{{ item.latest_email or "-" }}</td>
+                  <td>
+                    {% if item.has_contact_form %}
+                    <span class="badge warn">form detected</span>
+                    {% else %}
+                    <span class="badge muted">none</span>
+                    {% endif %}
+                  </td>
+                  <td><small class="subtle">{{ item.crawl_status }}</small></td>
+                </tr>
+                {% else %}
+                <tr><td colspan="7">No companies yet for this region.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+            {% else %}
             <table>
               <thead>
                 <tr>
@@ -231,6 +282,7 @@
                 {% endfor %}
               </tbody>
             </table>
+            {% endif %}
           </div>
           {% endif %}
         </div>
@@ -239,9 +291,53 @@
       {% if not detail_region %}
       <section class="panel">
         <div class="section-heading">
-          <h2>All Emails</h2>
-          <span>{{ emails|length }} records</span>
+          <h2>{% if show_all %}All Scraped Companies{% else %}All Emails{% endif %}</h2>
+          <span>{% if show_all %}{{ company_rows|length }} records{% else %}{{ emails|length }} records{% endif %}</span>
         </div>
+        {% if show_all %}
+        <table>
+          <thead>
+            <tr>
+              <th>Company</th>
+              <th>Region</th>
+              <th>City</th>
+              <th>Website</th>
+              <th>Emails</th>
+              <th>Latest Email</th>
+              <th>Form</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in company_rows %}
+            <tr>
+              <td>{{ item.company_name }}</td>
+              <td>{{ item.region_name }}</td>
+              <td>{{ item.company_city or "-" }}</td>
+              <td>
+                {% if item.company_website %}
+                <a href="{{ item.company_website }}" target="_blank" rel="noreferrer">{{ item.company_website }}</a>
+                {% else %}
+                <span class="subtle">No website</span>
+                {% endif %}
+              </td>
+              <td>{{ item.email_count }}</td>
+              <td>{{ item.latest_email or "-" }}</td>
+              <td>
+                {% if item.has_contact_form %}
+                <span class="badge warn">form detected</span>
+                {% else %}
+                <span class="badge muted">none</span>
+                {% endif %}
+              </td>
+              <td><small class="subtle">{{ item.crawl_status }}</small></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="8">No companies yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
         <table>
           <thead>
             <tr>
@@ -287,6 +383,7 @@
             {% endfor %}
           </tbody>
         </table>
+        {% endif %}
       </section>
       {% endif %}
     </main>

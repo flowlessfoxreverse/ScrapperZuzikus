@@ -40,6 +40,19 @@ class CountryOption:
     province_count: int
 
 
+@dataclass
+class CompanyAuditRow:
+    id: int
+    company_name: str
+    company_city: str | None
+    company_website: str | None
+    region_name: str
+    crawl_status: str
+    has_contact_form: bool
+    email_count: int
+    latest_email: str | None
+
+
 def build_email_rows(
     db: Session,
     region_id: int | None = None,
@@ -73,6 +86,43 @@ def build_email_rows(
                 crawl_status=email.company.crawl_status,
                 has_contact_form=email.company.has_contact_form,
                 technical_metadata=email.technical_metadata,
+            )
+        )
+    return rows
+
+
+def build_company_audit_rows(
+    db: Session,
+    region_id: int | None = None,
+    country_code: str | None = None,
+) -> list[CompanyAuditRow]:
+    email_count = func.count(Email.id)
+    latest_email = func.max(Email.email)
+    stmt = (
+        select(Company, Region, email_count.label("email_count"), latest_email.label("latest_email"))
+        .join(Region, Company.region_id == Region.id)
+        .outerjoin(Email, Email.company_id == Company.id)
+        .group_by(Company.id, Region.id)
+        .order_by(Region.name.asc(), Company.name.asc())
+    )
+    if region_id:
+        stmt = stmt.where(Region.id == region_id)
+    elif country_code:
+        stmt = stmt.where(Region.country_code == country_code)
+
+    rows: list[CompanyAuditRow] = []
+    for company, region, email_count_value, latest_email_value in db.execute(stmt).all():
+        rows.append(
+            CompanyAuditRow(
+                id=company.id,
+                company_name=company.name,
+                company_city=company.city,
+                company_website=company.website_url,
+                region_name=region.name,
+                crawl_status=company.crawl_status,
+                has_contact_form=company.has_contact_form,
+                email_count=email_count_value or 0,
+                latest_email=latest_email_value,
             )
         )
     return rows
@@ -147,6 +197,7 @@ def dashboard(
     request: Request,
     region_id: int | None = None,
     country_code: str | None = None,
+    show_all: int = 0,
     message: str | None = None,
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
@@ -183,6 +234,11 @@ def dashboard(
         region_id=detail_region.id if detail_region else None,
         country_code=selected_country_code if not detail_region else None,
     )
+    company_rows = build_company_audit_rows(
+        db,
+        region_id=detail_region.id if detail_region else None,
+        country_code=selected_country_code if not detail_region else None,
+    ) if show_all else []
     runs = db.scalars(select(ScrapeRun).order_by(desc(ScrapeRun.started_at)).limit(10)).all()
     region_stats = build_region_stats(db, selected_country_code)
     overpass_status = fetch_status()
@@ -197,7 +253,9 @@ def dashboard(
             "provinces": provinces,
             "default_region_ids": default_region_ids,
             "detail_region": detail_region,
+            "show_all": bool(show_all),
             "emails": emails,
+            "company_rows": company_rows,
             "runs": runs,
             "region_stats": region_stats,
             "overpass_status": overpass_status,
