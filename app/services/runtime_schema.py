@@ -4,6 +4,14 @@ from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
 
+def _table_names(engine: Engine) -> set[str]:
+    inspector = inspect(engine)
+    try:
+        return set(inspector.get_table_names())
+    except Exception:
+        return set()
+
+
 def ensure_scrape_run_control_columns(engine: Engine) -> None:
     inspector = inspect(engine)
     try:
@@ -83,10 +91,8 @@ def ensure_proxy_pool_schema(engine: Engine) -> None:
 
 
 def ensure_contact_channel_schema(engine: Engine) -> None:
-    inspector = inspect(engine)
-    try:
-        tables = set(inspector.get_table_names())
-    except Exception:
+    tables = _table_names(engine)
+    if "companies" not in tables:
         return
     if "contact_channels" in tables:
         return
