@@ -1,0 +1,35 @@
+{% for run in runs %}
+<tr>
+  <td>{{ run.id }}</td>
+  <td>
+    <span class="badge">{{ run.status.value }}</span>
+    {% if run.cancel_requested and run.status.value in ["pending", "running"] %}
+    <small class="subtle">stop requested</small>
+    {% endif %}
+  </td>
+  <td>{{ run.overpass_queries_used }}</td>
+  <td>{{ run.discovered_count }}</td>
+  <td>{{ run.crawled_count }}</td>
+  <td><small class="subtle">{{ run.note or "-" }}</small></td>
+  <td>
+    {% if run.status.value in ["pending", "running"] and not run.cancel_requested %}
+    <form action="/runs/{{ run.id }}/cancel" method="post">
+      <input type="hidden" name="country_code" value="{{ selected_country_code or '' }}" />
+      <button type="submit" class="ghost-button small-button">Stop</button>
+    </form>
+    {% else %}
+    <span class="subtle">-</span>
+    {% endif %}
+  </td>
+</tr>
+{% endfor %}
+{% if runs_has_more %}
+<tr
+  class="load-more-row"
+  hx-get="/runs/recent?offset={{ runs_offset + runs_page_size }}&country_code={{ selected_country_code or '' }}"
+  hx-trigger="revealed"
+  hx-swap="outerHTML"
+>
+  <td colspan="7" class="subtle">Loading older runs...</td>
+</tr>
+{% endif %}

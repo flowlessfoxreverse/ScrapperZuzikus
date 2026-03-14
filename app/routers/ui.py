@@ -20,6 +20,7 @@ from app.tasks import run_scrape, sync_region_catalog_task
 
 templates = Jinja2Templates(directory="app/templates")
 router = APIRouter(tags=["ui"])
+RECENT_RUNS_PAGE_SIZE = 25
 
 
 @dataclass
@@ -216,6 +217,17 @@ def build_region_stats(db: Session, country_code: str | None = None) -> list[Reg
     return rows
 
 
+def build_recent_runs_page(db: Session, *, offset: int = 0, limit: int = RECENT_RUNS_PAGE_SIZE) -> tuple[list[ScrapeRun], bool]:
+    rows = db.scalars(
+        select(ScrapeRun)
+        .order_by(desc(ScrapeRun.started_at))
+        .offset(offset)
+        .limit(limit + 1)
+    ).all()
+    has_more = len(rows) > limit
+    return rows[:limit], has_more
+
+
 @router.get("/", response_class=HTMLResponse)
 def dashboard(
     request: Request,
@@ -264,7 +276,7 @@ def dashboard(
         region_id=detail_region.id if detail_region else None,
         country_code=selected_country_code if not detail_region else None,
     ) if show_all else []
-    runs = db.scalars(select(ScrapeRun).order_by(desc(ScrapeRun.started_at)).limit(10)).all()
+    runs, runs_has_more = build_recent_runs_page(db, offset=0)
     region_stats = build_region_stats(db, selected_country_code)
     overpass_status = fetch_status()
     return templates.TemplateResponse(
@@ -283,6 +295,8 @@ def dashboard(
             "emails": emails,
             "company_rows": company_rows,
             "runs": runs,
+            "runs_has_more": runs_has_more,
+            "runs_page_size": RECENT_RUNS_PAGE_SIZE,
             "region_stats": region_stats,
             "overpass_status": overpass_status,
             "message": message,
@@ -377,6 +391,27 @@ def cancel_run_html(
     db.commit()
     message = quote_plus(f"Stop requested for run {run.id}.")
     return RedirectResponse(url=f"/?country_code={country_code}&message={message}", status_code=303)
+
+
+@router.get("/runs/recent", response_class=HTMLResponse)
+def recent_runs_partial(
+    request: Request,
+    offset: int = 0,
+    country_code: str = "",
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    runs, runs_has_more = build_recent_runs_page(db, offset=offset)
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/recent_runs_rows.html",
+        context={
+            "runs": runs,
+            "runs_has_more": runs_has_more,
+            "runs_offset": offset,
+            "runs_page_size": RECENT_RUNS_PAGE_SIZE,
+            "selected_country_code": country_code,
+        },
+    )
 
 
 @router.post("/emails/{email_id}/status", response_class=HTMLResponse)
