@@ -17,6 +17,11 @@ EMAIL_REGEX = re.compile(r"(?i)([a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,})")
 CONTACT_PATH_HINTS = ("contact", "about", "reservation", "booking")
 SOCIAL_HOSTS = ("facebook.com", "instagram.com", "linkedin.com", "tiktok.com", "youtube.com")
 CAPTCHA_HINTS = ("captcha", "g-recaptcha", "hcaptcha", "cf-turnstile")
+NOISE_EMAIL_DOMAINS = (
+    "sentry.io",
+    "sentry.wixpress.com",
+    "sentry-next.wixpress.com",
+)
 
 settings = get_settings()
 
@@ -87,6 +92,49 @@ def extract_forms(soup: BeautifulSoup, page_url: str) -> tuple[bool, list[dict]]
     return bool(forms), forms
 
 
+def decode_cloudflare_email(encoded_value: str | None) -> str | None:
+    if not encoded_value:
+        return None
+    try:
+        key = int(encoded_value[:2], 16)
+        decoded = "".join(
+            chr(int(encoded_value[index:index + 2], 16) ^ key)
+            for index in range(2, len(encoded_value), 2)
+        )
+    except Exception:
+        return None
+    return decoded
+
+
+def is_noise_email(email: str) -> bool:
+    normalized = email.strip().lower()
+    return any(normalized.endswith(f"@{domain}") for domain in NOISE_EMAIL_DOMAINS)
+
+
+def extract_emails(soup: BeautifulSoup) -> list[str]:
+    extraction_soup = BeautifulSoup(str(soup), "html.parser")
+    for tag in extraction_soup(["script", "style", "noscript", "template"]):
+        tag.decompose()
+
+    candidates: set[str] = set()
+    visible_text = unescape(extraction_soup.get_text(" ", strip=True))
+    candidates.update(match.group(1).lower() for match in EMAIL_REGEX.finditer(visible_text))
+
+    for link in extraction_soup.find_all("a", href=True):
+        href = unescape(link["href"]).strip()
+        if href.lower().startswith("mailto:"):
+            candidates.update(match.group(1).lower() for match in EMAIL_REGEX.finditer(href))
+        link_text = unescape(link.get_text(" ", strip=True))
+        candidates.update(match.group(1).lower() for match in EMAIL_REGEX.finditer(link_text))
+
+    for protected_email in extraction_soup.select("a.__cf_email__, span.__cf_email__"):
+        decoded = decode_cloudflare_email(protected_email.get("data-cfemail"))
+        if decoded:
+            candidates.add(decoded.lower())
+
+    return sorted(email for email in candidates if not is_noise_email(email))
+
+
 def crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
     website_url = normalize_url(website_url)
     if not fetch_robots_allowed(website_url):
@@ -120,8 +168,7 @@ def crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
                     )
                 soup = BeautifulSoup(response.text, "html.parser")
                 title = soup.title.text.strip() if soup.title and soup.title.text else None
-                text = unescape(soup.get_text(" ", strip=True))
-                emails = sorted({match.group(1).lower() for match in EMAIL_REGEX.finditer(text + " " + response.text)})
+                emails = extract_emails(soup)
                 social_links = []
                 for link in soup.find_all("a", href=True):
                     href = link["href"]
