@@ -10,6 +10,7 @@ from app.db import Base, SessionLocal, engine
 from app.routers.api import router as api_router
 from app.routers.ui import router as ui_router
 from app.seed import seed_defaults
+from app.services.company_dedupe import reconcile_duplicate_companies
 from app.services.region_catalog import sync_region_catalog
 from app.services.run_companies import reconcile_terminal_runs
 
@@ -24,6 +25,7 @@ async def lifespan(_app: FastAPI):
         seed_defaults(session)
         sync_region_catalog(session)
         reconcile_terminal_runs(session)
+        reconcile_duplicate_companies(session)
         session.commit()
     yield
 

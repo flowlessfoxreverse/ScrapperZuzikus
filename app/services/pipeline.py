@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import Category, Company, CompanyCategory, Email, Form, Page, Region, RunCategory, RunCompanyStatus, RunStatus, ScrapeRun
+from app.services.company_dedupe import find_company_by_website_key, should_replace_name
 from app.services.discovery_state import ensure_utc, get_or_create_region_category_state, should_refresh_discovery
 from app.services.crawler import crawl_site
 from app.services.metrics import record_request_metric
@@ -28,17 +29,25 @@ def upsert_company_from_element(
     query: str,
 ) -> Company:
     external_ref = f"{element.get('type', 'nwr')}:{element.get('id')}"
+    tags = element.get("tags", {})
+    incoming_name = tags.get("name") or external_ref
+    incoming_website = tags.get("website") or tags.get("contact:website")
     company = (
         session.query(Company)
         .filter(Company.region_id == region.id, Company.source == "overpass", Company.external_ref == external_ref)
         .one_or_none()
     )
-    tags = element.get("tags", {})
+    if company is None:
+        company = find_company_by_website_key(
+            session,
+            region.id,
+            incoming_website,
+        )
     if company is None:
         company = Company(
             region_id=region.id,
-            name=tags.get("name") or external_ref,
-            website_url=tags.get("website") or tags.get("contact:website"),
+            name=incoming_name,
+            website_url=incoming_website,
             city=tags.get("addr:city"),
             source="overpass",
             external_ref=external_ref,
@@ -50,10 +59,12 @@ def upsert_company_from_element(
         session.add(company)
         session.flush()
     else:
-        company.name = tags.get("name") or company.name
-        company.website_url = tags.get("website") or tags.get("contact:website") or company.website_url
+        if should_replace_name(company, incoming_name, external_ref):
+            company.name = incoming_name
+        company.website_url = incoming_website or company.website_url
         company.city = tags.get("addr:city") or company.city
-        company.source_payload = element
+        company.source_query = company.source_query or query[:255]
+        company.source_payload = company.source_payload or element
 
     company_category = (
         session.query(CompanyCategory)
