@@ -21,11 +21,12 @@ from app.services.crawler import (
     extract_pdf_page_results,
     extract_phones,
     extract_structured_contacts,
+    is_social_or_chat_url,
     sanitize_company_website_url,
     normalize_url,
     should_scan_assets,
 )
-from app.services.host_suppression import clear_host_failures, is_host_suppressed, normalize_host_key, register_host_failure
+from app.services.host_suppression import clear_host_failures, is_host_suppressed, normalize_host_key, register_host_failure, suppress_host
 
 
 settings = get_settings()
@@ -331,7 +332,7 @@ def browser_crawl_site(
                         if parsed.netloc.endswith(base.netloc) and any(hint in parsed.path.lower() for hint in CONTACT_PATH_HINTS):
                             if absolute not in seen and len(candidates) < settings.browser_max_pages_per_site:
                                 candidates.append(absolute)
-                        if any(host in absolute for host in SOCIAL_HOSTS):
+                        if is_social_or_chat_url(absolute):
                             social_links.append(absolute)
                     has_contact_form, forms = extract_forms(soup=soup, page_url=final_url)
                     deduped_channels: dict[tuple[str, str], dict[str, str]] = {}
@@ -399,7 +400,7 @@ def browser_crawl_site(
                             error=str(exc),
                         )
                     )
-                    register_host_failure(website_url)
+                    suppress_host(website_url)
                 finally:
                     page.close()
         finally:

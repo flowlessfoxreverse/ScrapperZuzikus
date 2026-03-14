@@ -71,6 +71,21 @@ def register_host_failure(url_or_host: str) -> None:
         return
 
 
+def suppress_host(url_or_host: str) -> None:
+    host_key = normalize_host_key(url_or_host)
+    if not host_key:
+        return
+    client = _redis_client()
+    if client is None:
+        return
+    ttl_seconds = max(60, settings.host_failure_cache_ttl_minutes * 60)
+    try:
+        client.setex(_blocked_key(host_key), ttl_seconds, "1")
+        client.setex(_count_key(host_key), ttl_seconds, str(settings.host_failure_threshold))
+    except Exception:
+        return
+
+
 def clear_host_failures(url_or_host: str) -> None:
     host_key = normalize_host_key(url_or_host)
     if not host_key:

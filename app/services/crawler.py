@@ -15,7 +15,13 @@ from bs4 import BeautifulSoup
 from pypdf import PdfReader
 
 from app.config import get_settings
-from app.services.host_suppression import clear_host_failures, is_host_suppressed, normalize_host_key, register_host_failure
+from app.services.host_suppression import (
+    clear_host_failures,
+    is_host_suppressed,
+    normalize_host_key,
+    register_host_failure,
+    suppress_host,
+)
 
 
 EMAIL_REGEX = re.compile(r"(?i)([a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,})")
@@ -53,13 +59,20 @@ PRIMARY_CONTACT_PATH_HINTS = (
     "about-us",
 )
 SOCIAL_HOSTS = (
+    "facebook",
     "facebook.com",
+    "instagram",
     "instagram.com",
+    "linkedin",
     "linkedin.com",
+    "tiktok",
     "tiktok.com",
+    "youtube",
     "youtube.com",
     "wa.me",
     "api.whatsapp.com",
+    "whatsapp",
+    "telegram",
     "t.me",
     "telegram.me",
 )
@@ -252,6 +265,18 @@ def _is_dead_host_error(exc: Exception) -> bool:
         "no route to host",
     )
     return any(indicator in message for indicator in indicators)
+
+
+def _is_dead_host_response(response: httpx.Response) -> bool:
+    reason = (getattr(response, "reason_phrase", "") or "").lower().replace(" ", "_")
+    if "no_host_connection" in reason:
+        return True
+    if response.status_code in {521, 522, 523, 530}:
+        return True
+    if response.status_code != 502:
+        return False
+    body = response.text[:512].lower()
+    return "no_host_connection" in body or "host connection" in body
 
 
 def _is_useless_page(
@@ -853,6 +878,32 @@ def crawl_site(
             seen.add(candidate)
             try:
                 response, insecure_fallback = fetch_page(client, candidate, headers=headers, on_request=on_request)
+                if _is_dead_host_response(response):
+                    pages.append(
+                        CrawlPageResult(
+                            url=str(response.url),
+                            title=None,
+                            status_code=response.status_code,
+                            emails=[],
+                            phones=[],
+                            channels=[],
+                            social_links=[],
+                            has_contact_form=False,
+                            forms=[],
+                            error="dead_host",
+                        )
+                    )
+                    suppress_host(website_url)
+                    if on_request:
+                        on_request(
+                            request_kind="suppressed_host",
+                            method="EVENT",
+                            url=str(response.url),
+                            status_code=response.status_code,
+                            duration_ms=0,
+                            error="dead_host_response",
+                        )
+                    break
                 if should_retry_with_browser_headers(response, headers):
                     with build_httpx_client(
                         headers=BROWSER_FALLBACK_HEADERS,
@@ -939,7 +990,7 @@ def crawl_site(
                     if parsed.netloc.endswith(base.netloc) and any(hint in parsed.path.lower() for hint in CONTACT_PATH_HINTS):
                         if absolute not in seen and len(candidates) < settings.max_pages_per_site:
                             candidates.append(absolute)
-                    if any(host in absolute for host in SOCIAL_HOSTS):
+                    if is_social_or_chat_url(absolute):
                         social_links.append(absolute)
 
                 has_contact_form, forms = extract_forms(soup=soup, page_url=str(response.url))
@@ -1034,7 +1085,7 @@ def crawl_site(
                     )
                 )
                 if _is_dead_host_error(exc):
-                    register_host_failure(website_url)
+                    suppress_host(website_url)
                     break
                 useless_attempts += 1
                 if useless_attempts >= settings.crawler_early_stop_core_attempts:
