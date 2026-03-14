@@ -25,6 +25,37 @@ from app.services.run_companies import (
 from app.services.usage import can_consume, consume_units
 
 
+def _find_pending_email(session: Session, company_id: int, normalized_email: str) -> Email | None:
+    for obj in session.new:
+        if isinstance(obj, Email) and obj.company_id == company_id and obj.email == normalized_email:
+            return obj
+    return None
+
+
+def _find_pending_phone(session: Session, company_id: int, normalized_phone: str) -> Phone | None:
+    for obj in session.new:
+        if isinstance(obj, Phone) and obj.company_id == company_id and obj.normalized_number == normalized_phone:
+            return obj
+    return None
+
+
+def _find_pending_contact_channel(
+    session: Session,
+    company_id: int,
+    channel_type: ContactChannelType,
+    normalized_value: str,
+) -> ContactChannel | None:
+    for obj in session.new:
+        if (
+            isinstance(obj, ContactChannel)
+            and obj.company_id == company_id
+            and obj.channel_type == channel_type
+            and obj.normalized_value == normalized_value
+        ):
+            return obj
+    return None
+
+
 def upsert_company_from_element(
     session: Session,
     region: Region,
@@ -117,6 +148,18 @@ def persist_email_value(
     normalized_email = email_value.strip().lower()
     if not normalized_email:
         return
+    pending = _find_pending_email(session, company.id, normalized_email)
+    if pending is not None:
+        pending.source_page_url = pending.source_page_url or source_page_url
+        pending.source_type = pending.source_type or source_type
+        pending.technical_metadata = _merge_provenance_metadata(
+            pending.technical_metadata,
+            source_type=source_type,
+            source_page_url=source_page_url,
+            payload=metadata,
+        )
+        pending.last_seen_at = datetime.now(timezone.utc)
+        return
     existing = (
         session.query(Email)
         .filter(Email.company_id == company.id, Email.email == normalized_email)
@@ -158,6 +201,20 @@ def persist_phone_value(
     normalized_phone = normalize_phone_number(phone_value, default_region_code=default_region_code)
     if not normalized_phone:
         return None
+    pending_phone = _find_pending_phone(session, company.id, normalized_phone)
+    if pending_phone is not None:
+        if len(phone_value.strip()) > len((pending_phone.phone_number or "").strip()):
+            pending_phone.phone_number = phone_value
+        pending_phone.source_page_url = pending_phone.source_page_url or source_page_url
+        pending_phone.source_type = pending_phone.source_type or source_type
+        pending_phone.technical_metadata = _merge_provenance_metadata(
+            pending_phone.technical_metadata,
+            source_type=source_type,
+            source_page_url=source_page_url,
+            payload=metadata,
+        )
+        pending_phone.last_seen_at = datetime.now(timezone.utc)
+        return normalized_phone
     existing_phone = (
         session.query(Phone)
         .filter(Phone.company_id == company.id, Phone.normalized_number == normalized_phone)
@@ -202,11 +259,26 @@ def persist_contact_channel(
     source_page_url: str | None,
     metadata: dict | None = None,
 ) -> None:
+    channel_type_enum = ContactChannelType(channel_type)
+    pending = _find_pending_contact_channel(session, company.id, channel_type_enum, normalized_value)
+    if pending is not None:
+        if len(channel_value.strip()) > len((pending.channel_value or "").strip()):
+            pending.channel_value = channel_value
+        pending.source_page_url = pending.source_page_url or source_page_url
+        pending.source_type = pending.source_type or source_type
+        pending.technical_metadata = _merge_provenance_metadata(
+            pending.technical_metadata,
+            source_type=source_type,
+            source_page_url=source_page_url,
+            payload=metadata,
+        )
+        pending.last_seen_at = datetime.now(timezone.utc)
+        return
     existing = (
         session.query(ContactChannel)
         .filter(
             ContactChannel.company_id == company.id,
-            ContactChannel.channel_type == channel_type,
+            ContactChannel.channel_type == channel_type_enum,
             ContactChannel.normalized_value == normalized_value,
         )
         .one_or_none()
@@ -221,7 +293,7 @@ def persist_contact_channel(
         session.add(
             ContactChannel(
                 company_id=company.id,
-                    channel_type=ContactChannelType(channel_type),
+                channel_type=channel_type_enum,
                 channel_value=channel_value,
                 normalized_value=normalized_value,
                 source_type=source_type,
