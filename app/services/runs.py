@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import RunCompanyStatus, RunStatus, ScrapeRun
+from app.models import RunCompany, RunCompanyStatus, RunStatus, ScrapeRun
 from app.services.run_companies import close_open_run_companies
 
 
@@ -40,6 +40,14 @@ def request_run_cancellation(session: Session, run_id: int, reason: str | None =
             prefix = f"{prefix} {reason[:500]}"
         run.note = prefix[:2000]
     session.add(run)
+    running_companies = session.scalar(
+        select(func.count()).select_from(RunCompany).where(
+            RunCompany.run_id == run_id,
+            RunCompany.status == RunCompanyStatus.RUNNING,
+        )
+    ) or 0
+    if run.status == RunStatus.PENDING or running_companies == 0:
+        finalize_cancelled_run(session, run, run.note)
     session.flush()
     return run
 
