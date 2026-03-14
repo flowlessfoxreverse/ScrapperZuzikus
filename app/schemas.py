@@ -64,6 +64,10 @@ class EmailRow(BaseModel):
     company_website: str | None
     company_phone_count: int
     company_latest_phone: str | None
+    company_whatsapp_count: int
+    company_latest_whatsapp: str | None
+    company_telegram_count: int
+    company_latest_telegram: str | None
     region_name: str
     validation_status: ValidationStatus
     suppression_status: str

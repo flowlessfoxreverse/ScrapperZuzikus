@@ -8,12 +8,12 @@ import re
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import desc, func, select
+from sqlalchemy import case, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import Category, Company, Email, Phone, ProxyEndpoint, ProxyKind, Region, RunCategory, RunStatus, ScrapeRun, ValidationStatus, Vertical
+from app.models import Category, Company, ContactChannel, ContactChannelType, Email, Phone, ProxyEndpoint, ProxyKind, Region, RunCategory, RunStatus, ScrapeRun, ValidationStatus, Vertical
 from app.schemas import EmailRow
 from app.services.overpass import fetch_status
 from app.services.proxy_pool import active_proxy_count, effective_proxy_capacity, lease_counts, list_proxies, release_proxy, upsert_proxy
@@ -62,6 +62,10 @@ class CompanyAuditRow:
     latest_email: str | None
     phone_count: int
     latest_phone: str | None
+    whatsapp_count: int
+    latest_whatsapp: str | None
+    telegram_count: int
+    latest_telegram: str | None
 
 
 @dataclass
@@ -158,6 +162,25 @@ def build_email_rows(
         company_id: (phone_count or 0, latest_phone)
         for company_id, phone_count, latest_phone in db.execute(phone_summary_stmt).all()
     }
+    channel_summary_stmt = (
+        select(
+            ContactChannel.company_id,
+            func.count(func.distinct(case((ContactChannel.channel_type == ContactChannelType.WHATSAPP, ContactChannel.id)))).label("whatsapp_count"),
+            func.max(case((ContactChannel.channel_type == ContactChannelType.WHATSAPP, ContactChannel.channel_value))).label("latest_whatsapp"),
+            func.count(func.distinct(case((ContactChannel.channel_type == ContactChannelType.TELEGRAM, ContactChannel.id)))).label("telegram_count"),
+            func.max(case((ContactChannel.channel_type == ContactChannelType.TELEGRAM, ContactChannel.channel_value))).label("latest_telegram"),
+        )
+        .group_by(ContactChannel.company_id)
+    )
+    channel_summary = {
+        company_id: (
+            whatsapp_count or 0,
+            latest_whatsapp,
+            telegram_count or 0,
+            latest_telegram,
+        )
+        for company_id, whatsapp_count, latest_whatsapp, telegram_count, latest_telegram in db.execute(channel_summary_stmt).all()
+    }
 
     stmt = (
         select(Email, Region)
@@ -181,6 +204,10 @@ def build_email_rows(
                 company_website=email.company.website_url,
                 company_phone_count=phone_summary.get(email.company_id, (0, None))[0],
                 company_latest_phone=phone_summary.get(email.company_id, (0, None))[1],
+                company_whatsapp_count=channel_summary.get(email.company_id, (0, None, 0, None))[0],
+                company_latest_whatsapp=channel_summary.get(email.company_id, (0, None, 0, None))[1],
+                company_telegram_count=channel_summary.get(email.company_id, (0, None, 0, None))[2],
+                company_latest_telegram=channel_summary.get(email.company_id, (0, None, 0, None))[3],
                 region_name=region.name,
                 validation_status=email.validation_status,
                 suppression_status=email.suppression_status,
@@ -203,6 +230,10 @@ def build_company_audit_rows(
     latest_email = func.max(Email.email)
     phone_count = func.count(func.distinct(Phone.id))
     latest_phone = func.max(Phone.phone_number)
+    whatsapp_count = func.count(func.distinct(case((ContactChannel.channel_type == ContactChannelType.WHATSAPP, ContactChannel.id))))
+    latest_whatsapp = func.max(case((ContactChannel.channel_type == ContactChannelType.WHATSAPP, ContactChannel.channel_value)))
+    telegram_count = func.count(func.distinct(case((ContactChannel.channel_type == ContactChannelType.TELEGRAM, ContactChannel.id))))
+    latest_telegram = func.max(case((ContactChannel.channel_type == ContactChannelType.TELEGRAM, ContactChannel.channel_value)))
     stmt = (
         select(
             Company,
@@ -211,10 +242,15 @@ def build_company_audit_rows(
             latest_email.label("latest_email"),
             phone_count.label("phone_count"),
             latest_phone.label("latest_phone"),
+            whatsapp_count.label("whatsapp_count"),
+            latest_whatsapp.label("latest_whatsapp"),
+            telegram_count.label("telegram_count"),
+            latest_telegram.label("latest_telegram"),
         )
         .join(Region, Company.region_id == Region.id)
         .outerjoin(Email, Email.company_id == Company.id)
         .outerjoin(Phone, Phone.company_id == Company.id)
+        .outerjoin(ContactChannel, ContactChannel.company_id == Company.id)
         .group_by(Company.id, Region.id)
         .order_by(Region.name.asc(), Company.name.asc())
     )
@@ -224,7 +260,18 @@ def build_company_audit_rows(
         stmt = stmt.where(Region.country_code == country_code)
 
     rows: list[CompanyAuditRow] = []
-    for company, region, email_count_value, latest_email_value, phone_count_value, latest_phone_value in db.execute(stmt).all():
+    for (
+        company,
+        region,
+        email_count_value,
+        latest_email_value,
+        phone_count_value,
+        latest_phone_value,
+        whatsapp_count_value,
+        latest_whatsapp_value,
+        telegram_count_value,
+        latest_telegram_value,
+    ) in db.execute(stmt).all():
         rows.append(
             CompanyAuditRow(
                 id=company.id,
@@ -238,6 +285,10 @@ def build_company_audit_rows(
                 latest_email=latest_email_value,
                 phone_count=phone_count_value or 0,
                 latest_phone=latest_phone_value,
+                whatsapp_count=whatsapp_count_value or 0,
+                latest_whatsapp=latest_whatsapp_value,
+                telegram_count=telegram_count_value or 0,
+                latest_telegram=latest_telegram_value,
             )
         )
     return rows

@@ -244,6 +244,10 @@
                   <th>Latest Email</th>
                   <th>Phones</th>
                   <th>Latest Phone</th>
+                  <th>WhatsApp</th>
+                  <th>Latest WhatsApp</th>
+                  <th>Telegram</th>
+                  <th>Latest Telegram</th>
                   <th>Form</th>
                   <th>Status</th>
                 </tr>
@@ -264,6 +268,10 @@
                   <td>{{ item.latest_email or "-" }}</td>
                   <td>{{ item.phone_count }}</td>
                   <td>{{ item.latest_phone or "-" }}</td>
+                  <td>{{ item.whatsapp_count }}</td>
+                  <td>{{ item.latest_whatsapp or "-" }}</td>
+                  <td>{{ item.telegram_count }}</td>
+                  <td>{{ item.latest_telegram or "-" }}</td>
                   <td>
                     {% if item.has_contact_form %}
                     <span class="badge warn">form detected</span>
@@ -274,7 +282,7 @@
                   <td><small class="subtle">{{ item.crawl_status }}</small></td>
                 </tr>
                 {% else %}
-                <tr><td colspan="9">No companies yet for this region.</td></tr>
+                <tr><td colspan="13">No companies yet for this region.</td></tr>
                 {% endfor %}
               </tbody>
             </table>
@@ -288,6 +296,10 @@
                   <th>Website</th>
                   <th>Phones</th>
                   <th>Latest Phone</th>
+                  <th>WhatsApp</th>
+                  <th>Latest WhatsApp</th>
+                  <th>Telegram</th>
+                  <th>Latest Telegram</th>
                   <th>Validation</th>
                   <th>Form</th>
                   <th>Source</th>
@@ -308,6 +320,10 @@
                   </td>
                   <td>{{ item.company_phone_count }}</td>
                   <td>{{ item.company_latest_phone or "-" }}</td>
+                  <td>{{ item.company_whatsapp_count }}</td>
+                  <td>{{ item.company_latest_whatsapp or "-" }}</td>
+                  <td>{{ item.company_telegram_count }}</td>
+                  <td>{{ item.company_latest_telegram or "-" }}</td>
                   <td id="email-status-embedded-{{ item.id }}">
                     {% include "partials/email_status.html" %}
                   </td>
@@ -324,7 +340,7 @@
                   </td>
                 </tr>
                 {% else %}
-                <tr><td colspan="9">No emails yet for this region.</td></tr>
+                <tr><td colspan="12">No emails yet for this region.</td></tr>
                 {% endfor %}
               </tbody>
             </table>
@@ -383,6 +399,10 @@
               <th>Latest Email</th>
               <th>Phones</th>
               <th>Latest Phone</th>
+              <th>WhatsApp</th>
+              <th>Latest WhatsApp</th>
+              <th>Telegram</th>
+              <th>Latest Telegram</th>
               <th>Form</th>
               <th>Status</th>
             </tr>
@@ -404,6 +424,10 @@
               <td>{{ item.latest_email or "-" }}</td>
               <td>{{ item.phone_count }}</td>
               <td>{{ item.latest_phone or "-" }}</td>
+              <td>{{ item.whatsapp_count }}</td>
+              <td>{{ item.latest_whatsapp or "-" }}</td>
+              <td>{{ item.telegram_count }}</td>
+              <td>{{ item.latest_telegram or "-" }}</td>
               <td>
                 {% if item.has_contact_form %}
                 <span class="badge warn">form detected</span>
@@ -414,7 +438,7 @@
               <td><small class="subtle">{{ item.crawl_status }}</small></td>
             </tr>
             {% else %}
-            <tr><td colspan="10">No companies yet.</td></tr>
+            <tr><td colspan="14">No companies yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -428,6 +452,10 @@
               <th>Website</th>
               <th>Phones</th>
               <th>Latest Phone</th>
+              <th>WhatsApp</th>
+              <th>Latest WhatsApp</th>
+              <th>Telegram</th>
+              <th>Latest Telegram</th>
               <th>Validation</th>
               <th>Form</th>
               <th>Source</th>
@@ -448,6 +476,10 @@
               </td>
               <td>{{ item.company_phone_count }}</td>
               <td>{{ item.company_latest_phone or "-" }}</td>
+              <td>{{ item.company_whatsapp_count }}</td>
+              <td>{{ item.company_latest_whatsapp or "-" }}</td>
+              <td>{{ item.company_telegram_count }}</td>
+              <td>{{ item.company_latest_telegram or "-" }}</td>
               <td id="email-status-{{ item.id }}">
                 {% include "partials/email_status.html" %}
               </td>
@@ -464,7 +496,7 @@
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="9">No emails yet.</td></tr>
+            <tr><td colspan="12">No emails yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>
