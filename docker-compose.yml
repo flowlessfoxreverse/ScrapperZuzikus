@@ -70,6 +70,10 @@ services:
 
   overpass:
     image: wiktorn/overpass-api:0.7.62
+    entrypoint:
+      - /bin/sh
+      - -c
+      - chmod og+rx /db && exec /docker-entrypoint.sh
     environment:
       OVERPASS_META: "no"
       OVERPASS_MODE: ${OVERPASS_MODE:-init}

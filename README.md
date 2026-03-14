@@ -98,6 +98,7 @@ CRAWL_WORKER_THREADS=1
 - Keep `OVERPASS_MODE=init` for the first bootstrap; after the database is initialized you can leave it as-is unless you intentionally rebuild the Overpass volume
 - If you replace the Overpass volume, the import process starts from scratch again
 - Geofabrik region extracts are downloaded by this image as `/db/planet.osm.bz2`, even when the source is a `.pbf`, so the preprocess step must rename that downloaded file to `.pbf` before converting it back to `osm.bz2`
+- The Compose service forces `chmod og+rx /db` before startup so the Overpass CGI process can reach the runtime socket in the mounted volume. If you see `Permission denied /db/db//osm3s_osm_base`, restart the `overpass` service after pulling the latest Compose file.
 
 ## Notes
 
