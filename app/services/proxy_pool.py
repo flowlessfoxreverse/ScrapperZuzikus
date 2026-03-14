@@ -30,8 +30,17 @@ def _capacity(proxy: ProxyEndpoint, workload: ProxyKind) -> int:
     return proxy.max_browser_leases if workload == ProxyKind.BROWSER else proxy.max_http_leases
 
 
+def _ensure_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _is_in_cooldown(proxy: ProxyEndpoint, now: datetime) -> bool:
-    return proxy.cooldown_until is not None and proxy.cooldown_until > now
+    cooldown_until = _ensure_utc(proxy.cooldown_until)
+    return cooldown_until is not None and cooldown_until > now
 
 
 def _clamp_health(value: int) -> int:
@@ -139,7 +148,7 @@ def acquire_proxy(
                 counts.get(proxy.id, {}).get("browser", 0),
                 counts.get(proxy.id, {}).get("crawler", 0),
                 proxy.last_used_at is not None,
-                proxy.last_used_at or datetime.min.replace(tzinfo=timezone.utc),
+                _ensure_utc(proxy.last_used_at) or datetime.min.replace(tzinfo=timezone.utc),
                 proxy.id,
             )
         )
@@ -150,7 +159,7 @@ def acquire_proxy(
                 proxy.health_score * -1,
                 counts.get(proxy.id, {}).get("crawler", 0),
                 proxy.last_used_at is not None,
-                proxy.last_used_at or datetime.min.replace(tzinfo=timezone.utc),
+                _ensure_utc(proxy.last_used_at) or datetime.min.replace(tzinfo=timezone.utc),
                 proxy.id,
             )
         )
