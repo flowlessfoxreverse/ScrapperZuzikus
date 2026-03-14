@@ -24,7 +24,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: python -m dramatiq --processes ${WORKER_PROCESSES:-1} --threads ${WORKER_THREADS:-1} --queues discovery,maintenance app.tasks
+    command: python -m dramatiq --processes ${WORKER_PROCESSES:-1} --threads ${WORKER_THREADS:-1} --queues discovery maintenance app.tasks:redis_broker app.tasks
     env_file:
       - .env
     volumes:
@@ -38,7 +38,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: python -m dramatiq --processes ${CRAWL_WORKER_PROCESSES:-1} --threads ${CRAWL_WORKER_THREADS:-1} --queues crawl app.tasks
+    command: python -m dramatiq --processes ${CRAWL_WORKER_PROCESSES:-1} --threads ${CRAWL_WORKER_THREADS:-1} --queues crawl app.tasks:redis_broker app.tasks
     env_file:
       - .env
     volumes:
