@@ -62,6 +62,8 @@ class EmailRow(BaseModel):
     company_name: str
     company_city: str | None
     company_website: str | None
+    company_phone_count: int
+    company_latest_phone: str | None
     region_name: str
     validation_status: ValidationStatus
     suppression_status: str

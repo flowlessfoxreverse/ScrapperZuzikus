@@ -109,6 +109,19 @@ def build_email_rows(
     region_id: int | None = None,
     country_code: str | None = None,
 ) -> list[EmailRow]:
+    phone_summary_stmt = (
+        select(
+            Phone.company_id,
+            func.count(func.distinct(Phone.id)).label("phone_count"),
+            func.max(Phone.phone_number).label("latest_phone"),
+        )
+        .group_by(Phone.company_id)
+    )
+    phone_summary = {
+        company_id: (phone_count or 0, latest_phone)
+        for company_id, phone_count, latest_phone in db.execute(phone_summary_stmt).all()
+    }
+
     stmt = (
         select(Email, Region)
         .join(Company, Email.company_id == Company.id)
@@ -129,6 +142,8 @@ def build_email_rows(
                 company_name=email.company.name,
                 company_city=email.company.city,
                 company_website=email.company.website_url,
+                company_phone_count=phone_summary.get(email.company_id, (0, None))[0],
+                company_latest_phone=phone_summary.get(email.company_id, (0, None))[1],
                 region_name=region.name,
                 validation_status=email.validation_status,
                 suppression_status=email.suppression_status,

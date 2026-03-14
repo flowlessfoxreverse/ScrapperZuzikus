@@ -265,6 +265,8 @@
                   <th>Company</th>
                   <th>City</th>
                   <th>Website</th>
+                  <th>Phones</th>
+                  <th>Latest Phone</th>
                   <th>Validation</th>
                   <th>Form</th>
                   <th>Source</th>
@@ -283,6 +285,8 @@
                     <span class="subtle">No website</span>
                     {% endif %}
                   </td>
+                  <td>{{ item.company_phone_count }}</td>
+                  <td>{{ item.company_latest_phone or "-" }}</td>
                   <td id="email-status-embedded-{{ item.id }}">
                     {% include "partials/email_status.html" %}
                   </td>
@@ -299,7 +303,7 @@
                   </td>
                 </tr>
                 {% else %}
-                <tr><td colspan="7">No emails yet for this region.</td></tr>
+                <tr><td colspan="9">No emails yet for this region.</td></tr>
                 {% endfor %}
               </tbody>
             </table>
@@ -401,6 +405,8 @@
               <th>Company</th>
               <th>City</th>
               <th>Website</th>
+              <th>Phones</th>
+              <th>Latest Phone</th>
               <th>Validation</th>
               <th>Form</th>
               <th>Source</th>
@@ -419,6 +425,8 @@
                 <span class="subtle">No website</span>
                 {% endif %}
               </td>
+              <td>{{ item.company_phone_count }}</td>
+              <td>{{ item.company_latest_phone or "-" }}</td>
               <td id="email-status-{{ item.id }}">
                 {% include "partials/email_status.html" %}
               </td>
@@ -435,7 +443,7 @@
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="7">No emails yet.</td></tr>
+            <tr><td colspan="9">No emails yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>
