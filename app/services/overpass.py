@@ -186,7 +186,7 @@ def _probe_interpreter(headers: dict[str, str]) -> OverpassStatus | None:
     probe_query = "[out:json][timeout:25];node(1);out;"
     try:
         with httpx.Client(timeout=min(settings.request_timeout_seconds, 10), headers=headers) as client:
-            response = client.post(settings.overpass_url, content=probe_query)
+            response = client.post(settings.overpass_url, data={"data": probe_query})
         response.raise_for_status()
         payload = response.json()
         if isinstance(payload, dict) and "elements" in payload:
@@ -216,7 +216,7 @@ def fetch_places(region: Region, category: Category, on_request=None) -> Overpas
         for attempt in range(1, settings.overpass_connect_retries + 1):
             started = time.perf_counter()
             try:
-                response = client.post(settings.overpass_url, content=query)
+                response = client.post(settings.overpass_url, data={"data": query})
             except httpx.HTTPError as exc:
                 duration_ms = int((time.perf_counter() - started) * 1000)
                 if on_request:
