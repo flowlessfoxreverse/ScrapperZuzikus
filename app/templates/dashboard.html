@@ -37,15 +37,38 @@
             {{ overpass_status.detail }}
           </small>
         </div>
-        <form action="/runs" method="post" class="run-form">
+        <form action="/runs" method="post" class="run-form" id="run-form">
+          <input type="hidden" name="country_code" value="{{ selected_country_code or '' }}" />
           <label>
-            <span>Region</span>
-            <select name="region_id">
-              {% for region in regions %}
-              <option value="{{ region.id }}" {% if region.id == selected_region %}selected{% endif %}>{{ region.name }}</option>
+            <span>Country</span>
+            <select id="country-select" name="country_selector">
+              {% for country in countries %}
+              <option value="{{ country.code }}" {% if country.code == selected_country_code %}selected{% endif %}>{{ country.name }}</option>
               {% endfor %}
             </select>
           </label>
+
+          <div class="selector-summary">
+            <div>
+              <strong>Province Scope</strong>
+              {% if provinces %}
+              <span class="subtle">{{ provinces|length }} provinces selected by default</span>
+              {% else %}
+              <span class="subtle">No province list available. The country-level region will be used.</span>
+              {% endif %}
+            </div>
+            <button type="button" class="ghost-button" onclick="openProvinceModal()">Choose Provinces</button>
+          </div>
+
+          {% if provinces %}
+          <div class="pill-row">
+            {% for province in provinces %}
+            <span class="pill">{{ province.name }}</span>
+            {% endfor %}
+          </div>
+          {% elif country_region %}
+          <input type="hidden" name="region_ids" value="{{ country_region.id }}" />
+          {% endif %}
 
           <fieldset>
             <legend>Categories</legend>
@@ -65,6 +88,32 @@
             <button type="submit" name="force_refresh" value="1" class="ghost-button">Force Refresh Selected</button>
           </div>
         </form>
+
+        <dialog id="province-modal" class="modal">
+          <div class="modal-card">
+            <div class="section-heading">
+              <h2>Choose Provinces</h2>
+              <button type="button" class="ghost-button small-button" onclick="closeProvinceModal()">Close</button>
+            </div>
+            <p class="subtle">All provinces are selected by default. Uncheck the ones you want to skip for this country run.</p>
+            <div class="hero-actions">
+              <button type="button" class="ghost-button small-button" onclick="setProvinceSelection(true)">Select All</button>
+              <button type="button" class="ghost-button small-button" onclick="setProvinceSelection(false)">Clear All</button>
+            </div>
+            <div class="checkbox-grid modal-grid">
+              {% for province in provinces %}
+              <label class="checkbox-card">
+                <input type="checkbox" name="region_ids" value="{{ province.id }}" form="run-form" checked />
+                <span>{{ province.name }}</span>
+                <small>{{ province.code }}</small>
+              </label>
+              {% endfor %}
+            </div>
+            {% if not provinces %}
+            <p class="subtle">No provinces available for this country.</p>
+            {% endif %}
+          </div>
+        </dialog>
       </section>
 
       <section class="grid">
@@ -117,7 +166,7 @@
             <tbody>
               {% for region in region_stats %}
               <tr>
-                <td><a href="/?region_id={{ region.id }}#region-detail">{{ region.name }}</a></td>
+                <td><a href="/?country_code={{ selected_country_code }}&region_id={{ region.id }}#region-detail">{{ region.name }}</a></td>
                 <td>{{ region.total_companies }}</td>
                 <td>{{ region.total_emails }}</td>
                 <td>{{ region.valid_emails }}</td>
@@ -133,7 +182,7 @@
           <div id="region-detail" class="detail-block">
             <div class="section-heading">
               <div class="hero-actions">
-                <a class="ghost-button small-button" href="/">&#8592; Back</a>
+                <a class="ghost-button small-button" href="/?country_code={{ selected_country_code }}">&#8592; Back</a>
               </div>
               <span class="subtle">{{ detail_region.name }}</span>
             </div>
@@ -241,5 +290,33 @@
       </section>
       {% endif %}
     </main>
+    <script>
+      const countrySelect = document.getElementById("country-select");
+      const provinceModal = document.getElementById("province-modal");
+      function openProvinceModal() {
+        if (provinceModal) {
+          provinceModal.showModal();
+        }
+      }
+
+      function closeProvinceModal() {
+        if (provinceModal) {
+          provinceModal.close();
+        }
+      }
+
+      function setProvinceSelection(checked) {
+        document.querySelectorAll('input[name="region_ids"][form="run-form"]').forEach((input) => {
+          input.checked = checked;
+        });
+      }
+
+      if (countrySelect) {
+        countrySelect.addEventListener("change", (event) => {
+          const nextCountry = event.target.value;
+          window.location.href = `/?country_code=${encodeURIComponent(nextCountry)}`;
+        });
+      }
+    </script>
   </body>
 </html>

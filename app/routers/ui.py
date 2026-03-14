@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -31,7 +32,19 @@ class RegionStatsRow:
     last_run_status: str | None
 
 
-def build_email_rows(db: Session, region_id: int | None = None) -> list[EmailRow]:
+@dataclass
+class CountryOption:
+    code: str
+    name: str
+    region_id: int
+    province_count: int
+
+
+def build_email_rows(
+    db: Session,
+    region_id: int | None = None,
+    country_code: str | None = None,
+) -> list[EmailRow]:
     stmt = (
         select(Email, Region)
         .join(Company, Email.company_id == Company.id)
@@ -40,6 +53,8 @@ def build_email_rows(db: Session, region_id: int | None = None) -> list[EmailRow
     )
     if region_id:
         stmt = stmt.where(Region.id == region_id)
+    elif country_code:
+        stmt = stmt.where(Region.country_code == country_code)
 
     rows = []
     for email, region in db.execute(stmt).all():
@@ -63,9 +78,40 @@ def build_email_rows(db: Session, region_id: int | None = None) -> list[EmailRow
     return rows
 
 
-def build_region_stats(db: Session) -> list[RegionStatsRow]:
+def build_country_options(db: Session) -> list[CountryOption]:
+    countries = db.scalars(
+        select(Region)
+        .where(Region.is_active.is_(True), Region.osm_admin_level == 2)
+        .order_by(Region.name)
+    ).all()
+    options: list[CountryOption] = []
+    for country in countries:
+        province_count = db.scalar(
+            select(func.count())
+            .select_from(Region)
+            .where(
+                Region.is_active.is_(True),
+                Region.country_code == country.country_code,
+                Region.osm_admin_level > 2,
+            )
+        ) or 0
+        options.append(
+            CountryOption(
+                code=country.country_code,
+                name=country.name,
+                region_id=country.id,
+                province_count=province_count,
+            )
+        )
+    return options
+
+
+def build_region_stats(db: Session, country_code: str | None = None) -> list[RegionStatsRow]:
     rows = []
-    regions = db.scalars(select(Region).where(Region.is_active.is_(True)).order_by(Region.name)).all()
+    stmt = select(Region).where(Region.is_active.is_(True), Region.osm_admin_level > 2).order_by(Region.name)
+    if country_code:
+        stmt = stmt.where(Region.country_code == country_code)
+    regions = db.scalars(stmt).all()
     for region in regions:
         total_companies = db.scalar(select(func.count()).select_from(Company).where(Company.region_id == region.id)) or 0
         total_emails = db.scalar(
@@ -100,24 +146,56 @@ def build_region_stats(db: Session) -> list[RegionStatsRow]:
 def dashboard(
     request: Request,
     region_id: int | None = None,
+    country_code: str | None = None,
     message: str | None = None,
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    regions = db.scalars(select(Region).where(Region.is_active.is_(True)).order_by(Region.name)).all()
+    countries = build_country_options(db)
     categories = db.scalars(select(Category).where(Category.is_active.is_(True)).order_by(Category.vertical, Category.label)).all()
-    form_region_id = region_id or (regions[0].id if regions else None)
     detail_region = db.get(Region, region_id) if region_id else None
-    emails = build_email_rows(db, detail_region.id if detail_region else None)
+    selected_country_code = country_code or (detail_region.country_code if detail_region else None)
+    if not selected_country_code and countries:
+        selected_country_code = countries[0].code
+
+    country_region = db.scalar(
+        select(Region).where(
+            Region.is_active.is_(True),
+            Region.country_code == selected_country_code,
+            Region.osm_admin_level == 2,
+        )
+    ) if selected_country_code else None
+    provinces = db.scalars(
+        select(Region)
+        .where(
+            Region.is_active.is_(True),
+            Region.country_code == selected_country_code,
+            Region.osm_admin_level > 2,
+        )
+        .order_by(Region.name)
+    ).all() if selected_country_code else []
+
+    default_region_ids = [region.id for region in provinces]
+    if not default_region_ids and country_region is not None:
+        default_region_ids = [country_region.id]
+
+    emails = build_email_rows(
+        db,
+        region_id=detail_region.id if detail_region else None,
+        country_code=selected_country_code if not detail_region else None,
+    )
     runs = db.scalars(select(ScrapeRun).order_by(desc(ScrapeRun.started_at)).limit(10)).all()
-    region_stats = build_region_stats(db)
+    region_stats = build_region_stats(db, selected_country_code)
     overpass_status = fetch_status()
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
         context={
-            "regions": regions,
+            "countries": countries,
             "categories": categories,
-            "selected_region": form_region_id,
+            "selected_country_code": selected_country_code,
+            "country_region": country_region,
+            "provinces": provinces,
+            "default_region_ids": default_region_ids,
             "detail_region": detail_region,
             "emails": emails,
             "runs": runs,
@@ -131,27 +209,70 @@ def dashboard(
 
 @router.post("/runs", response_class=HTMLResponse)
 def queue_run(
-    region_id: int = Form(...),
+    country_code: str = Form(...),
+    region_ids: list[int] | None = Form(None),
     category_ids: list[int] = Form(...),
     force_refresh: str | None = Form(None),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
-    active_run = find_active_run(db, region_id)
-    if active_run is not None:
-        return RedirectResponse(
-            url=f"/?region_id={region_id}&message=Run+{active_run.id}+is+already+{active_run.status.value}+for+this+region.",
-            status_code=303,
-        )
+    selected_regions = []
+    if region_ids:
+        selected_regions = db.scalars(
+            select(Region)
+            .where(
+                Region.id.in_(region_ids),
+                Region.is_active.is_(True),
+            )
+            .order_by(Region.name)
+        ).all()
 
-    run = ScrapeRun(region_id=region_id)
-    db.add(run)
-    db.flush()
-    for category_id in category_ids:
-        db.add(RunCategory(run_id=run.id, category_id=category_id))
-    db.commit()
+    if not selected_regions:
+        fallback_region = db.scalar(
+            select(Region).where(
+                Region.is_active.is_(True),
+                Region.country_code == country_code,
+                Region.osm_admin_level == 2,
+            )
+        )
+        if fallback_region is not None:
+            selected_regions = [fallback_region]
+
+    if not selected_regions:
+        message = quote_plus("No provinces available for the selected country.")
+        return RedirectResponse(url=f"/?country_code={country_code}&message={message}", status_code=303)
+
+    queued_runs: list[int] = []
+    skipped_regions: list[str] = []
     force_refresh_category_ids = category_ids if force_refresh == "1" else []
-    run_scrape.send(run.id, force_refresh_category_ids=force_refresh_category_ids)
-    return RedirectResponse(url=f"/?region_id={region_id}", status_code=303)
+
+    for region in selected_regions:
+        active_run = find_active_run(db, region.id)
+        if active_run is not None:
+            skipped_regions.append(region.name)
+            continue
+
+        run = ScrapeRun(region_id=region.id)
+        db.add(run)
+        db.flush()
+        for category_id in category_ids:
+            db.add(RunCategory(run_id=run.id, category_id=category_id))
+        db.commit()
+        queued_runs.append(run.id)
+        run_scrape.send(run.id, force_refresh_category_ids=force_refresh_category_ids)
+
+    if queued_runs and skipped_regions:
+        message = f"Queued {len(queued_runs)} province runs. Skipped active regions: {', '.join(skipped_regions[:5])}"
+        if len(skipped_regions) > 5:
+            message += f" and {len(skipped_regions) - 5} more."
+    elif queued_runs:
+        message = f"Queued {len(queued_runs)} province runs for {country_code}."
+    else:
+        message = "All selected provinces already have active runs."
+
+    return RedirectResponse(
+        url=f"/?country_code={country_code}&message={quote_plus(message)}",
+        status_code=303,
+    )
 
 
 @router.post("/emails/{email_id}/status", response_class=HTMLResponse)

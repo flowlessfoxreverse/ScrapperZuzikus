@@ -105,6 +105,35 @@ legend {
   border-top: 1px solid var(--line);
 }
 
+.selector-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 140px;
+  overflow: auto;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #ece7df;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .small-button {
   min-width: 0;
   padding: 8px 12px;
@@ -175,6 +204,32 @@ button,
   background: transparent;
   color: var(--accent);
   border: 1px solid var(--accent);
+}
+
+.modal {
+  width: min(900px, calc(100vw - 32px));
+  border: none;
+  padding: 0;
+  background: transparent;
+}
+
+.modal::backdrop {
+  background: rgba(31, 28, 23, 0.45);
+}
+
+.modal-card {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.modal-grid {
+  max-height: 55vh;
+  overflow: auto;
 }
 
 table {
