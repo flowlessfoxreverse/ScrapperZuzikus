@@ -184,6 +184,23 @@ def _import_progress(files: dict[str, int | bool | None]) -> tuple[int | None, s
     return progress, f"Approx. {progress}% of import complete"
 
 
+def _friendly_bootstrap_probe_message(exc: Exception, stage: str) -> str:
+    message = str(exc).lower()
+    if "connection refused" in message or "errno 111" in message:
+        if stage == "converting":
+            return "Overpass is still offline while the dataset is being converted."
+        if stage == "importing":
+            return "Overpass is still offline while the local database is being built."
+        if stage == "downloading":
+            return "Overpass will come online after the initial dataset download finishes."
+        return "Overpass is still starting up."
+    if "temporary failure in name resolution" in message or "name or service not known" in message:
+        return "Overpass is still starting up and has not joined the internal network yet."
+    if "timed out" in message or "timeout" in message:
+        return "Overpass is still starting up and did not answer the readiness probe yet."
+    return "Overpass is still starting up and is not ready for requests yet."
+
+
 def fetch_status() -> OverpassStatus:
     url = status_url()
     headers = {"User-Agent": settings.user_agent}
@@ -223,7 +240,9 @@ def fetch_status() -> OverpassStatus:
     except Exception as exc:
         bootstrap = _bootstrap_status_from_files()
         if bootstrap.stage != "unknown":
-            bootstrap.detail = f"{bootstrap.detail} Probe error: {str(exc)[:200]}"
+            bootstrap.detail = (
+                f"{bootstrap.detail} {_friendly_bootstrap_probe_message(exc, bootstrap.stage)}"
+            )
             return bootstrap
         return OverpassStatus(
             ok=False,
