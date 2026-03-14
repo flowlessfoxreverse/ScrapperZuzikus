@@ -114,33 +114,60 @@ def fetch_places(region: Region, category: Category, on_request=None) -> Overpas
     query = build_query(region=region, category=category)
     headers = {"User-Agent": settings.user_agent}
     with httpx.Client(timeout=settings.request_timeout_seconds, headers=headers) as client:
-        started = time.perf_counter()
-        response = client.post(settings.overpass_url, content=query)
-        duration_ms = int((time.perf_counter() - started) * 1000)
-        if on_request:
-            on_request(
-                method="POST",
-                url=settings.overpass_url,
-                status_code=response.status_code,
-                duration_ms=duration_ms,
-                error=None if response.is_success else response.text.strip()[:2000],
+        last_exception: Exception | None = None
+        for attempt in range(1, settings.overpass_connect_retries + 1):
+            started = time.perf_counter()
+            try:
+                response = client.post(settings.overpass_url, content=query)
+            except httpx.HTTPError as exc:
+                duration_ms = int((time.perf_counter() - started) * 1000)
+                if on_request:
+                    on_request(
+                        method="POST",
+                        url=settings.overpass_url,
+                        status_code=None,
+                        duration_ms=duration_ms,
+                        error=f"attempt {attempt}/{settings.overpass_connect_retries}: {exc}",
+                    )
+                last_exception = exc
+                if attempt < settings.overpass_connect_retries:
+                    time.sleep(settings.overpass_retry_backoff_seconds * attempt)
+                    continue
+                raise RuntimeError(
+                    f"Overpass connection failed for category {category.slug} in region {region.code} "
+                    f"after {settings.overpass_connect_retries} attempts: {exc}"
+                ) from exc
+
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            if on_request:
+                on_request(
+                    method="POST",
+                    url=settings.overpass_url,
+                    status_code=response.status_code,
+                    duration_ms=duration_ms,
+                    error=None if response.is_success else response.text.strip()[:2000],
+                )
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                detail = response.text.strip()
+                raise RuntimeError(
+                    f"Overpass request failed with status {response.status_code} for category "
+                    f"{category.slug} in region {region.code}. Query: {query.strip()} Response: {detail}"
+                ) from exc
+            try:
+                payload = response.json()
+            except json.JSONDecodeError as exc:
+                content_type = response.headers.get("content-type", "unknown")
+                detail = response.text.strip()[:2000] or "<empty response>"
+                raise RuntimeError(
+                    f"Overpass returned non-JSON payload for category {category.slug} in region "
+                    f"{region.code}. Status: {response.status_code}. Content-Type: {content_type}. "
+                    f"Query: {query.strip()} Response: {detail}"
+                ) from exc
+            break
+        else:
+            raise RuntimeError(
+                f"Overpass connection failed for category {category.slug} in region {region.code}: {last_exception}"
             )
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            detail = response.text.strip()
-            raise RuntimeError(
-                f"Overpass request failed with status {response.status_code} for category "
-                f"{category.slug} in region {region.code}. Query: {query.strip()} Response: {detail}"
-            ) from exc
-        try:
-            payload = response.json()
-        except json.JSONDecodeError as exc:
-            content_type = response.headers.get("content-type", "unknown")
-            detail = response.text.strip()[:2000] or "<empty response>"
-            raise RuntimeError(
-                f"Overpass returned non-JSON payload for category {category.slug} in region "
-                f"{region.code}. Status: {response.status_code}. Content-Type: {content_type}. "
-                f"Query: {query.strip()} Response: {detail}"
-            ) from exc
     return OverpassResult(query=query, elements=payload.get("elements", []))

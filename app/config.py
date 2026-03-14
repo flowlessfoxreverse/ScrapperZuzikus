@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     overpass_url: str = "http://overpass/api/interpreter"
     overpass_daily_query_cap: int = 0
+    overpass_connect_retries: int = 4
+    overpass_retry_backoff_seconds: float = 1.5
     discovery_cooldown_hours: int = 168
     crawl_recrawl_hours: int = 168
     region_catalog_countries: str = "TH"

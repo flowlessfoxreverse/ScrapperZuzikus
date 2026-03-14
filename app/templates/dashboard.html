@@ -52,7 +52,7 @@
             <div>
               <strong>Province Scope</strong>
               {% if provinces %}
-              <span class="subtle">{{ provinces|length }} provinces selected by default</span>
+              <span id="province-selection-status" class="subtle">{{ provinces|length }} provinces selected</span>
               {% else %}
               <span class="subtle">No province list available. The country-level region will be used.</span>
               {% endif %}
@@ -61,9 +61,9 @@
           </div>
 
           {% if provinces %}
-          <div class="pill-row">
+          <div class="pill-row" id="province-pill-row">
             {% for province in provinces %}
-            <span class="pill">{{ province.name }}</span>
+            <span class="pill" data-region-pill="{{ province.id }}">{{ province.name }}</span>
             {% endfor %}
           </div>
           {% elif country_region %}
@@ -103,7 +103,7 @@
             <div class="checkbox-grid modal-grid">
               {% for province in provinces %}
               <label class="checkbox-card">
-                <input type="checkbox" name="region_ids" value="{{ province.id }}" form="run-form" checked />
+                <input type="checkbox" name="region_ids" value="{{ province.id }}" form="run-form" checked data-region-name="{{ province.name }}" />
                 <span>{{ province.name }}</span>
                 <small>{{ province.code }}</small>
               </label>
@@ -390,6 +390,26 @@
     <script>
       const countrySelect = document.getElementById("country-select");
       const provinceModal = document.getElementById("province-modal");
+      const provinceSelectionStatus = document.getElementById("province-selection-status");
+      const provinceInputs = Array.from(document.querySelectorAll('input[name="region_ids"][form="run-form"]'));
+      const provincePills = Array.from(document.querySelectorAll("[data-region-pill]"));
+      const runForm = document.getElementById("run-form");
+
+      function updateProvinceSelectionUI() {
+        if (!provinceInputs.length) {
+          return;
+        }
+        const selectedInputs = provinceInputs.filter((input) => input.checked);
+        const selectedCount = selectedInputs.length;
+        if (provinceSelectionStatus) {
+          provinceSelectionStatus.textContent = `${selectedCount} province${selectedCount === 1 ? "" : "s"} selected`;
+        }
+        const selectedIds = new Set(selectedInputs.map((input) => input.value));
+        provincePills.forEach((pill) => {
+          pill.hidden = !selectedIds.has(pill.dataset.regionPill);
+        });
+      }
+
       function openProvinceModal() {
         if (provinceModal) {
           provinceModal.showModal();
@@ -403,9 +423,10 @@
       }
 
       function setProvinceSelection(checked) {
-        document.querySelectorAll('input[name="region_ids"][form="run-form"]').forEach((input) => {
+        provinceInputs.forEach((input) => {
           input.checked = checked;
         });
+        updateProvinceSelectionUI();
       }
 
       if (countrySelect) {
@@ -414,6 +435,19 @@
           window.location.href = `/?country_code=${encodeURIComponent(nextCountry)}`;
         });
       }
+
+      provinceInputs.forEach((input) => {
+        input.addEventListener("change", updateProvinceSelectionUI);
+      });
+      if (runForm) {
+        runForm.addEventListener("submit", (event) => {
+          if (provinceInputs.length && provinceInputs.every((input) => !input.checked)) {
+            event.preventDefault();
+            openProvinceModal();
+          }
+        });
+      }
+      updateProvinceSelectionUI();
     </script>
   </body>
 </html>
