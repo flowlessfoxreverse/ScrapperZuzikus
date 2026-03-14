@@ -358,6 +358,15 @@ def normalize_phone_number(value: str, default_region_code: str | None = None) -
     if not candidate:
         return None
     lowered = candidate.lower()
+    parsed_candidate = urlparse(candidate)
+    if parsed_candidate.scheme in {"http", "https"} or parsed_candidate.netloc:
+        return None
+    if "www." in lowered or "://" in lowered:
+        return None
+    if sum(char.isalpha() for char in candidate) > 3:
+        return None
+    if len(candidate) > 64:
+        return None
     if re.search(r"\b\d{1,2}[.:]\d{2}\b", lowered):
         return None
 

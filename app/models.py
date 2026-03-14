@@ -232,7 +232,7 @@ class Phone(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
-    phone_number: Mapped[str] = mapped_column(String(64), index=True)
+    phone_number: Mapped[str] = mapped_column(String(255), index=True)
     normalized_number: Mapped[str] = mapped_column(String(32), index=True)
     source_type: Mapped[str] = mapped_column(String(32), default="regex")
     source_page_url: Mapped[str | None] = mapped_column(String(500), nullable=True)

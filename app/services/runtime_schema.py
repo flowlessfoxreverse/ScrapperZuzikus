@@ -139,3 +139,26 @@ def ensure_contact_channel_schema(engine: Engine) -> None:
     with engine.begin() as connection:
         for statement in statements:
             connection.execute(text(statement))
+
+
+def ensure_phone_schema(engine: Engine) -> None:
+    inspector = inspect(engine)
+    try:
+        columns = {column["name"]: column for column in inspector.get_columns("phones")}
+    except Exception:
+        return
+
+    phone_column = columns.get("phone_number")
+    if phone_column is None:
+        return
+
+    current_length = getattr(phone_column.get("type"), "length", None)
+    if current_length is not None and current_length >= 255:
+        return
+
+    dialect = engine.dialect.name
+    if dialect != "postgresql":
+        return
+
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE phones ALTER COLUMN phone_number TYPE VARCHAR(255)"))

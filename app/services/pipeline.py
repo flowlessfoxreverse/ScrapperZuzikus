@@ -719,6 +719,11 @@ def execute_crawl(session: Session, run_id: int, company_id: int) -> None:
             return
         mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.COMPLETED)
     except Exception as exc:
+        session.rollback()
+        run = session.get(ScrapeRun, run_id)
+        company = session.get(Company, company_id)
+        if run is None or company is None:
+            return
         company.crawl_status = "failed"
         session.add(company)
         mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.FAILED, str(exc))
@@ -778,6 +783,11 @@ def execute_browser_crawl(session: Session, run_id: int, company_id: int) -> Non
         )
         mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.COMPLETED)
     except Exception as exc:
+        session.rollback()
+        run = session.get(ScrapeRun, run_id)
+        company = session.get(Company, company_id)
+        if run is None or company is None:
+            return
         company.crawl_status = "failed"
         session.add(company)
         mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.FAILED, str(exc))
