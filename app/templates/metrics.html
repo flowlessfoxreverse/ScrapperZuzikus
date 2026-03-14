@@ -91,6 +91,39 @@
 
       <section class="panel">
         <div class="section-heading">
+          <h2>Process Signals</h2>
+          <span>Top 20 crawl/browser control events</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Signal</th>
+              <th>Count</th>
+              <th>Proxied</th>
+              <th>Error Tagged</th>
+              <th>Last Seen</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in signals %}
+            <tr>
+              <td>{{ item.provider }}</td>
+              <td>{{ item.signal }}</td>
+              <td>{{ item.request_count }}</td>
+              <td>{{ item.proxied_count }}</td>
+              <td>{{ item.error_count }}</td>
+              <td>{{ item.last_seen_at }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6">No process signals yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
           <h2>Slow Hosts</h2>
           <span>Top 20 by average latency</span>
         </div>

@@ -793,6 +793,15 @@ def crawl_site(
 ) -> CrawlSiteResult:
     website_url = normalize_url(website_url)
     if is_host_suppressed(website_url):
+        if on_request:
+            on_request(
+                request_kind="suppressed_host",
+                method="EVENT",
+                url=website_url,
+                status_code=None,
+                duration_ms=0,
+                error="suppressed_host",
+            )
         return CrawlSiteResult(pages=[], crawl_status="suppressed_host")
     robots_blocked = not fetch_robots_allowed(website_url)
     if robots_blocked and not settings.crawler_ignore_robots:
@@ -895,6 +904,15 @@ def crawl_site(
                     and should_scan_assets(soup, str(response.url))
                 ):
                     page_error = "js_shell"
+                    if on_request:
+                        on_request(
+                            request_kind="js_shell",
+                            method="EVENT",
+                            url=str(response.url),
+                            status_code=response.status_code,
+                            duration_ms=0,
+                            error="js_shell",
+                        )
                 deduped_channels: dict[tuple[str, str], dict[str, str]] = {}
                 for channel in channels:
                     key = (channel["channel_type"], channel["normalized_value"])
@@ -940,6 +958,15 @@ def crawl_site(
                     clear_host_failures(website_url)
                 if not useful_found and useless_attempts >= settings.crawler_early_stop_core_attempts:
                     register_host_failure(website_url)
+                    if on_request:
+                        on_request(
+                            request_kind="early_stopped",
+                            method="EVENT",
+                            url=website_url,
+                            status_code=response.status_code,
+                            duration_ms=0,
+                            error=f"useless_after_{useless_attempts}",
+                        )
                     break
             except Exception as exc:
                 pages.append(
@@ -962,6 +989,15 @@ def crawl_site(
                 useless_attempts += 1
                 if useless_attempts >= settings.crawler_early_stop_core_attempts:
                     register_host_failure(website_url)
+                    if on_request:
+                        on_request(
+                            request_kind="early_stopped",
+                            method="EVENT",
+                            url=website_url,
+                            status_code=None,
+                            duration_ms=0,
+                            error=f"exception_after_{useless_attempts}",
+                        )
                     break
 
     crawl_status = "completed" if any(page.status_code for page in pages) else "failed"

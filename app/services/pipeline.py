@@ -476,10 +476,11 @@ def persist_crawl(
     default_region_code = company.region.country_code if company.region else None
 
     def on_request(**metric):
+        request_kind = metric.pop("request_kind", "crawl")
         record_request_metric(
             session,
             provider=request_provider,
-            request_kind="crawl",
+            request_kind=request_kind,
             run_id=run_id,
             company_id=company.id,
             used_proxy=bool(effective_crawler_kwargs.get("proxy_url")),
@@ -802,6 +803,27 @@ def execute_crawl(session: Session, run_id: int, company_id: int) -> None:
             proxy_label=proxy.label if proxy else None,
         )
         if settings.browser_fallback_enabled and result is not None and should_browser_escalate(result):
+            escalation_reason = "generic"
+            if any(page.error == "anti_bot_challenge" for page in result.pages):
+                escalation_reason = "anti_bot_challenge"
+            elif any(page.error == "js_shell" for page in result.pages):
+                escalation_reason = "js_shell"
+            elif result.crawl_status in {"blocked_by_robots", "robots_bypassed"}:
+                escalation_reason = result.crawl_status
+            record_request_metric(
+                session,
+                provider="website",
+                request_kind="browser_escalation",
+                method="EVENT",
+                url=company.website_url,
+                duration_ms=0,
+                used_proxy=bool(proxy_url),
+                proxy_id=proxy.id if proxy else None,
+                proxy_label=proxy.label if proxy else None,
+                run_id=run_id,
+                company_id=company.id,
+                error=escalation_reason,
+            )
             release_proxy(session, proxy.id if proxy else None, owner=owner, workload=ProxyKind.CRAWLER, failed=False)
             requeue_run_company(session, run_id, company_id, "Escalated to browser crawl.")
             session.commit()

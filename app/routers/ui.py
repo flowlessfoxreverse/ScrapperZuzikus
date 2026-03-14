@@ -139,6 +139,16 @@ class ProxyMetricRow:
     last_seen_at: datetime
 
 
+@dataclass
+class SignalMetricRow:
+    provider: str
+    signal: str
+    request_count: int
+    proxied_count: int
+    error_count: int
+    last_seen_at: datetime
+
+
 def proxy_status_label(proxy: ProxyEndpoint) -> str:
     now = datetime.now(timezone.utc)
     if proxy.auto_disabled_at is not None or not proxy.is_active:
@@ -441,7 +451,7 @@ def build_request_metric_views(
     db: Session,
     *,
     limit: int = 2000,
-) -> tuple[list[MetricSummaryRow], list[HostMetricRow], list[ErrorMetricRow], list[ProxyMetricRow]]:
+) -> tuple[list[MetricSummaryRow], list[HostMetricRow], list[ErrorMetricRow], list[ProxyMetricRow], list[SignalMetricRow]]:
     metrics = db.scalars(
         select(RequestMetric)
         .order_by(RequestMetric.created_at.desc())
@@ -452,6 +462,8 @@ def build_request_metric_views(
     host_buckets: dict[tuple[str, str], dict[str, int]] = {}
     error_buckets: dict[tuple[str, str, str], dict[str, object]] = {}
     proxy_buckets: dict[tuple[str, str], dict[str, object]] = {}
+    signal_buckets: dict[tuple[str, str], dict[str, object]] = {}
+    signal_kinds = {"suppressed_host", "js_shell", "early_stopped", "browser_escalation", "anti_bot_challenge"}
 
     for metric in metrics:
         transport = "proxy" if metric.used_proxy else "direct"
@@ -509,6 +521,20 @@ def build_request_metric_views(
             if metric.created_at > proxy_bucket["last_seen_at"]:
                 proxy_bucket["last_seen_at"] = metric.created_at
 
+        if metric.request_kind in signal_kinds:
+            signal_key = (metric.provider, metric.request_kind)
+            signal_bucket = signal_buckets.setdefault(
+                signal_key,
+                {"count": 0, "proxied_count": 0, "error_count": 0, "last_seen_at": metric.created_at},
+            )
+            signal_bucket["count"] += 1
+            if metric.used_proxy:
+                signal_bucket["proxied_count"] += 1
+            if metric.error:
+                signal_bucket["error_count"] += 1
+            if metric.created_at > signal_bucket["last_seen_at"]:
+                signal_bucket["last_seen_at"] = metric.created_at
+
     summaries = [
         MetricSummaryRow(
             provider=provider,
@@ -560,7 +586,19 @@ def build_request_metric_views(
         for (proxy_label, provider), values in proxy_buckets.items()
     ]
     proxies.sort(key=lambda row: (-row.request_count, row.proxy_label, row.provider))
-    return summaries, hosts[:20], errors[:20], proxies[:20]
+    signals = [
+        SignalMetricRow(
+            provider=provider,
+            signal=signal,
+            request_count=values["count"],
+            proxied_count=values["proxied_count"],
+            error_count=values["error_count"],
+            last_seen_at=values["last_seen_at"],
+        )
+        for (provider, signal), values in signal_buckets.items()
+    ]
+    signals.sort(key=lambda row: (-row.request_count, row.provider, row.signal))
+    return summaries, hosts[:20], errors[:20], proxies[:20], signals[:20]
 
 
 def build_proxy_usage_map(db: Session, *, limit: int = 5000) -> dict[int, dict[str, object]]:
@@ -885,7 +923,7 @@ def proxy_editor(request: Request, db: Session = Depends(get_db)) -> HTMLRespons
 
 @router.get("/metrics", response_class=HTMLResponse)
 def request_metrics_view(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
-    summaries, slow_hosts, recent_errors, proxy_usage = build_request_metric_views(db)
+    summaries, slow_hosts, recent_errors, proxy_usage, signals = build_request_metric_views(db)
     return templates.TemplateResponse(
         request=request,
         name="metrics.html",
@@ -894,6 +932,7 @@ def request_metrics_view(request: Request, db: Session = Depends(get_db)) -> HTM
             "slow_hosts": slow_hosts,
             "recent_errors": recent_errors,
             "proxy_usage": proxy_usage,
+            "signals": signals,
         },
     )
 

@@ -154,6 +154,15 @@ def browser_crawl_site(
 
     website_url = normalize_url(website_url)
     if is_host_suppressed(website_url):
+        if on_request:
+            on_request(
+                request_kind="suppressed_host",
+                method="EVENT",
+                url=website_url,
+                status_code=None,
+                duration_ms=0,
+                error="suppressed_host",
+            )
         return CrawlSiteResult(pages=[], crawl_status="suppressed_host")
     base = urlparse(website_url)
     base_host = normalize_host_key(website_url)
@@ -318,6 +327,15 @@ def browser_crawl_site(
                             error="anti_bot_challenge" if _looks_like_challenge(content, title, status_code) else None,
                         )
                     )
+                    if _looks_like_challenge(content, title, status_code) and on_request:
+                        on_request(
+                            request_kind="anti_bot_challenge",
+                            method="EVENT",
+                            url=final_url,
+                            status_code=status_code,
+                            duration_ms=0,
+                            error="anti_bot_challenge",
+                        )
                     if emails or phones or channels or has_contact_form:
                         clear_host_failures(website_url)
                     with build_httpx_client(headers=BROWSER_FALLBACK_HEADERS, proxy_url=proxy_url) as pdf_client:
