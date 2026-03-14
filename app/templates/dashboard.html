@@ -197,18 +197,9 @@
         </div>
 
         <div class="panel">
-          <div class="section-heading">
-            <h2>Scraped Regions</h2>
-            {% if detail_region %}
-            <a class="ghost-button small-button" href="/?country_code={{ selected_country_code }}&region_id={{ detail_region.id }}{% if not show_all %}&show_all=1{% endif %}#region-detail">
-              {% if show_all %}Show emails only{% else %}Show all records{% endif %}
-            </a>
-            {% else %}
-            <a class="ghost-button small-button" href="/?country_code={{ selected_country_code }}{% if not show_all %}&show_all=1{% endif %}">
-              {% if show_all %}Show emails only{% else %}Show all records{% endif %}
-            </a>
-            {% endif %}
-          </div>
+        <div class="section-heading">
+          <h2>Scraped Regions</h2>
+        </div>
           <table>
             <thead>
               <tr>
@@ -394,7 +385,18 @@
       <section class="panel">
         <div class="section-heading">
           <h2>{% if show_all %}All Scraped Companies{% else %}All Emails{% endif %}</h2>
-          <span>{% if show_all %}{{ company_rows|length }} records{% else %}{{ emails|length }} records{% endif %}</span>
+          <div class="hero-actions">
+            <span>{% if show_all %}{{ company_rows|length }} records{% else %}{{ emails|length }} records{% endif %}</span>
+            {% if detail_region %}
+            <a class="ghost-button small-button" href="/?country_code={{ selected_country_code }}&region_id={{ detail_region.id }}{% if not show_all %}&show_all=1{% endif %}#region-detail">
+              {% if show_all %}Show emails only{% else %}Show all records{% endif %}
+            </a>
+            {% else %}
+            <a class="ghost-button small-button" href="/?country_code={{ selected_country_code }}{% if not show_all %}&show_all=1{% endif %}">
+              {% if show_all %}Show emails only{% else %}Show all records{% endif %}
+            </a>
+            {% endif %}
+          </div>
         </div>
         {% if show_all %}
         <table>
