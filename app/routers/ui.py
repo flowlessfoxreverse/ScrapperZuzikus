@@ -10,6 +10,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.db import get_db
 from app.models import Category, Company, Email, Phone, ProxyEndpoint, ProxyKind, Region, RunCategory, RunStatus, ScrapeRun, ValidationStatus, Vertical
 from app.schemas import EmailRow
@@ -23,6 +24,7 @@ from app.tasks import run_scrape, sync_region_catalog_task
 templates = Jinja2Templates(directory="app/templates")
 router = APIRouter(tags=["ui"])
 RECENT_RUNS_PAGE_SIZE = 25
+settings = get_settings()
 
 
 @dataclass
@@ -366,6 +368,9 @@ def dashboard(
     runs, runs_has_more = build_recent_runs_page(db, offset=0)
     region_stats = build_region_stats(db, selected_country_code)
     overpass_status = fetch_status()
+    browser_proxy_slots = active_proxy_count(db, ProxyKind.BROWSER)
+    browser_thread_capacity = settings.browser_worker_threads
+    effective_browser_capacity = min(browser_proxy_slots, browser_thread_capacity)
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
@@ -387,7 +392,9 @@ def dashboard(
             "summarize_run_note": summarize_run_note,
             "region_stats": region_stats,
             "overpass_status": overpass_status,
-            "browser_proxy_slots": active_proxy_count(db, ProxyKind.BROWSER),
+            "browser_proxy_slots": browser_proxy_slots,
+            "browser_thread_capacity": browser_thread_capacity,
+            "effective_browser_capacity": effective_browser_capacity,
             "message": message,
             "validation_statuses": list(ValidationStatus),
         },
@@ -546,6 +553,8 @@ def region_editor(request: Request, db: Session = Depends(get_db)) -> HTMLRespon
 
 @router.get("/proxies", response_class=HTMLResponse)
 def proxy_editor(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+    browser_proxy_slots = active_proxy_count(db, ProxyKind.BROWSER)
+    browser_thread_capacity = settings.browser_worker_threads
     proxies = [
         ProxyRow(
             id=proxy.id,
@@ -565,7 +574,9 @@ def proxy_editor(request: Request, db: Session = Depends(get_db)) -> HTMLRespons
         context={
             "proxies": proxies,
             "proxy_kinds": list(ProxyKind),
-            "browser_proxy_slots": active_proxy_count(db, ProxyKind.BROWSER),
+            "browser_proxy_slots": browser_proxy_slots,
+            "browser_thread_capacity": browser_thread_capacity,
+            "effective_browser_capacity": min(browser_proxy_slots, browser_thread_capacity),
         },
     )
 

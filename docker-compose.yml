@@ -59,7 +59,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.browser
-    command: python -m dramatiq --processes ${BROWSER_WORKER_PROCESSES:-1} --threads ${BROWSER_WORKER_THREADS:-8} app.tasks:redis_broker app.tasks --queues browser
+    command: python -m dramatiq --processes ${BROWSER_WORKER_PROCESSES:-1} --threads ${BROWSER_WORKER_THREADS:-64} app.tasks:redis_broker app.tasks --queues browser
     env_file:
       - .env
     volumes:

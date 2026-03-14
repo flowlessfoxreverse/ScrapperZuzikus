@@ -24,7 +24,21 @@
           <span class="subtle">Active Browser Slots</span>
           <strong>{{ browser_proxy_slots }}</strong>
         </div>
+        <div class="stat-card">
+          <span class="subtle">Browser Thread Ceiling</span>
+          <strong>{{ browser_thread_capacity }}</strong>
+        </div>
+        <div class="stat-card">
+          <span class="subtle">Effective Browser Capacity</span>
+          <strong>{{ effective_browser_capacity }}</strong>
+        </div>
       </section>
+
+      {% if browser_proxy_slots > browser_thread_capacity %}
+      <section class="panel">
+        <div class="notice">Active browser proxies exceed browser worker thread capacity. Increase `BROWSER_WORKER_THREADS` and restart the stack if you want one usable slot per proxy.</div>
+      </section>
+      {% endif %}
 
       <section class="grid category-grid">
         <div class="panel">

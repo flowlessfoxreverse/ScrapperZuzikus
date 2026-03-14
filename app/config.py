@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     worker_processes: int = 1
     worker_threads: int = 1
     browser_worker_processes: int = 1
-    browser_worker_threads: int = 8
+    browser_worker_threads: int = 64
 
 
 @lru_cache

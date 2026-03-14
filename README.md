@@ -101,7 +101,7 @@ WORKER_THREADS=1
 CRAWL_WORKER_PROCESSES=1
 CRAWL_WORKER_THREADS=1
 BROWSER_WORKER_PROCESSES=1
-BROWSER_WORKER_THREADS=8
+BROWSER_WORKER_THREADS=64
 ```
 
 ## Discovery Model
@@ -109,7 +109,8 @@ BROWSER_WORKER_THREADS=8
 - One run per region can be active at a time
 - Discovery and website crawling run on separate Dramatiq queues and separate worker services
 - Browser-assisted crawling runs on its own queue and only handles sites that the static crawler could not recover
-- Each browser worker instance can be given its own proxy by overriding `BROWSER_PROXY_URL`, which is the intended scaling path for proxy-backed worker pools
+- Browser concurrency is capped by `BROWSER_WORKER_THREADS`; keep it comfortably above the number of active browser proxies if you want one usable slot per proxy
+- The current app model uses one shared `browser_worker` with a high thread ceiling and proxy leasing, not one Docker container per proxy
 - Discovery is cached per `region + category` and reused until the cooldown expires
 - Repeated runs focus on stale or failed company crawls instead of querying Overpass again
 - Self-hosted Overpass removes dependence on the shared public endpoint for normal operation
