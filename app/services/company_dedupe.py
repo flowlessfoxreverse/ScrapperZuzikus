@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Company, CompanyCategory, Email, Form, Page, RunCompany, RunCompanyStatus, Submission
+from app.models import Company, Email, Form, Page, RequestMetric, RunCompany, RunCompanyStatus, Submission
 
 
 RUN_COMPANY_STATUS_PRIORITY = {
@@ -213,6 +213,9 @@ def merge_company_into(session: Session, target: Company, source: Company) -> No
         target_form = existing_forms.get(source_form.page_url)
         if target_form is None:
             source_form.company_id = target.id
+            for submission in list(source_form.submissions):
+                submission.company_id = target.id
+                session.add(submission)
             session.add(source_form)
             existing_forms[source_form.page_url] = source_form
             continue
@@ -235,6 +238,13 @@ def merge_company_into(session: Session, target: Company, source: Company) -> No
         merge_run_company(target_row, source_row)
         session.add(target_row)
         session.delete(source_row)
+
+    request_metrics = session.scalars(
+        select(RequestMetric).where(RequestMetric.company_id == source.id)
+    ).all()
+    for metric in request_metrics:
+        metric.company_id = target.id
+        session.add(metric)
 
     session.delete(source)
     session.flush()
