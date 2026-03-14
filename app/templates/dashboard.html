@@ -25,12 +25,13 @@
         {% if message %}
         <div class="notice">{{ message }}</div>
         {% endif %}
-        <div class="status-strip">
+        <div class="status-strip" id="overpass-status-card" data-overpass-ready="{{ 'true' if overpass_status.ready else 'false' }}">
           <div>
             <strong>Overpass</strong>
-            <span class="badge {% if overpass_status.ok %}muted{% else %}warn{% endif %}">{{ overpass_status.summary }}</span>
+            <span id="overpass-status-badge" class="badge {% if overpass_status.ok %}muted{% else %}warn{% endif %}">{{ overpass_status.summary }}</span>
+            <span id="overpass-stage" class="subtle">Stage: {{ overpass_status.stage }}</span>
           </div>
-          <small class="subtle">
+          <small id="overpass-detail" class="subtle">
             {% if overpass_status.status_code %}
             HTTP {{ overpass_status.status_code }}:
             {% endif %}
@@ -84,8 +85,8 @@
           </fieldset>
 
           <div class="hero-actions">
-            <button type="submit">Run Scrape</button>
-            <button type="submit" name="force_refresh" value="1" class="ghost-button">Force Refresh Selected</button>
+            <button id="run-scrape-button" type="submit" {% if not overpass_status.ready %}disabled{% endif %}>Run Scrape</button>
+            <button id="force-refresh-button" type="submit" name="force_refresh" value="1" class="ghost-button" {% if not overpass_status.ready %}disabled{% endif %}>Force Refresh Selected</button>
           </div>
         </form>
 
@@ -394,6 +395,65 @@
       const provinceInputs = Array.from(document.querySelectorAll('input[name="region_ids"][form="run-form"]'));
       const provincePills = Array.from(document.querySelectorAll("[data-region-pill]"));
       const runForm = document.getElementById("run-form");
+      const overpassStatusBadge = document.getElementById("overpass-status-badge");
+      const overpassStage = document.getElementById("overpass-stage");
+      const overpassDetail = document.getElementById("overpass-detail");
+      const runScrapeButton = document.getElementById("run-scrape-button");
+      const forceRefreshButton = document.getElementById("force-refresh-button");
+      const overpassStatusCard = document.getElementById("overpass-status-card");
+
+      function setRunButtonsEnabled(enabled) {
+        if (runScrapeButton) {
+          runScrapeButton.disabled = !enabled;
+        }
+        if (forceRefreshButton) {
+          forceRefreshButton.disabled = !enabled;
+        }
+      }
+
+      function renderOverpassStatus(payload) {
+        if (!payload) {
+          return;
+        }
+        if (overpassStatusBadge) {
+          overpassStatusBadge.textContent = payload.summary;
+          overpassStatusBadge.classList.remove("muted", "warn");
+          overpassStatusBadge.classList.add(payload.ready ? "muted" : "warn");
+        }
+        if (overpassStage) {
+          overpassStage.textContent = `Stage: ${payload.stage}`;
+        }
+        if (overpassDetail) {
+          const prefix = payload.status_code ? `HTTP ${payload.status_code}: ` : "";
+          overpassDetail.textContent = `${prefix}${payload.detail}`;
+        }
+        if (overpassStatusCard) {
+          overpassStatusCard.dataset.overpassReady = payload.ready ? "true" : "false";
+        }
+        setRunButtonsEnabled(Boolean(payload.ready));
+      }
+
+      async function refreshOverpassStatus() {
+        try {
+          const response = await fetch("/api/system/overpass-status", {
+            headers: {"Accept": "application/json"},
+            cache: "no-store",
+          });
+          if (!response.ok) {
+            return;
+          }
+          const payload = await response.json();
+          renderOverpassStatus(payload);
+        } catch (error) {
+          renderOverpassStatus({
+            summary: "unreachable",
+            stage: "unknown",
+            detail: String(error),
+            ready: false,
+            status_code: null,
+          });
+        }
+      }
 
       function updateProvinceSelectionUI() {
         if (!provinceInputs.length) {
@@ -441,6 +501,10 @@
       });
       if (runForm) {
         runForm.addEventListener("submit", (event) => {
+          if (overpassStatusCard?.dataset.overpassReady !== "true") {
+            event.preventDefault();
+            return;
+          }
           if (provinceInputs.length && provinceInputs.every((input) => !input.checked)) {
             event.preventDefault();
             openProvinceModal();
@@ -448,6 +512,9 @@
         });
       }
       updateProvinceSelectionUI();
+      setRunButtonsEnabled(overpassStatusCard?.dataset.overpassReady === "true");
+      refreshOverpassStatus();
+      window.setInterval(refreshOverpassStatus, 5000);
     </script>
   </body>
 </html>

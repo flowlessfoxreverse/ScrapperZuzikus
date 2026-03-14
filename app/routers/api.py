@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import Category, Email, Region, RunCategory, ScrapeRun, ValidationStatus
 from app.schemas import CategoryCreate, CategoryOut, EmailStatusUpdate, RegionCreate, RegionOut, RunCreate, RunOut
+from app.services.overpass import fetch_status_payload
 from app.services.runs import find_active_run
 from app.tasks import run_scrape
 
@@ -92,3 +93,8 @@ def update_email_status(email_id: int, payload: EmailStatusUpdate, db: Session =
     db.add(email)
     db.commit()
     return {"status": "ok", "validation_status": payload.validation_status.value}
+
+
+@router.get("/system/overpass-status", response_model=dict)
+def overpass_status() -> dict:
+    return fetch_status_payload()

@@ -200,6 +200,12 @@ button,
   cursor: pointer;
 }
 
+button:disabled,
+.ghost-button[disabled] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .ghost-button {
   background: transparent;
   color: var(--accent);

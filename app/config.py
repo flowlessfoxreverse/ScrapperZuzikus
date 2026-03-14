@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     redis_host_port: int = 6380
     redis_url: str = "redis://redis:6379/0"
     overpass_url: str = "http://overpass/api/interpreter"
+    overpass_data_path: str = "/overpassdb"
     overpass_daily_query_cap: int = 0
     overpass_connect_retries: int = 4
     overpass_retry_backoff_seconds: float = 1.5
