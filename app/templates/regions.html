@@ -28,10 +28,10 @@
           <table>
             <thead>
               <tr>
-                <th>Name</th>
+                <th>Country</th>
                 <th>Code</th>
                 <th>Country Code</th>
-                <th>OSM Admin Level</th>
+                <th>Provinces Enabled</th>
               </tr>
             </thead>
             <tbody>
@@ -40,7 +40,7 @@
                 <td>{{ region.name }}</td>
                 <td>{{ region.code }}</td>
                 <td>{{ region.country_code }}</td>
-                <td>{{ region.osm_admin_level }}</td>
+                <td>{{ region.province_count }}</td>
               </tr>
               {% endfor %}
             </tbody>
@@ -49,27 +49,87 @@
 
         <div class="panel">
           <h2>Add Region</h2>
-          <form action="/regions" method="post" class="stack">
+          <form action="/regions" method="post" class="stack" id="country-region-form">
             <label>
-              <span>Code</span>
-              <input type="text" name="code" placeholder="TH" required />
+              <span>Country</span>
+              <input
+                type="text"
+                id="country-search"
+                name="country_search"
+                list="country-options"
+                placeholder="Search country"
+                autocomplete="off"
+                required
+              />
+              <datalist id="country-options">
+                {% for country in country_catalog %}
+                <option value="{{ country.name }}" data-code="{{ country.code }}"></option>
+                {% endfor %}
+              </datalist>
             </label>
             <label>
-              <span>Name</span>
-              <input type="text" name="name" placeholder="Thailand" required />
+              <span>Code</span>
+              <input type="text" id="country-code" name="code" placeholder="TH" readonly required />
             </label>
             <label>
               <span>Country Code</span>
-              <input type="text" name="country_code" placeholder="TH" required />
+              <input type="text" id="country-country-code" name="country_code" placeholder="TH" readonly required />
+            </label>
+            <label>
+              <span>Name</span>
+              <input type="text" id="country-name" name="name" placeholder="Thailand" readonly required />
             </label>
             <label>
               <span>OSM Admin Level</span>
-              <input type="number" name="osm_admin_level" value="2" min="2" max="10" required />
+              <input type="number" id="country-admin-level" name="osm_admin_level" value="2" min="2" max="10" readonly required />
             </label>
-            <button type="submit">Save Region</button>
+            <button type="submit">Save Country</button>
           </form>
         </div>
       </section>
     </main>
+    <script>
+      const countryCatalog = {{ country_catalog|tojson }};
+
+      const countrySearch = document.getElementById("country-search");
+      const countryCode = document.getElementById("country-code");
+      const countryCountryCode = document.getElementById("country-country-code");
+      const countryName = document.getElementById("country-name");
+      const countryAdminLevel = document.getElementById("country-admin-level");
+      const countryRegionForm = document.getElementById("country-region-form");
+
+      function applyCountrySelection() {
+        if (!countrySearch) {
+          return;
+        }
+        const selected = countryCatalog.find((country) => country.name === countrySearch.value);
+        if (!selected) {
+          countryCode.value = "";
+          countryCountryCode.value = "";
+          countryName.value = "";
+          countryAdminLevel.value = "2";
+          return;
+        }
+        countryCode.value = selected.code;
+        countryCountryCode.value = selected.code;
+        countryName.value = selected.name;
+        countryAdminLevel.value = "2";
+      }
+
+      if (countrySearch) {
+        countrySearch.addEventListener("input", applyCountrySelection);
+        countrySearch.addEventListener("change", applyCountrySelection);
+      }
+
+      if (countryRegionForm) {
+        countryRegionForm.addEventListener("submit", (event) => {
+          applyCountrySelection();
+          if (!countryCode.value) {
+            event.preventDefault();
+            countrySearch.focus();
+          }
+        });
+      }
+    </script>
   </body>
 </html>

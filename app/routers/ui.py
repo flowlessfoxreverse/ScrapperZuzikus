@@ -13,6 +13,7 @@ from app.db import get_db
 from app.models import Category, Company, Email, Region, RunCategory, RunStatus, ScrapeRun, ValidationStatus, Vertical
 from app.schemas import EmailRow
 from app.services.overpass import fetch_status
+from app.services.region_catalog import country_catalog, upsert_country_with_subdivisions
 from app.services.runs import find_active_run, request_run_cancellation
 from app.tasks import run_scrape, sync_region_catalog_task
 
@@ -408,11 +409,13 @@ def category_editor(request: Request, db: Session = Depends(get_db)) -> HTMLResp
 
 @router.get("/regions", response_class=HTMLResponse)
 def region_editor(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
-    regions = db.scalars(select(Region).order_by(Region.country_code, Region.name)).all()
     return templates.TemplateResponse(
         request=request,
         name="regions.html",
-        context={"regions": regions},
+        context={
+            "regions": build_country_options(db),
+            "country_catalog": country_catalog(),
+        },
     )
 
 
@@ -451,13 +454,6 @@ def create_region_html(
     osm_admin_level: int = Form(2),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
-    db.add(
-        Region(
-            code=code.upper(),
-            name=name,
-            country_code=country_code.upper(),
-            osm_admin_level=osm_admin_level,
-        )
-    )
-    db.commit()
+    selected_country_code = country_code.upper()
+    upsert_country_with_subdivisions(db, selected_country_code, is_active=True)
     return RedirectResponse(url="/regions", status_code=303)

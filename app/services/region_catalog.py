@@ -18,6 +18,25 @@ def active_country_codes() -> set[str]:
     }
 
 
+def country_catalog() -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    for country in sorted(pycountry.countries, key=lambda item: item.name):
+        code = getattr(country, "alpha_2", None)
+        if not code:
+            continue
+        items.append(
+            {
+                "code": code,
+                "name": country.name,
+            }
+        )
+    return items
+
+
+def get_country(country_code: str):
+    return pycountry.countries.get(alpha_2=country_code.upper())
+
+
 def top_level_subdivisions(country_code: str):
     for subdivision in pycountry.subdivisions.get(country_code=country_code) or []:
         if getattr(subdivision, "parent_code", None):
@@ -49,6 +68,38 @@ def upsert_region(
         region.osm_admin_level = osm_admin_level
         region.is_active = is_active
     session.add(region)
+
+
+def upsert_country_with_subdivisions(session: Session, country_code: str, *, is_active: bool = True) -> int:
+    country = get_country(country_code)
+    if country is None:
+        raise ValueError(f"Unknown country code: {country_code}")
+
+    count = 0
+    code = country.alpha_2.upper()
+    upsert_region(
+        session,
+        code=code,
+        name=country.name,
+        country_code=code,
+        osm_admin_level=2,
+        is_active=is_active,
+    )
+    count += 1
+
+    for subdivision in top_level_subdivisions(code):
+        upsert_region(
+            session,
+            code=subdivision.code,
+            name=f"{subdivision.name} [{subdivision.code}], {country.name}",
+            country_code=code,
+            osm_admin_level=4,
+            is_active=is_active,
+        )
+        count += 1
+
+    session.commit()
+    return count
 
 
 def sync_region_catalog(session: Session) -> int:
