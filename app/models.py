@@ -375,6 +375,7 @@ class RunCompany(Base):
     run_id: Mapped[int] = mapped_column(ForeignKey("scrape_runs.id"), index=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
     status: Mapped[RunCompanyStatus] = mapped_column(SqlEnum(RunCompanyStatus), default=RunCompanyStatus.QUEUED, index=True)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
     queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

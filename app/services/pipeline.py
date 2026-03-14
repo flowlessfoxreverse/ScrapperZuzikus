@@ -17,6 +17,8 @@ from app.services.proxy_pool import acquire_proxy, active_proxy_count, release_p
 from app.services.runs import finalize_cancelled_run
 from app.services.run_companies import (
     close_open_run_companies,
+    current_retry_count,
+    increment_retry_count,
     mark_run_company_finished,
     mark_run_company_running,
     maybe_complete_run,
@@ -50,6 +52,39 @@ def _is_proxy_transport_error(exc: Exception, proxy_url: str | None) -> bool:
     if proxy_host and proxy_host in message:
         return True
     return any(indicator in message for indicator in indicators)
+
+
+def _retry_delay_ms(attempt: int) -> int:
+    base_delay = max(1, settings.crawl_retry_delay_seconds)
+    return int(base_delay * min(attempt, 4) * 1000)
+
+
+def _schedule_retry(
+    session: Session,
+    *,
+    run_id: int,
+    company_id: int,
+    workload: ProxyKind,
+    reason: str,
+) -> bool:
+    current_attempt = current_retry_count(session, run_id, company_id)
+    if current_attempt >= settings.crawl_retry_attempts:
+        return False
+    next_attempt = increment_retry_count(session, run_id, company_id)
+    requeue_run_company(
+        session,
+        run_id,
+        company_id,
+        f"Retry {next_attempt}/{settings.crawl_retry_attempts} queued: {reason}",
+    )
+    session.commit()
+    from app.tasks import retry_company
+
+    retry_company.send_with_options(
+        args=(run_id, company_id, workload.value),
+        delay=_retry_delay_ms(next_attempt),
+    )
+    return True
 
 
 def _find_pending_email(session: Session, company_id: int, normalized_email: str) -> Email | None:
@@ -751,9 +786,6 @@ def execute_crawl(session: Session, run_id: int, company_id: int) -> None:
         company = session.get(Company, company_id)
         if run is None or company is None:
             return
-        company.crawl_status = "failed"
-        session.add(company)
-        mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.FAILED, str(exc))
         proxy_failed = _is_proxy_transport_error(exc, proxy_url if "proxy_url" in locals() else None)
         release_proxy(
             session,
@@ -763,6 +795,20 @@ def execute_crawl(session: Session, run_id: int, company_id: int) -> None:
             failed=proxy_failed,
             record_result=proxy_failed,
         )
+        if _schedule_retry(
+            session,
+            run_id=run_id,
+            company_id=company_id,
+            workload=ProxyKind.CRAWLER,
+            reason=str(exc)[:500],
+        ):
+            company.crawl_status = "retrying"
+            session.add(company)
+            session.commit()
+            return
+        company.crawl_status = "failed"
+        session.add(company)
+        mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.FAILED, str(exc))
     else:
         release_proxy(session, proxy.id if proxy else None, owner=owner, workload=ProxyKind.CRAWLER, failed=False)
     session.refresh(run)
@@ -823,9 +869,6 @@ def execute_browser_crawl(session: Session, run_id: int, company_id: int) -> Non
         company = session.get(Company, company_id)
         if run is None or company is None:
             return
-        company.crawl_status = "failed"
-        session.add(company)
-        mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.FAILED, str(exc))
         proxy_failed = _is_proxy_transport_error(exc, proxy_url if "proxy_url" in locals() else None)
         release_proxy(
             session,
@@ -835,6 +878,20 @@ def execute_browser_crawl(session: Session, run_id: int, company_id: int) -> Non
             failed=proxy_failed,
             record_result=proxy_failed,
         )
+        if _schedule_retry(
+            session,
+            run_id=run_id,
+            company_id=company_id,
+            workload=ProxyKind.BROWSER,
+            reason=str(exc)[:500],
+        ):
+            company.crawl_status = "retrying"
+            session.add(company)
+            session.commit()
+            return
+        company.crawl_status = "failed"
+        session.add(company)
+        mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.FAILED, str(exc))
     else:
         release_proxy(session, proxy.id if proxy else None, owner=owner, workload=ProxyKind.BROWSER, failed=False)
 

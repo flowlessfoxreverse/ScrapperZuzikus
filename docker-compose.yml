@@ -55,6 +55,22 @@ services:
     networks:
       - scrapper_net
 
+  retry_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m dramatiq --processes ${RETRY_WORKER_PROCESSES:-1} --threads ${RETRY_WORKER_THREADS:-1} app.tasks:redis_broker app.tasks --queues retry
+    env_file:
+      - .env
+    volumes:
+      - .:/workspace
+    depends_on:
+      - db
+      - redis
+      - overpass
+    networks:
+      - scrapper_net
+
   browser_worker:
     build:
       context: .

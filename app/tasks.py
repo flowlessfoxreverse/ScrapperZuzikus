@@ -7,7 +7,7 @@ from dramatiq.brokers.redis import RedisBroker
 
 from app.config import get_settings
 from app.db import SessionLocal
-from app.models import RunCompanyStatus, RunStatus, ScrapeRun
+from app.models import ProxyKind, RunCompanyStatus, RunStatus, ScrapeRun
 from app.services.pipeline import execute_browser_crawl, execute_crawl, execute_discovery
 from app.services.region_catalog import sync_region_catalog
 from app.services.run_companies import close_open_run_companies
@@ -74,6 +74,27 @@ def browser_crawl_company(run_id: int, company_id: int) -> None:
                 run.status = RunStatus.FAILED
                 run.finished_at = run.finished_at or datetime.now(timezone.utc)
                 run.note = f"Worker crashed during browser crawl: {str(exc)[:300]}"
+                close_open_run_companies(session, run.id, RunCompanyStatus.FAILED, run.note)
+                session.add(run)
+                session.commit()
+            raise
+
+
+@dramatiq.actor(queue_name="retry")
+def retry_company(run_id: int, company_id: int, workload: str) -> None:
+    with SessionLocal() as session:
+        try:
+            if workload == ProxyKind.BROWSER.value:
+                execute_browser_crawl(session=session, run_id=run_id, company_id=company_id)
+            else:
+                execute_crawl(session=session, run_id=run_id, company_id=company_id)
+        except Exception as exc:
+            session.rollback()
+            run = session.get(ScrapeRun, run_id)
+            if run is not None and run.status in {RunStatus.PENDING, RunStatus.RUNNING}:
+                run.status = RunStatus.FAILED
+                run.finished_at = run.finished_at or datetime.now(timezone.utc)
+                run.note = f"Worker crashed during retry crawl: {str(exc)[:300]}"
                 close_open_run_companies(session, run.id, RunCompanyStatus.FAILED, run.note)
                 session.add(run)
                 session.commit()

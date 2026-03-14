@@ -53,6 +53,7 @@ def queue_company_for_run(session: Session, run_id: int, company_id: int) -> boo
     if row.status in {RunCompanyStatus.QUEUED, RunCompanyStatus.RUNNING, RunCompanyStatus.COMPLETED}:
         return False
     row.status = RunCompanyStatus.QUEUED
+    row.retry_count = 0
     row.started_at = None
     row.finished_at = None
     row.last_error = None
@@ -69,6 +70,19 @@ def requeue_run_company(session: Session, run_id: int, company_id: int, last_err
     row.last_error = last_error[:2000] if last_error else None
     session.add(row)
     session.flush()
+
+
+def increment_retry_count(session: Session, run_id: int, company_id: int) -> int:
+    row = get_or_create_run_company(session, run_id, company_id)
+    row.retry_count = (row.retry_count or 0) + 1
+    session.add(row)
+    session.flush()
+    return row.retry_count
+
+
+def current_retry_count(session: Session, run_id: int, company_id: int) -> int:
+    row = get_or_create_run_company(session, run_id, company_id)
+    return int(row.retry_count or 0)
 
 
 def mark_run_company_running(session: Session, run_id: int, company_id: int) -> RunCompany:

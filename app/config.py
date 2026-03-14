@@ -52,8 +52,12 @@ class Settings(BaseSettings):
     proxy_auto_disable_threshold: int = 5
     proxy_health_failure_penalty: int = 20
     proxy_health_success_recovery: int = 5
+    crawl_retry_attempts: int = 3
+    crawl_retry_delay_seconds: int = 45
     worker_processes: int = 1
     worker_threads: int = 1
+    retry_worker_processes: int = 1
+    retry_worker_threads: int = 1
     browser_worker_processes: int = 1
     browser_worker_threads: int = 64
 

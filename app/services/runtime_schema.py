@@ -162,3 +162,17 @@ def ensure_phone_schema(engine: Engine) -> None:
 
     with engine.begin() as connection:
         connection.execute(text("ALTER TABLE phones ALTER COLUMN phone_number TYPE VARCHAR(255)"))
+
+
+def ensure_run_company_retry_schema(engine: Engine) -> None:
+    inspector = inspect(engine)
+    try:
+        columns = {column["name"] for column in inspector.get_columns("run_companies")}
+    except Exception:
+        return
+
+    if "retry_count" in columns:
+        return
+
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE run_companies ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0"))
