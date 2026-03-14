@@ -198,6 +198,8 @@ def execute_discovery(
     discovered = 0
     crawled = 0
     queries_used = 0
+    category_errors: list[str] = []
+    any_category_succeeded = False
     force_refresh_category_ids = force_refresh_category_ids or set()
 
     for category in categories:
@@ -233,19 +235,17 @@ def execute_discovery(
                     ),
                 )
             except Exception as exc:
-                run.status = RunStatus.FAILED
-                run.note = str(exc)[:2000]
-                run.finished_at = datetime.now(timezone.utc)
                 state.status = "failed"
-                state.note = run.note
-                session.add(run)
+                state.note = str(exc)[:2000]
                 session.add(state)
                 session.commit()
-                return
+                category_errors.append(f"{category.slug}: {str(exc)[:300]}")
+                continue
 
             consume_units(session, provider="overpass", cap=overpass_cap, units=1)
             queries_used += 1
             discovered += len(result.elements)
+            any_category_succeeded = True
             state.last_discovery_success_at = datetime.now(timezone.utc)
             state.last_result_count = len(result.elements)
             state.status = "fresh_forced" if force_refresh else "fresh"
@@ -267,6 +267,7 @@ def execute_discovery(
             session.commit()
         else:
             discovered += state.last_result_count
+            any_category_succeeded = True
             state.status = "cached"
             state.note = f"Discovery reused cached results for category {category.slug}."
             session.add(state)
@@ -281,11 +282,23 @@ def execute_discovery(
     run.discovered_count = discovered
     run.crawled_count = crawled
     run.overpass_queries_used = queries_used
-    run.note = run.note or (
+    if category_errors and not any_category_succeeded:
+        run.status = RunStatus.FAILED
+        run.finished_at = datetime.now(timezone.utc)
+        run.note = " ; ".join(category_errors)[:2000]
+        session.add(run)
+        session.commit()
+        return
+
+    base_note = (
         "Discovery completed."
         if not force_refresh_category_ids
         else f"Discovery completed with force refresh for category ids: {sorted(force_refresh_category_ids)}."
     )
+    if category_errors:
+        run.note = f"{base_note} Partial category failures: {' ; '.join(category_errors)}"[:2000]
+    else:
+        run.note = run.note or base_note
     maybe_complete_run(session, run.id)
     session.commit()
 

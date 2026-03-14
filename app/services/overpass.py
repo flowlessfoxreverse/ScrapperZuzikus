@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import time
 
 import httpx
@@ -71,6 +72,10 @@ def fetch_status() -> OverpassStatus:
             summary = "rate_limited"
         elif "dispatcher" in lowered or "database not opened" in lowered or "not ready" in lowered:
             summary = "bootstrapping"
+        if not response.is_success:
+            probe = _probe_interpreter(headers)
+            if probe is not None:
+                return probe
         return OverpassStatus(
             ok=response.is_success,
             status_code=response.status_code,
@@ -84,6 +89,25 @@ def fetch_status() -> OverpassStatus:
             summary="unreachable",
             detail=str(exc)[:500],
         )
+
+
+def _probe_interpreter(headers: dict[str, str]) -> OverpassStatus | None:
+    probe_query = "[out:json][timeout:25];node(1);out;"
+    try:
+        with httpx.Client(timeout=min(settings.request_timeout_seconds, 10), headers=headers) as client:
+            response = client.post(settings.overpass_url, content=probe_query)
+        response.raise_for_status()
+        payload = response.json()
+        if isinstance(payload, dict) and "elements" in payload:
+            return OverpassStatus(
+                ok=True,
+                status_code=response.status_code,
+                summary="healthy",
+                detail="Status endpoint unavailable, but interpreter probe succeeded.",
+            )
+    except Exception:
+        return None
+    return None
 
 
 def fetch_places(region: Region, category: Category, on_request=None) -> OverpassResult:
@@ -109,5 +133,14 @@ def fetch_places(region: Region, category: Category, on_request=None) -> Overpas
                 f"Overpass request failed with status {response.status_code} for category "
                 f"{category.slug} in region {region.code}. Query: {query.strip()} Response: {detail}"
             ) from exc
-        payload = response.json()
+        try:
+            payload = response.json()
+        except json.JSONDecodeError as exc:
+            content_type = response.headers.get("content-type", "unknown")
+            detail = response.text.strip()[:2000] or "<empty response>"
+            raise RuntimeError(
+                f"Overpass returned non-JSON payload for category {category.slug} in region "
+                f"{region.code}. Status: {response.status_code}. Content-Type: {content_type}. "
+                f"Query: {query.strip()} Response: {detail}"
+            ) from exc
     return OverpassResult(query=query, elements=payload.get("elements", []))
