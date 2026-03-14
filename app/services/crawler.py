@@ -26,6 +26,14 @@ CONTACT_PATH_HINTS = (
 SOCIAL_HOSTS = ("facebook.com", "instagram.com", "linkedin.com", "tiktok.com", "youtube.com")
 CAPTCHA_HINTS = ("captcha", "g-recaptcha", "hcaptcha", "cf-turnstile")
 ASSET_SCAN_EXTENSIONS = (".js", ".mjs", ".css", ".json")
+ANTI_BOT_HINTS = (
+    "verify you're not a robot",
+    "verify you are not a robot",
+    "attention required",
+    "please enable cookies",
+    "cloudflare",
+    "g-recaptcha-response",
+)
 NOISE_EMAIL_DOMAINS = (
     "sentry.io",
     "sentry.wixpress.com",
@@ -38,8 +46,31 @@ NOISE_EMAIL_LOCALPARTS = {
     "test",
     "example",
 }
+COMMON_MAILBOX_DOMAINS = {
+    "gmail.com",
+    "googlemail.com",
+    "hotmail.com",
+    "outlook.com",
+    "live.com",
+    "msn.com",
+    "yahoo.com",
+    "ymail.com",
+    "icloud.com",
+    "me.com",
+    "aol.com",
+    "proton.me",
+    "protonmail.com",
+}
 
 settings = get_settings()
+BROWSER_FALLBACK_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
 
 
 @dataclass
@@ -145,6 +176,15 @@ def fetch_page(
     return response, True
 
 
+def should_retry_with_browser_headers(response: httpx.Response, headers: dict[str, str]) -> bool:
+    if headers.get("User-Agent") == BROWSER_FALLBACK_HEADERS["User-Agent"]:
+        return False
+    if response.status_code not in {401, 403}:
+        return False
+    body = response.text.lower()
+    return any(hint in body for hint in ANTI_BOT_HINTS)
+
+
 def extract_forms(soup: BeautifulSoup, page_url: str) -> tuple[bool, list[dict]]:
     forms = []
     for form in soup.find_all("form"):
@@ -190,6 +230,17 @@ def is_noise_email(email: str) -> bool:
     normalized = email.strip().lower()
     localpart, _, _ = normalized.partition("@")
     return any(normalized.endswith(f"@{domain}") for domain in NOISE_EMAIL_DOMAINS) or localpart in NOISE_EMAIL_LOCALPARTS
+
+
+def is_asset_candidate_email(email: str, page_url: str) -> bool:
+    normalized = email.strip().lower()
+    _, _, domain = normalized.partition("@")
+    page_host = urlparse(page_url).netloc.lower().removeprefix("www.")
+    if not domain:
+        return False
+    if domain == page_host or domain.endswith(f".{page_host}") or page_host.endswith(f".{domain}"):
+        return True
+    return domain in COMMON_MAILBOX_DOMAINS
 
 
 def extract_emails(soup: BeautifulSoup) -> list[str]:
@@ -267,7 +318,21 @@ def extract_emails_from_assets(
         if "javascript" not in content_type and "json" not in content_type and "css" not in content_type and "text" not in content_type:
             continue
         candidates.update(match.group(1).lower() for match in EMAIL_REGEX.finditer(unescape(response.text)))
-    return sorted(email for email in candidates if not is_noise_email(email))
+    return sorted(
+        email
+        for email in candidates
+        if not is_noise_email(email) and is_asset_candidate_email(email, page_url)
+    )
+
+
+def should_scan_assets(soup: BeautifulSoup, page_url: str) -> bool:
+    visible_text = unescape(soup.get_text(" ", strip=True))
+    if len(visible_text) >= 300:
+        return False
+    shell_ids = {"root", "app", "__next"}
+    if any(tag.get("id") in shell_ids for tag in soup.find_all(True)):
+        return True
+    return bool(iter_same_origin_assets(soup=soup, page_url=page_url))
 
 
 def crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
@@ -292,6 +357,19 @@ def crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
             seen.add(candidate)
             try:
                 response, insecure_fallback = fetch_page(client, candidate, headers=headers, on_request=on_request)
+                if should_retry_with_browser_headers(response, headers):
+                    with httpx.Client(
+                        timeout=settings.request_timeout_seconds,
+                        headers=BROWSER_FALLBACK_HEADERS,
+                        follow_redirects=True,
+                        verify=not insecure_fallback,
+                    ) as browser_client:
+                        response, insecure_fallback = fetch_page(
+                            browser_client,
+                            candidate,
+                            headers=BROWSER_FALLBACK_HEADERS,
+                            on_request=on_request,
+                        )
                 if insecure_fallback and not same_site_family(candidate, str(response.url)):
                     pages.append(
                         CrawlPageResult(
@@ -309,7 +387,7 @@ def crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
                 soup = BeautifulSoup(response.text, "html.parser")
                 title = soup.title.text.strip() if soup.title and soup.title.text else None
                 emails = extract_emails(soup)
-                if not emails:
+                if not emails and should_scan_assets(soup, str(response.url)):
                     emails = extract_emails_from_assets(
                         client=client,
                         soup=soup,
