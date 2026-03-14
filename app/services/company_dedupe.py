@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Company, Email, Form, Page, RequestMetric, RunCompany, RunCompanyStatus, Submission
+from app.models import Company, Email, Form, Page, Phone, RequestMetric, RunCompany, RunCompanyStatus, Submission
 
 
 RUN_COMPANY_STATUS_PRIORITY = {
@@ -128,6 +128,27 @@ def merge_email(target_email: Email, source_email: Email) -> None:
         )
 
 
+def merge_phone(target_phone: Phone, source_phone: Phone) -> None:
+    target_phone.source_page_url = target_phone.source_page_url or source_phone.source_page_url
+    target_phone.source_type = target_phone.source_type or source_phone.source_type
+    if source_phone.technical_metadata:
+        merged_metadata = dict(target_phone.technical_metadata or {})
+        merged_metadata.update(source_phone.technical_metadata)
+        target_phone.technical_metadata = merged_metadata
+    if len((source_phone.phone_number or "").strip()) > len((target_phone.phone_number or "").strip()):
+        target_phone.phone_number = source_phone.phone_number
+    if source_phone.first_seen_at:
+        target_phone.first_seen_at = min(
+            filter(None, [target_phone.first_seen_at, source_phone.first_seen_at]),
+            default=source_phone.first_seen_at,
+        )
+    if source_phone.last_seen_at:
+        target_phone.last_seen_at = max(
+            filter(None, [target_phone.last_seen_at, source_phone.last_seen_at]),
+            default=source_phone.last_seen_at,
+        )
+
+
 def merge_run_company(target_row: RunCompany, source_row: RunCompany) -> None:
     if RUN_COMPANY_STATUS_PRIORITY[source_row.status] > RUN_COMPANY_STATUS_PRIORITY[target_row.status]:
         target_row.status = source_row.status
@@ -207,6 +228,18 @@ def merge_company_into(session: Session, target: Company, source: Company) -> No
         merge_email(target_email, source_email)
         session.add(target_email)
         session.delete(source_email)
+
+    existing_phones = {phone.normalized_number: phone for phone in target.phones}
+    for source_phone in list(source.phones):
+        target_phone = existing_phones.get(source_phone.normalized_number)
+        if target_phone is None:
+            source_phone.company_id = target.id
+            session.add(source_phone)
+            existing_phones[source_phone.normalized_number] = source_phone
+            continue
+        merge_phone(target_phone, source_phone)
+        session.add(target_phone)
+        session.delete(source_phone)
 
     existing_forms = {form.page_url: form for form in target.forms}
     for source_form in list(source.forms):

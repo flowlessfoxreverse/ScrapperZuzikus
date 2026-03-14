@@ -5,10 +5,10 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Category, Company, CompanyCategory, Email, Form, Page, Region, RunCategory, RunCompanyStatus, RunStatus, ScrapeRun
+from app.models import Category, Company, CompanyCategory, Email, Form, Page, Phone, Region, RunCategory, RunCompanyStatus, RunStatus, ScrapeRun
 from app.services.company_dedupe import find_company_by_website_key, should_replace_name
 from app.services.discovery_state import ensure_utc, get_or_create_region_category_state, should_refresh_discovery
-from app.services.crawler import crawl_site
+from app.services.crawler import crawl_site, normalize_phone_number
 from app.services.metrics import record_request_metric
 from app.services.overpass import fetch_places
 from app.services.runs import finalize_cancelled_run
@@ -143,6 +143,34 @@ def persist_crawl(session: Session, company: Company, run_id: int | None = None)
                 existing.technical_metadata = {"title": page_result.title}
                 existing.last_seen_at = datetime.now(timezone.utc)
                 session.add(existing)
+
+        for phone_value in page_result.phones:
+            normalized_phone = normalize_phone_number(phone_value)
+            if not normalized_phone:
+                continue
+            existing_phone = (
+                session.query(Phone)
+                .filter(Phone.company_id == company.id, Phone.normalized_number == normalized_phone)
+                .one_or_none()
+            )
+            if existing_phone is None:
+                session.add(
+                    Phone(
+                        company_id=company.id,
+                        phone_number=phone_value,
+                        normalized_number=normalized_phone,
+                        source_type="regex",
+                        source_page_url=page_result.url,
+                        technical_metadata={"title": page_result.title},
+                    )
+                )
+            else:
+                if len(phone_value.strip()) > len((existing_phone.phone_number or "").strip()):
+                    existing_phone.phone_number = phone_value
+                existing_phone.source_page_url = page_result.url
+                existing_phone.technical_metadata = {"title": page_result.title}
+                existing_phone.last_seen_at = datetime.now(timezone.utc)
+                session.add(existing_phone)
 
         for form_data in page_result.forms:
             existing_form = (

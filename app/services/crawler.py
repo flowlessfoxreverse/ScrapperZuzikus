@@ -14,6 +14,7 @@ from app.config import get_settings
 
 
 EMAIL_REGEX = re.compile(r"(?i)([a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,})")
+PHONE_REGEX = re.compile(r"(?<!\w)(\+?\d[\d\s()./\-]{6,}\d)")
 CONTACT_PATH_HINTS = (
     "contact",
     "contact-us",
@@ -26,6 +27,7 @@ CONTACT_PATH_HINTS = (
 SOCIAL_HOSTS = ("facebook.com", "instagram.com", "linkedin.com", "tiktok.com", "youtube.com")
 CAPTCHA_HINTS = ("captcha", "g-recaptcha", "hcaptcha", "cf-turnstile")
 ASSET_SCAN_EXTENSIONS = (".js", ".mjs", ".css", ".json")
+PHONE_CONTEXT_HINTS = ("phone", "tel", "telephone", "mobile", "call", "contact", "whatsapp", "hotline", "โทร", "มือถือ")
 ANTI_BOT_HINTS = (
     "verify you're not a robot",
     "verify you are not a robot",
@@ -79,6 +81,7 @@ class CrawlPageResult:
     title: str | None
     status_code: int | None
     emails: list[str]
+    phones: list[str]
     social_links: list[str]
     has_contact_form: bool
     forms: list[dict]
@@ -267,6 +270,76 @@ def extract_emails(soup: BeautifulSoup) -> list[str]:
     return sorted(email for email in candidates if not is_noise_email(email))
 
 
+def normalize_phone_number(value: str) -> str | None:
+    candidate = re.sub(r"(?i)(ext|extension|x)\s*\d+$", "", value).strip()
+    if not candidate:
+        return None
+    lowered = candidate.lower()
+    if ":" in lowered or re.search(r"\b\d{1,2}[.:]\d{2}\b", lowered):
+        return None
+    if re.search(r"\b(19|20)\d{2}\b", lowered):
+        return None
+    has_plus = candidate.startswith("+")
+    digits = re.sub(r"\D", "", candidate)
+    if len(digits) < 9 or len(digits) > 15:
+        return None
+    if digits.startswith("00"):
+        digits = digits[2:]
+        has_plus = True
+    if digits.startswith("66") and len(digits) in {10, 11}:
+        digits = f"0{digits[2:]}"
+        has_plus = False
+    if not has_plus and not (digits.startswith("0") or digits.startswith("66")):
+        return None
+    return f"+{digits}" if has_plus else digits
+
+
+def is_noise_phone(phone: str) -> bool:
+    digits = re.sub(r"\D", "", phone)
+    if len(set(digits)) == 1:
+        return True
+    return digits in {"12345678", "123456789", "1234567890"}
+
+
+def extract_phones(soup: BeautifulSoup) -> list[str]:
+    extraction_soup = BeautifulSoup(str(soup), "html.parser")
+    for tag in extraction_soup(["script", "style", "noscript", "template"]):
+        tag.decompose()
+
+    ordered: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def add_candidate(raw_value: str) -> None:
+        normalized = normalize_phone_number(unescape(raw_value))
+        if not normalized or normalized in seen or is_noise_phone(normalized):
+            return
+        seen.add(normalized)
+        ordered.append((normalized, raw_value.strip()))
+
+    visible_text = unescape(extraction_soup.get_text(" ", strip=True))
+    for match in PHONE_REGEX.finditer(visible_text):
+        start = max(match.start() - 32, 0)
+        end = min(match.end() + 32, len(visible_text))
+        context = visible_text[start:end].lower()
+        if any(hint in context for hint in PHONE_CONTEXT_HINTS):
+            add_candidate(match.group(1))
+
+    for link in extraction_soup.find_all("a", href=True):
+        href = unescape(link["href"]).strip()
+        if href.lower().startswith("tel:"):
+            add_candidate(href.split(":", 1)[1])
+        if "wa.me/" in href.lower() or "api.whatsapp.com/send" in href.lower():
+            digits = "".join(re.findall(r"\d+", href))
+            if digits:
+                add_candidate(f"+{digits}")
+        link_text = unescape(link.get_text(" ", strip=True))
+        if any(hint in link_text.lower() for hint in PHONE_CONTEXT_HINTS):
+            for match in PHONE_REGEX.finditer(link_text):
+                add_candidate(match.group(1))
+
+    return [raw for _, raw in ordered]
+
+
 def iter_same_origin_assets(soup: BeautifulSoup, page_url: str) -> list[str]:
     page_host = urlparse(page_url).netloc.lower().removeprefix("www.")
     assets: list[str] = []
@@ -377,6 +450,7 @@ def crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
                             title=None,
                             status_code=response.status_code,
                             emails=[],
+                            phones=[],
                             social_links=[],
                             has_contact_form=False,
                             forms=[],
@@ -387,6 +461,7 @@ def crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
                 soup = BeautifulSoup(response.text, "html.parser")
                 title = soup.title.text.strip() if soup.title and soup.title.text else None
                 emails = extract_emails(soup)
+                phones = extract_phones(soup)
                 if not emails and should_scan_assets(soup, str(response.url)):
                     emails = extract_emails_from_assets(
                         client=client,
@@ -412,6 +487,7 @@ def crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
                         title=title,
                         status_code=response.status_code,
                         emails=emails[: settings.max_emails_per_company],
+                        phones=phones,
                         social_links=sorted(set(social_links)),
                         has_contact_form=has_contact_form,
                         forms=forms,
@@ -424,6 +500,7 @@ def crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
                         title=None,
                         status_code=None,
                         emails=[],
+                        phones=[],
                         social_links=[],
                         has_contact_form=False,
                         forms=[],

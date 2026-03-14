@@ -11,7 +11,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import Category, Company, Email, Region, RunCategory, RunStatus, ScrapeRun, ValidationStatus, Vertical
+from app.models import Category, Company, Email, Phone, Region, RunCategory, RunStatus, ScrapeRun, ValidationStatus, Vertical
 from app.schemas import EmailRow
 from app.services.overpass import fetch_status
 from app.services.region_catalog import country_catalog, upsert_country_with_subdivisions
@@ -56,6 +56,8 @@ class CompanyAuditRow:
     has_contact_form: bool
     email_count: int
     latest_email: str | None
+    phone_count: int
+    latest_phone: str | None
 
 
 def summarize_run_note(note: str | None) -> str:
@@ -145,12 +147,22 @@ def build_company_audit_rows(
     region_id: int | None = None,
     country_code: str | None = None,
 ) -> list[CompanyAuditRow]:
-    email_count = func.count(Email.id)
+    email_count = func.count(func.distinct(Email.id))
     latest_email = func.max(Email.email)
+    phone_count = func.count(func.distinct(Phone.id))
+    latest_phone = func.max(Phone.phone_number)
     stmt = (
-        select(Company, Region, email_count.label("email_count"), latest_email.label("latest_email"))
+        select(
+            Company,
+            Region,
+            email_count.label("email_count"),
+            latest_email.label("latest_email"),
+            phone_count.label("phone_count"),
+            latest_phone.label("latest_phone"),
+        )
         .join(Region, Company.region_id == Region.id)
         .outerjoin(Email, Email.company_id == Company.id)
+        .outerjoin(Phone, Phone.company_id == Company.id)
         .group_by(Company.id, Region.id)
         .order_by(Region.name.asc(), Company.name.asc())
     )
@@ -160,7 +172,7 @@ def build_company_audit_rows(
         stmt = stmt.where(Region.country_code == country_code)
 
     rows: list[CompanyAuditRow] = []
-    for company, region, email_count_value, latest_email_value in db.execute(stmt).all():
+    for company, region, email_count_value, latest_email_value, phone_count_value, latest_phone_value in db.execute(stmt).all():
         rows.append(
             CompanyAuditRow(
                 id=company.id,
@@ -172,6 +184,8 @@ def build_company_audit_rows(
                 has_contact_form=company.has_contact_form,
                 email_count=email_count_value or 0,
                 latest_email=latest_email_value,
+                phone_count=phone_count_value or 0,
+                latest_phone=latest_phone_value,
             )
         )
     return rows

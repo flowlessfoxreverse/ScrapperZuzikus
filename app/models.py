@@ -116,6 +116,7 @@ class Company(Base):
     categories: Mapped[list["CompanyCategory"]] = relationship(back_populates="company", cascade="all, delete-orphan")
     pages: Mapped[list["Page"]] = relationship(back_populates="company", cascade="all, delete-orphan")
     emails: Mapped[list["Email"]] = relationship(back_populates="company", cascade="all, delete-orphan")
+    phones: Mapped[list["Phone"]] = relationship(back_populates="company", cascade="all, delete-orphan")
     forms: Mapped[list["Form"]] = relationship(back_populates="company", cascade="all, delete-orphan")
     run_companies: Mapped[list["RunCompany"]] = relationship(back_populates="company", cascade="all, delete-orphan")
 
@@ -167,6 +168,25 @@ class Email(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     company: Mapped["Company"] = relationship(back_populates="emails")
+
+
+class Phone(Base):
+    __tablename__ = "phones"
+    __table_args__ = (
+        UniqueConstraint("company_id", "normalized_number", name="uq_company_phone"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    phone_number: Mapped[str] = mapped_column(String(64), index=True)
+    normalized_number: Mapped[str] = mapped_column(String(32), index=True)
+    source_type: Mapped[str] = mapped_column(String(32), default="regex")
+    source_page_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    technical_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    company: Mapped["Company"] = relationship(back_populates="phones")
 
 
 class Form(Base):

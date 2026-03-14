@@ -221,6 +221,8 @@
                   <th>Website</th>
                   <th>Emails</th>
                   <th>Latest Email</th>
+                  <th>Phones</th>
+                  <th>Latest Phone</th>
                   <th>Form</th>
                   <th>Status</th>
                 </tr>
@@ -239,6 +241,8 @@
                   </td>
                   <td>{{ item.email_count }}</td>
                   <td>{{ item.latest_email or "-" }}</td>
+                  <td>{{ item.phone_count }}</td>
+                  <td>{{ item.latest_phone or "-" }}</td>
                   <td>
                     {% if item.has_contact_form %}
                     <span class="badge warn">form detected</span>
@@ -249,7 +253,7 @@
                   <td><small class="subtle">{{ item.crawl_status }}</small></td>
                 </tr>
                 {% else %}
-                <tr><td colspan="7">No companies yet for this region.</td></tr>
+                <tr><td colspan="9">No companies yet for this region.</td></tr>
                 {% endfor %}
               </tbody>
             </table>
@@ -352,6 +356,8 @@
               <th>Website</th>
               <th>Emails</th>
               <th>Latest Email</th>
+              <th>Phones</th>
+              <th>Latest Phone</th>
               <th>Form</th>
               <th>Status</th>
             </tr>
@@ -371,6 +377,8 @@
               </td>
               <td>{{ item.email_count }}</td>
               <td>{{ item.latest_email or "-" }}</td>
+              <td>{{ item.phone_count }}</td>
+              <td>{{ item.latest_phone or "-" }}</td>
               <td>
                 {% if item.has_contact_form %}
                 <span class="badge warn">form detected</span>
@@ -381,7 +389,7 @@
               <td><small class="subtle">{{ item.crawl_status }}</small></td>
             </tr>
             {% else %}
-            <tr><td colspan="8">No companies yet.</td></tr>
+            <tr><td colspan="10">No companies yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>
