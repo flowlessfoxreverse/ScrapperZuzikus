@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Request Metrics</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Operations</p>
+          <h1>Request Metrics</h1>
+          <p class="subtle">Use this to see whether time is going into direct crawler traffic, proxied traffic, or browser fallback.</p>
+        </div>
+        <div class="hero-actions">
+          <a class="ghost-button" href="/">Back</a>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Request Summary</h2>
+          <span>{{ summaries|length }} groups</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Kind</th>
+              <th>Transport</th>
+              <th>Requests</th>
+              <th>Avg ms</th>
+              <th>Max ms</th>
+              <th>Errors</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in summaries %}
+            <tr>
+              <td>{{ item.provider }}</td>
+              <td>{{ item.request_kind }}</td>
+              <td>{{ item.transport }}</td>
+              <td>{{ item.request_count }}</td>
+              <td>{{ item.avg_duration_ms }}</td>
+              <td>{{ item.max_duration_ms }}</td>
+              <td>{{ item.error_count }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7">No request metrics yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Slow Hosts</h2>
+          <span>Top 20 by average latency</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Host</th>
+              <th>Provider</th>
+              <th>Requests</th>
+              <th>Avg ms</th>
+              <th>Max ms</th>
+              <th>Proxied</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in slow_hosts %}
+            <tr>
+              <td>{{ item.host }}</td>
+              <td>{{ item.provider }}</td>
+              <td>{{ item.request_count }}</td>
+              <td>{{ item.avg_duration_ms }}</td>
+              <td>{{ item.max_duration_ms }}</td>
+              <td>{{ item.proxied_requests }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6">No host metrics yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Recent Error Buckets</h2>
+          <span>Top 20 grouped failures</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Kind</th>
+              <th>Error</th>
+              <th>Count</th>
+              <th>Last Seen</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in recent_errors %}
+            <tr>
+              <td>{{ item.provider }}</td>
+              <td>{{ item.request_kind }}</td>
+              <td title="{{ item.error }}">{{ item.error }}</td>
+              <td>{{ item.request_count }}</td>
+              <td>{{ item.last_seen_at }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5">No grouped errors yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+    </main>
+  </body>
+</html>

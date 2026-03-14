@@ -19,6 +19,7 @@
           <a class="ghost-button" href="/regions">Edit Regions</a>
           <a class="ghost-button" href="/categories">Edit Categories</a>
           <a class="ghost-button" href="/proxies">Edit Proxies</a>
+          <a class="ghost-button" href="/metrics">View Metrics</a>
         </div>
       </section>
 
@@ -133,6 +134,10 @@
           <div class="stat-card">
             <span class="subtle">Effective Browser Capacity</span>
             <strong>{{ effective_browser_capacity }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Crawler Thread Ceiling</span>
+            <strong>{{ crawler_thread_capacity }}</strong>
           </div>
           <div class="stat-card">
             <span class="subtle">Effective Crawler Capacity</span>

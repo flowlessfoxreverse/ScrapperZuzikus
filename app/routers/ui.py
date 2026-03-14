@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import quote_plus
+from urllib.parse import urlparse
 import re
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -13,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import Category, Company, ContactChannel, ContactChannelType, Email, Phone, ProxyEndpoint, ProxyKind, Region, RunCategory, RunStatus, ScrapeRun, ValidationStatus, Vertical
+from app.models import Category, Company, ContactChannel, ContactChannelType, Email, Phone, ProxyEndpoint, ProxyKind, Region, RequestMetric, RunCategory, RunStatus, ScrapeRun, ValidationStatus, Vertical
 from app.schemas import EmailRow
 from app.services.overpass import fetch_status
 from app.services.proxy_pool import active_proxy_count, effective_proxy_capacity, lease_counts, list_proxies, release_proxy, upsert_proxy
@@ -90,6 +91,36 @@ class ProxyRow:
     auto_disabled_at: datetime | None
     status_label: str
     notes: str | None
+
+
+@dataclass
+class MetricSummaryRow:
+    provider: str
+    request_kind: str
+    transport: str
+    request_count: int
+    avg_duration_ms: int
+    max_duration_ms: int
+    error_count: int
+
+
+@dataclass
+class HostMetricRow:
+    host: str
+    provider: str
+    request_count: int
+    avg_duration_ms: int
+    max_duration_ms: int
+    proxied_requests: int
+
+
+@dataclass
+class ErrorMetricRow:
+    provider: str
+    request_kind: str
+    error: str
+    request_count: int
+    last_seen_at: datetime
 
 
 def proxy_status_label(proxy: ProxyEndpoint) -> str:
@@ -390,6 +421,93 @@ def build_recent_runs_page(db: Session, *, offset: int = 0, limit: int = RECENT_
     return rows[:limit], has_more
 
 
+def build_request_metric_views(db: Session, *, limit: int = 2000) -> tuple[list[MetricSummaryRow], list[HostMetricRow], list[ErrorMetricRow]]:
+    metrics = db.scalars(
+        select(RequestMetric)
+        .order_by(RequestMetric.created_at.desc())
+        .limit(limit)
+    ).all()
+
+    summary_buckets: dict[tuple[str, str, str], dict[str, int]] = {}
+    host_buckets: dict[tuple[str, str], dict[str, int]] = {}
+    error_buckets: dict[tuple[str, str, str], dict[str, object]] = {}
+
+    for metric in metrics:
+        transport = "proxy" if metric.used_proxy else "direct"
+        summary_key = (metric.provider, metric.request_kind, transport)
+        summary_bucket = summary_buckets.setdefault(
+            summary_key,
+            {"count": 0, "duration_total": 0, "max_duration": 0, "error_count": 0},
+        )
+        summary_bucket["count"] += 1
+        summary_bucket["duration_total"] += metric.duration_ms
+        summary_bucket["max_duration"] = max(summary_bucket["max_duration"], metric.duration_ms)
+        if metric.error:
+            summary_bucket["error_count"] += 1
+
+        host = urlparse(metric.url).netloc or urlparse(f"https://{metric.url}").netloc or metric.url[:80]
+        host_key = (host, metric.provider)
+        host_bucket = host_buckets.setdefault(
+            host_key,
+            {"count": 0, "duration_total": 0, "max_duration": 0, "proxied_count": 0},
+        )
+        host_bucket["count"] += 1
+        host_bucket["duration_total"] += metric.duration_ms
+        host_bucket["max_duration"] = max(host_bucket["max_duration"], metric.duration_ms)
+        if metric.used_proxy:
+            host_bucket["proxied_count"] += 1
+
+        if metric.error:
+            error_key = (metric.provider, metric.request_kind, metric.error[:180])
+            error_bucket = error_buckets.setdefault(
+                error_key,
+                {"count": 0, "last_seen_at": metric.created_at},
+            )
+            error_bucket["count"] += 1
+            if metric.created_at > error_bucket["last_seen_at"]:
+                error_bucket["last_seen_at"] = metric.created_at
+
+    summaries = [
+        MetricSummaryRow(
+            provider=provider,
+            request_kind=request_kind,
+            transport=transport,
+            request_count=values["count"],
+            avg_duration_ms=round(values["duration_total"] / values["count"]),
+            max_duration_ms=values["max_duration"],
+            error_count=values["error_count"],
+        )
+        for (provider, request_kind, transport), values in summary_buckets.items()
+    ]
+    summaries.sort(key=lambda row: (row.provider, row.request_kind, row.transport))
+
+    hosts = [
+        HostMetricRow(
+            host=host,
+            provider=provider,
+            request_count=values["count"],
+            avg_duration_ms=round(values["duration_total"] / values["count"]),
+            max_duration_ms=values["max_duration"],
+            proxied_requests=values["proxied_count"],
+        )
+        for (host, provider), values in host_buckets.items()
+    ]
+    hosts.sort(key=lambda row: (-row.avg_duration_ms, -row.request_count, row.host))
+
+    errors = [
+        ErrorMetricRow(
+            provider=provider,
+            request_kind=request_kind,
+            error=error,
+            request_count=values["count"],
+            last_seen_at=values["last_seen_at"],
+        )
+        for (provider, request_kind, error), values in error_buckets.items()
+    ]
+    errors.sort(key=lambda row: (-row.request_count, row.provider, row.request_kind))
+    return summaries, hosts[:20], errors[:20]
+
+
 @router.get("/", response_class=HTMLResponse)
 def dashboard(
     request: Request,
@@ -443,9 +561,10 @@ def dashboard(
     overpass_status = fetch_status()
     browser_proxy_slots = active_proxy_count(db, ProxyKind.BROWSER)
     crawler_proxy_slots = active_proxy_count(db, ProxyKind.CRAWLER)
-    browser_thread_capacity = settings.browser_worker_threads
+    browser_thread_capacity = settings.browser_worker_processes * settings.browser_worker_threads
+    crawler_thread_capacity = settings.crawl_worker_processes * settings.crawl_worker_threads
     effective_browser_capacity = min(effective_proxy_capacity(db, ProxyKind.BROWSER), browser_thread_capacity)
-    effective_crawler_capacity = effective_proxy_capacity(db, ProxyKind.CRAWLER)
+    effective_crawler_capacity = min(effective_proxy_capacity(db, ProxyKind.CRAWLER), crawler_thread_capacity)
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
@@ -470,6 +589,7 @@ def dashboard(
             "browser_proxy_slots": browser_proxy_slots,
             "crawler_proxy_slots": crawler_proxy_slots,
             "browser_thread_capacity": browser_thread_capacity,
+            "crawler_thread_capacity": crawler_thread_capacity,
             "effective_browser_capacity": effective_browser_capacity,
             "effective_crawler_capacity": effective_crawler_capacity,
             "message": message,
@@ -632,7 +752,8 @@ def region_editor(request: Request, db: Session = Depends(get_db)) -> HTMLRespon
 def proxy_editor(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     browser_proxy_slots = active_proxy_count(db, ProxyKind.BROWSER)
     crawler_proxy_slots = active_proxy_count(db, ProxyKind.CRAWLER)
-    browser_thread_capacity = settings.browser_worker_threads
+    browser_thread_capacity = settings.browser_worker_processes * settings.browser_worker_threads
+    crawler_thread_capacity = settings.crawl_worker_processes * settings.crawl_worker_threads
     current_leases = lease_counts(db)
     proxies = [
         ProxyRow(
@@ -667,8 +788,23 @@ def proxy_editor(request: Request, db: Session = Depends(get_db)) -> HTMLRespons
             "browser_proxy_slots": browser_proxy_slots,
             "crawler_proxy_slots": crawler_proxy_slots,
             "browser_thread_capacity": browser_thread_capacity,
+            "crawler_thread_capacity": crawler_thread_capacity,
             "effective_browser_capacity": min(effective_proxy_capacity(db, ProxyKind.BROWSER), browser_thread_capacity),
-            "effective_crawler_capacity": effective_proxy_capacity(db, ProxyKind.CRAWLER),
+            "effective_crawler_capacity": min(effective_proxy_capacity(db, ProxyKind.CRAWLER), crawler_thread_capacity),
+        },
+    )
+
+
+@router.get("/metrics", response_class=HTMLResponse)
+def request_metrics_view(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+    summaries, slow_hosts, recent_errors = build_request_metric_views(db)
+    return templates.TemplateResponse(
+        request=request,
+        name="metrics.html",
+        context={
+            "summaries": summaries,
+            "slow_hosts": slow_hosts,
+            "recent_errors": recent_errors,
         },
     )
 

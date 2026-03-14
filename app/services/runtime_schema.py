@@ -182,3 +182,20 @@ def ensure_run_company_retry_schema(engine: Engine) -> None:
 
     with engine.begin() as connection:
         connection.execute(text("ALTER TABLE run_companies ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0"))
+
+
+def ensure_request_metric_schema(engine: Engine) -> None:
+    inspector = inspect(engine)
+    try:
+        columns = {column["name"] for column in inspector.get_columns("request_metrics")}
+    except Exception:
+        return
+
+    if "used_proxy" in columns:
+        return
+
+    default_false = "FALSE" if engine.dialect.name == "postgresql" else "0"
+    with engine.begin() as connection:
+        connection.execute(
+            text(f"ALTER TABLE request_metrics ADD COLUMN used_proxy BOOLEAN NOT NULL DEFAULT {default_false}")
+        )

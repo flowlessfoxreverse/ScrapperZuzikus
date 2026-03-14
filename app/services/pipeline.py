@@ -480,6 +480,7 @@ def persist_crawl(
             request_kind="crawl",
             run_id=run_id,
             company_id=company.id,
+            used_proxy=bool(effective_crawler_kwargs.get("proxy_url")),
             **metric,
         )
 
@@ -673,6 +674,7 @@ def execute_discovery(
                         request_kind="discovery",
                         run_id=run.id,
                         company_id=None,
+                        used_proxy=False,
                         **metric,
                     ),
                 )
@@ -794,6 +796,7 @@ def execute_crawl(session: Session, run_id: int, company_id: int) -> None:
             crawler_kwargs={"proxy_url": proxy_url},
         )
         if settings.browser_fallback_enabled and result is not None and should_browser_escalate(result):
+            release_proxy(session, proxy.id if proxy else None, owner=owner, workload=ProxyKind.CRAWLER, failed=False)
             requeue_run_company(session, run_id, company_id, "Escalated to browser crawl.")
             session.commit()
             from app.tasks import browser_crawl_company

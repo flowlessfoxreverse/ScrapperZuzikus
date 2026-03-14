@@ -395,6 +395,7 @@ class RequestMetric(Base):
     request_kind: Mapped[str] = mapped_column(String(32), index=True)
     method: Mapped[str] = mapped_column(String(8))
     url: Mapped[str] = mapped_column(String(500))
+    used_proxy: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
     duration_ms: Mapped[int] = mapped_column(Integer)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
