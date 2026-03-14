@@ -59,9 +59,11 @@
                 <th>Proxy URL</th>
                 <th>HTTP Leases</th>
                 <th>Browser Leases</th>
+                <th>Health</th>
                 <th>Status</th>
                 <th>Active Lease Owner</th>
-                <th>Failures</th>
+                <th>Success / Fail</th>
+                <th>Consecutive</th>
                 <th>Action</th>
               </tr>
             </thead>
@@ -77,15 +79,21 @@
                 <td>{{ proxy.proxy_url }}</td>
                 <td>{{ proxy.current_http_leases }}/{{ proxy.max_http_leases }}</td>
                 <td>{{ proxy.current_browser_leases }}/{{ proxy.max_browser_leases }}</td>
+                <td>{{ proxy.health_score }}/100</td>
                 <td>
-                  {% if proxy.is_active %}
+                  {% if proxy.auto_disabled_at %}
+                  <span class="badge warn" title="Auto-disabled after repeated failures.">auto-disabled</span>
+                  {% elif proxy.status_label.startswith("cooldown") %}
+                  <span class="badge muted" title="{{ proxy.cooldown_until }}">{{ proxy.status_label }}</span>
+                  {% elif proxy.is_active %}
                   <span class="badge muted">active</span>
                   {% else %}
                   <span class="badge warn">disabled</span>
                   {% endif %}
                 </td>
                 <td>{{ proxy.leased_by or "-" }}</td>
-                <td>{{ proxy.failure_count }}</td>
+                <td>{{ proxy.success_count }} / {{ proxy.failure_count }}</td>
+                <td>{{ proxy.consecutive_failures }}</td>
                 <td>
                   <form action="/proxies/{{ proxy.id }}/toggle" method="post">
                     <button type="submit" class="ghost-button small-button">
@@ -95,7 +103,7 @@
                 </td>
               </tr>
               {% else %}
-              <tr><td colspan="9">No proxies configured yet.</td></tr>
+              <tr><td colspan="11">No proxies configured yet.</td></tr>
               {% endfor %}
             </tbody>
           </table>

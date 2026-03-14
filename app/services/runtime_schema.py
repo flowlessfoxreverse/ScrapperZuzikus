@@ -39,6 +39,7 @@ def ensure_proxy_pool_schema(engine: Engine) -> None:
     statements: list[str] = []
     dialect = engine.dialect.name
     default_true = "TRUE" if dialect == "postgresql" else "1"
+    default_active = "TRUE" if dialect == "postgresql" else "1"
     default_http_capacity = "8"
     default_browser_capacity = "1"
     if "supports_http" not in columns:
@@ -49,6 +50,24 @@ def ensure_proxy_pool_schema(engine: Engine) -> None:
         statements.append(f"ALTER TABLE proxy_endpoints ADD COLUMN max_http_leases INTEGER NOT NULL DEFAULT {default_http_capacity}")
     if "max_browser_leases" not in columns:
         statements.append(f"ALTER TABLE proxy_endpoints ADD COLUMN max_browser_leases INTEGER NOT NULL DEFAULT {default_browser_capacity}")
+    if "last_success_at" not in columns:
+        statements.append("ALTER TABLE proxy_endpoints ADD COLUMN last_success_at TIMESTAMP NULL")
+    if "last_failure_at" not in columns:
+        statements.append("ALTER TABLE proxy_endpoints ADD COLUMN last_failure_at TIMESTAMP NULL")
+    if "cooldown_until" not in columns:
+        statements.append("ALTER TABLE proxy_endpoints ADD COLUMN cooldown_until TIMESTAMP NULL")
+    if "auto_disabled_at" not in columns:
+        statements.append("ALTER TABLE proxy_endpoints ADD COLUMN auto_disabled_at TIMESTAMP NULL")
+    if "success_count" not in columns:
+        statements.append("ALTER TABLE proxy_endpoints ADD COLUMN success_count INTEGER NOT NULL DEFAULT 0")
+    if "consecutive_failures" not in columns:
+        statements.append("ALTER TABLE proxy_endpoints ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0")
+    if "health_score" not in columns:
+        statements.append("ALTER TABLE proxy_endpoints ADD COLUMN health_score INTEGER NOT NULL DEFAULT 100")
+    if "failure_count" not in columns:
+        statements.append("ALTER TABLE proxy_endpoints ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0")
+    if "is_active" not in columns:
+        statements.append(f"ALTER TABLE proxy_endpoints ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT {default_active}")
 
     with engine.begin() as connection:
         for statement in statements:

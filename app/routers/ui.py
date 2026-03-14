@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from urllib.parse import quote_plus
 import re
 
@@ -77,8 +78,23 @@ class ProxyRow:
     current_browser_leases: int
     is_active: bool
     leased_by: str | None
+    success_count: int
     failure_count: int
+    consecutive_failures: int
+    health_score: int
+    cooldown_until: datetime | None
+    auto_disabled_at: datetime | None
+    status_label: str
     notes: str | None
+
+
+def proxy_status_label(proxy: ProxyEndpoint) -> str:
+    now = datetime.now(timezone.utc)
+    if proxy.auto_disabled_at is not None or not proxy.is_active:
+        return "auto-disabled" if proxy.auto_disabled_at is not None else "disabled"
+    if proxy.cooldown_until is not None and proxy.cooldown_until > now:
+        return f"cooldown until {proxy.cooldown_until.astimezone(timezone.utc).strftime('%H:%M UTC')}"
+    return "active"
 
 
 def summarize_run_note(note: str | None) -> str:
@@ -581,7 +597,13 @@ def proxy_editor(request: Request, db: Session = Depends(get_db)) -> HTMLRespons
             current_browser_leases=current_leases.get(proxy.id, {}).get("browser", 0),
             is_active=proxy.is_active,
             leased_by=proxy.leased_by,
+            success_count=proxy.success_count,
             failure_count=proxy.failure_count,
+            consecutive_failures=proxy.consecutive_failures,
+            health_score=proxy.health_score,
+            cooldown_until=proxy.cooldown_until,
+            auto_disabled_at=proxy.auto_disabled_at,
+            status_label=proxy_status_label(proxy),
             notes=proxy.notes,
         )
         for proxy in list_proxies(db)
@@ -642,7 +664,11 @@ def toggle_proxy_html(
     if proxy is not None:
         proxy.is_active = not proxy.is_active
         if not proxy.is_active:
-            release_proxy(db, proxy.id)
+            release_proxy(db, proxy.id, record_result=False)
+        else:
+            proxy.auto_disabled_at = None
+            proxy.cooldown_until = None
+            proxy.consecutive_failures = 0
         db.add(proxy)
         db.commit()
     return RedirectResponse(url="/proxies", status_code=303)

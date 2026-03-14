@@ -6,10 +6,13 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.models import ProxyEndpoint, ProxyKind, ProxyLease
 
 
 LEASE_MINUTES = 10
+MAX_HEALTH_SCORE = 100
+settings = get_settings()
 
 
 @dataclass
@@ -24,6 +27,14 @@ def _supports(proxy: ProxyEndpoint, workload: ProxyKind) -> bool:
 
 def _capacity(proxy: ProxyEndpoint, workload: ProxyKind) -> int:
     return proxy.max_browser_leases if workload == ProxyKind.BROWSER else proxy.max_http_leases
+
+
+def _is_in_cooldown(proxy: ProxyEndpoint, now: datetime) -> bool:
+    return proxy.cooldown_until is not None and proxy.cooldown_until > now
+
+
+def _clamp_health(value: int) -> int:
+    return max(0, min(MAX_HEALTH_SCORE, value))
 
 
 def expire_old_leases(session: Session) -> None:
@@ -52,19 +63,21 @@ def lease_counts(session: Session) -> dict[int, dict[str, int]]:
 
 
 def active_proxy_count(session: Session, workload: ProxyKind = ProxyKind.BROWSER) -> int:
+    now = datetime.now(timezone.utc)
     proxies = [
         proxy
         for proxy in list_proxies(session)
-        if proxy.is_active and _supports(proxy, workload)
+        if proxy.is_active and _supports(proxy, workload) and not _is_in_cooldown(proxy, now)
     ]
     return len(proxies)
 
 
 def effective_proxy_capacity(session: Session, workload: ProxyKind = ProxyKind.BROWSER) -> int:
+    now = datetime.now(timezone.utc)
     proxies = [
         proxy
         for proxy in list_proxies(session)
-        if proxy.is_active and _supports(proxy, workload)
+        if proxy.is_active and _supports(proxy, workload) and not _is_in_cooldown(proxy, now)
     ]
     return sum(_capacity(proxy, workload) for proxy in proxies)
 
@@ -92,11 +105,12 @@ def acquire_proxy(
     candidates = [
         proxy
         for proxy in list_proxies(session)
-        if proxy.is_active and _supports(proxy, workload)
+        if proxy.is_active and _supports(proxy, workload) and not _is_in_cooldown(proxy, now)
     ]
     if workload == ProxyKind.BROWSER:
         candidates.sort(
             key=lambda proxy: (
+                proxy.health_score * -1,
                 counts.get(proxy.id, {}).get("browser", 0),
                 counts.get(proxy.id, {}).get("crawler", 0),
                 proxy.last_used_at is not None,
@@ -108,6 +122,7 @@ def acquire_proxy(
         candidates.sort(
             key=lambda proxy: (
                 1 if counts.get(proxy.id, {}).get("browser", 0) > 0 else 0,
+                proxy.health_score * -1,
                 counts.get(proxy.id, {}).get("crawler", 0),
                 proxy.last_used_at is not None,
                 proxy.last_used_at or datetime.min.replace(tzinfo=timezone.utc),
@@ -143,6 +158,7 @@ def release_proxy(
     owner: str | None = None,
     workload: ProxyKind | None = None,
     failed: bool = False,
+    record_result: bool = True,
 ) -> None:
     if proxy_id is None:
         return
@@ -166,9 +182,30 @@ def release_proxy(
         proxy.lease_expires_at = None
     elif remaining["browser"] == 0:
         proxy.leased_by = None
-    proxy.last_used_at = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
+    proxy.last_used_at = now
+    if not record_result:
+        session.add(proxy)
+        return
     if failed:
         proxy.failure_count += 1
+        proxy.consecutive_failures += 1
+        proxy.last_failure_at = now
+        proxy.cooldown_until = now + timedelta(minutes=settings.proxy_failure_cooldown_minutes)
+        proxy.health_score = _clamp_health(proxy.health_score - settings.proxy_health_failure_penalty)
+        if proxy.consecutive_failures >= settings.proxy_auto_disable_threshold:
+            proxy.is_active = False
+            proxy.auto_disabled_at = now
+            proxy.leased_by = None
+            proxy.leased_at = None
+            proxy.lease_expires_at = None
+    else:
+        proxy.success_count += 1
+        proxy.consecutive_failures = 0
+        proxy.last_success_at = now
+        proxy.health_score = _clamp_health(proxy.health_score + settings.proxy_health_success_recovery)
+        if proxy.cooldown_until is not None and proxy.cooldown_until <= now:
+            proxy.cooldown_until = None
     session.add(proxy)
 
 
@@ -211,6 +248,8 @@ def upsert_proxy(
         existing.max_http_leases = max(1, max_http_leases)
         existing.max_browser_leases = max(1, max_browser_leases)
         existing.is_active = is_active
+        if existing.is_active:
+            existing.auto_disabled_at = None
         existing.notes = notes
     session.add(existing)
     session.flush()

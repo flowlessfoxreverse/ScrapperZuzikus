@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     browser_proxy_url: str | None = None
     browser_proxy_bypass: str = ""
     browser_stealth_plugin_enabled: bool = True
+    proxy_failure_cooldown_minutes: int = 15
+    proxy_auto_disable_threshold: int = 5
+    proxy_health_failure_penalty: int = 20
+    proxy_health_success_recovery: int = 5
     worker_processes: int = 1
     worker_threads: int = 1
     browser_worker_processes: int = 1
