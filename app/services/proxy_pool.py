@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from uuid import uuid5, NAMESPACE_URL
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -35,6 +36,30 @@ def _is_in_cooldown(proxy: ProxyEndpoint, now: datetime) -> bool:
 
 def _clamp_health(value: int) -> int:
     return max(0, min(MAX_HEALTH_SCORE, value))
+
+
+def _proxy_session_id(proxy: ProxyEndpoint, owner: str, workload: ProxyKind) -> str:
+    seed = f"{proxy.id}:{proxy.label}:{owner}:{workload.value}"
+    return uuid5(NAMESPACE_URL, seed).hex[:16]
+
+
+def render_proxy_url(
+    proxy: ProxyEndpoint | None,
+    *,
+    owner: str,
+    workload: ProxyKind,
+) -> str | None:
+    if proxy is None:
+        return None
+    session_id = _proxy_session_id(proxy, owner, workload)
+    return (
+        proxy.proxy_url
+        .replace("{session_id}", session_id)
+        .replace("{lease_id}", session_id)
+        .replace("{owner}", owner)
+        .replace("{workload}", workload.value)
+        .replace("{proxy_id}", str(proxy.id))
+    )
 
 
 def expire_old_leases(session: Session) -> None:

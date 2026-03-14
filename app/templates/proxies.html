@@ -136,7 +136,8 @@
             </label>
             <label>
               <span>Proxy URL</span>
-              <input type="text" name="proxy_url" placeholder="http://user:pass@proxy-host:port" required />
+              <input type="text" name="proxy_url" placeholder="http://user-country-th-sessid-{session_id}:pass@gw.dataimpulse.com:823" required />
+              <small>Templates supported: <code>{session_id}</code>, <code>{lease_id}</code>, <code>{owner}</code>, <code>{workload}</code>, <code>{proxy_id}</code>. Use a session placeholder for sticky browser identities from a single gateway.</small>
             </label>
             <label>
               <span>Notes</span>

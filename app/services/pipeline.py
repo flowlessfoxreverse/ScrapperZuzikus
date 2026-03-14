@@ -12,7 +12,7 @@ from app.services.browser_crawler import browser_crawl_site
 from app.services.crawler import crawl_site, normalize_phone_number, should_browser_escalate
 from app.services.metrics import record_request_metric
 from app.services.overpass import fetch_places
-from app.services.proxy_pool import acquire_proxy, active_proxy_count, release_proxy
+from app.services.proxy_pool import acquire_proxy, active_proxy_count, release_proxy, render_proxy_url
 from app.services.runs import finalize_cancelled_run
 from app.services.run_companies import (
     close_open_run_companies,
@@ -422,11 +422,12 @@ def execute_crawl(session: Session, run_id: int, company_id: int) -> None:
                 crawl_company.send_with_options(args=(run_id, company_id), delay=5_000)
                 return
             session.commit()
+        proxy_url = render_proxy_url(proxy, owner=owner, workload=ProxyKind.CRAWLER)
         result = persist_crawl(
             session=session,
             company=company,
             run_id=run_id,
-            crawler_kwargs={"proxy_url": proxy.proxy_url if proxy else None},
+            crawler_kwargs={"proxy_url": proxy_url},
         )
         if settings.browser_fallback_enabled and result is not None and should_browser_escalate(result):
             requeue_run_company(session, run_id, company_id, "Escalated to browser crawl.")
@@ -473,8 +474,8 @@ def execute_browser_crawl(session: Session, run_id: int, company_id: int) -> Non
     session.commit()
 
     proxy = None
+    owner = f"run-{run_id}-company-{company_id}"
     try:
-        owner = f"run-{run_id}-company-{company_id}"
         if active_proxy_count(session, ProxyKind.BROWSER) > 0:
             proxy = acquire_proxy(session, owner=owner, workload=ProxyKind.BROWSER)
             if proxy is None:
@@ -484,13 +485,14 @@ def execute_browser_crawl(session: Session, run_id: int, company_id: int) -> Non
                 browser_crawl_company.send_with_options(args=(run_id, company_id), delay=5_000)
                 return
             session.commit()
+        proxy_url = render_proxy_url(proxy, owner=owner, workload=ProxyKind.BROWSER)
         persist_crawl(
             session=session,
             company=company,
             run_id=run_id,
             crawler=browser_crawl_site,
             request_provider="browser",
-            crawler_kwargs={"proxy_url": proxy.proxy_url if proxy else None},
+            crawler_kwargs={"proxy_url": proxy_url},
         )
         mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.COMPLETED)
     except Exception as exc:
