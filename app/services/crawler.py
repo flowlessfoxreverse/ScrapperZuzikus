@@ -408,6 +408,23 @@ def should_scan_assets(soup: BeautifulSoup, page_url: str) -> bool:
     return bool(iter_same_origin_assets(soup=soup, page_url=page_url))
 
 
+def should_browser_escalate(result: CrawlSiteResult) -> bool:
+    if not result.pages:
+        return result.crawl_status in {"blocked_by_robots", "failed"}
+
+    has_contacts = any(page.emails or page.phones or page.has_contact_form for page in result.pages)
+    if has_contacts:
+        return False
+
+    if any((page.status_code or 0) in {401, 403} for page in result.pages):
+        return True
+
+    if any(page.error == "cross_domain_redirect_after_ssl_fallback" for page in result.pages):
+        return False
+
+    return result.crawl_status in {"blocked_by_robots", "robots_bypassed", "failed", "completed"}
+
+
 def crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
     website_url = normalize_url(website_url)
     robots_blocked = not fetch_robots_allowed(website_url)

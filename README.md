@@ -10,6 +10,7 @@ Dockerized lead discovery stack for rental and tourism businesses, starting with
 - Redis + Dramatiq for background scrape runs
 - Self-hosted Overpass for OSM-based business discovery
 - `httpx` + BeautifulSoup for polite website crawling and email extraction
+- Playwright browser worker for JS-heavy or challenge pages
 
 ## What is implemented
 
@@ -55,6 +56,7 @@ docker compose up --build -d
 - Discovery is cached per `region + category` and only refreshed after `DISCOVERY_COOLDOWN_HOURS`
 - Website recrawls are limited by `CRAWL_RECRAWL_HOURS`
 - The crawler can bypass `robots.txt` and retry with `verify=False` on certificate errors via `CRAWLER_IGNORE_ROBOTS` and `CRAWLER_INSECURE_SSL_FALLBACK`
+- A separate `browser_worker` can retry blocked or JS-heavy sites with Playwright when the static crawler finds no usable contact info
 - If you scale scraping later, add separate proxy-backed worker pools with distinct egress for website crawling only
 
 Example local `.env` values:
@@ -82,16 +84,23 @@ CRAWL_RECRAWL_HOURS=168
 REGION_CATALOG_COUNTRIES=TH
 CRAWLER_IGNORE_ROBOTS=1
 CRAWLER_INSECURE_SSL_FALLBACK=1
+BROWSER_FALLBACK_ENABLED=1
+BROWSER_MAX_PAGES_PER_SITE=6
+BROWSER_NAVIGATION_TIMEOUT_SECONDS=30
+BROWSER_WAIT_AFTER_LOAD_MS=2500
 WORKER_PROCESSES=1
 WORKER_THREADS=1
 CRAWL_WORKER_PROCESSES=1
 CRAWL_WORKER_THREADS=1
+BROWSER_WORKER_PROCESSES=1
+BROWSER_WORKER_THREADS=1
 ```
 
 ## Discovery Model
 
 - One run per region can be active at a time
 - Discovery and website crawling run on separate Dramatiq queues and separate worker services
+- Browser-assisted crawling runs on its own queue and only handles sites that the static crawler could not recover
 - Discovery is cached per `region + category` and reused until the cooldown expires
 - Repeated runs focus on stale or failed company crawls instead of querying Overpass again
 - Self-hosted Overpass removes dependence on the shared public endpoint for normal operation

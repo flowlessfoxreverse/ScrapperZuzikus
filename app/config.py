@@ -37,8 +37,14 @@ class Settings(BaseSettings):
     max_emails_per_company: int = 10
     crawler_ignore_robots: bool = True
     crawler_insecure_ssl_fallback: bool = True
+    browser_fallback_enabled: bool = True
+    browser_max_pages_per_site: int = 6
+    browser_navigation_timeout_seconds: int = 30
+    browser_wait_after_load_ms: int = 2500
     worker_processes: int = 1
     worker_threads: int = 1
+    browser_worker_processes: int = 1
+    browser_worker_threads: int = 1
 
 
 @lru_cache

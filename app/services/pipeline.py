@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from app.models import Category, Company, CompanyCategory, Email, Form, Page, Phone, Region, RunCategory, RunCompanyStatus, RunStatus, ScrapeRun
 from app.services.company_dedupe import find_company_by_website_key, should_replace_name
 from app.services.discovery_state import ensure_utc, get_or_create_region_category_state, should_refresh_discovery
-from app.services.crawler import crawl_site, normalize_phone_number
+from app.services.browser_crawler import browser_crawl_site
+from app.services.crawler import crawl_site, normalize_phone_number, should_browser_escalate
 from app.services.metrics import record_request_metric
 from app.services.overpass import fetch_places
 from app.services.runs import finalize_cancelled_run
@@ -18,6 +19,7 @@ from app.services.run_companies import (
     mark_run_company_running,
     maybe_complete_run,
     queue_company_for_run,
+    requeue_run_company,
 )
 from app.services.usage import can_consume, consume_units
 
@@ -84,23 +86,30 @@ def upsert_company_from_element(
     return company
 
 
-def persist_crawl(session: Session, company: Company, run_id: int | None = None) -> None:
+def persist_crawl(
+    session: Session,
+    company: Company,
+    run_id: int | None = None,
+    *,
+    crawler=crawl_site,
+    request_provider: str = "website",
+) -> object:
     if not company.website_url:
         company.crawl_status = "no_website"
         session.add(company)
-        return
+        return None
 
     def on_request(**metric):
         record_request_metric(
             session,
-            provider="website",
+            provider=request_provider,
             request_kind="crawl",
             run_id=run_id,
             company_id=company.id,
             **metric,
         )
 
-    result = crawl_site(company.website_url, on_request=on_request)
+    result = crawler(company.website_url, on_request=on_request)
     company.crawl_status = result.crawl_status
     company.has_contact_form = any(page.has_contact_form for page in result.pages)
     session.add(company)
@@ -189,6 +198,7 @@ def persist_crawl(session: Session, company: Company, run_id: int | None = None)
                         schema_json=form_data,
                     )
                 )
+    return result
 
 
 def companies_for_category(session: Session, region_id: int, category_id: int) -> list[Company]:
@@ -399,12 +409,62 @@ def execute_crawl(session: Session, run_id: int, company_id: int) -> None:
     session.commit()
 
     try:
-        persist_crawl(session=session, company=company, run_id=run_id)
+        result = persist_crawl(session=session, company=company, run_id=run_id)
+        if settings.browser_fallback_enabled and result is not None and should_browser_escalate(result):
+            requeue_run_company(session, run_id, company_id, "Escalated to browser crawl.")
+            session.commit()
+            from app.tasks import browser_crawl_company
+            browser_crawl_company.send(run_id, company_id)
+            return
         mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.COMPLETED)
     except Exception as exc:
         company.crawl_status = "failed"
         session.add(company)
         mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.FAILED, str(exc))
+    session.refresh(run)
+    if run.cancel_requested:
+        finalize_cancelled_run(session, run, "Run stopped by request.")
+    maybe_complete_run(session, run_id)
+    session.commit()
+
+
+def execute_browser_crawl(session: Session, run_id: int, company_id: int) -> None:
+    run = session.get(ScrapeRun, run_id)
+    company = session.get(Company, company_id)
+    if run is None or company is None:
+        return
+    session.refresh(run)
+    if run.status in {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.SKIPPED}:
+        return
+    if run.cancel_requested:
+        mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.SKIPPED, "Cancelled before browser crawl start.")
+        finalize_cancelled_run(session, run, "Run stopped by request.")
+        session.commit()
+        return
+
+    if not company.website_url:
+        mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.SKIPPED, "No website available.")
+        maybe_complete_run(session, run_id)
+        session.commit()
+        return
+
+    mark_run_company_running(session, run_id, company_id)
+    session.commit()
+
+    try:
+        persist_crawl(
+            session=session,
+            company=company,
+            run_id=run_id,
+            crawler=browser_crawl_site,
+            request_provider="browser",
+        )
+        mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.COMPLETED)
+    except Exception as exc:
+        company.crawl_status = "failed"
+        session.add(company)
+        mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.FAILED, str(exc))
+
     session.refresh(run)
     if run.cancel_requested:
         finalize_cancelled_run(session, run, "Run stopped by request.")

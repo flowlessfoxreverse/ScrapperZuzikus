@@ -1,0 +1,16 @@
+FROM mcr.microsoft.com/playwright/python:v1.52.0-jammy
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /workspace
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml README.md /workspace/
+RUN pip install --no-cache-dir .
+
+COPY . /workspace
+RUN pip install --no-cache-dir . playwright

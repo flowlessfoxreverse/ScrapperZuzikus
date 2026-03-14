@@ -61,6 +61,16 @@ def queue_company_for_run(session: Session, run_id: int, company_id: int) -> boo
     return True
 
 
+def requeue_run_company(session: Session, run_id: int, company_id: int, last_error: str | None = None) -> None:
+    row = get_or_create_run_company(session, run_id, company_id)
+    row.status = RunCompanyStatus.QUEUED
+    row.started_at = None
+    row.finished_at = None
+    row.last_error = last_error[:2000] if last_error else None
+    session.add(row)
+    session.flush()
+
+
 def mark_run_company_running(session: Session, run_id: int, company_id: int) -> RunCompany:
     row = get_or_create_run_company(session, run_id, company_id)
     row.status = RunCompanyStatus.RUNNING
