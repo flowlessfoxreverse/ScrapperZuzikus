@@ -14,5 +14,5 @@ COPY pyproject.toml README.md /workspace/
 RUN pip install --no-cache-dir .
 
 COPY . /workspace
-RUN pip install --no-cache-dir . playwright \
+RUN pip install --no-cache-dir . playwright playwright-stealth \
     && playwright install --with-deps chromium

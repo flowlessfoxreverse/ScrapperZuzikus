@@ -56,7 +56,9 @@ docker compose up --build -d
 - Discovery is cached per `region + category` and only refreshed after `DISCOVERY_COOLDOWN_HOURS`
 - Website recrawls are limited by `CRAWL_RECRAWL_HOURS`
 - The crawler can bypass `robots.txt` and retry with `verify=False` on certificate errors via `CRAWLER_IGNORE_ROBOTS` and `CRAWLER_INSECURE_SSL_FALLBACK`
+- `CRAWLER_PROXY_URL` and `BROWSER_PROXY_URL` let you route static and browser workers through proxies when you add proxy-backed worker pools
 - A separate `browser_worker` can retry blocked or JS-heavy sites with Playwright when the static crawler finds no usable contact info
+- The browser worker supports an extra Playwright stealth layer plus custom browser fingerprint hardening
 - If you scale scraping later, add separate proxy-backed worker pools with distinct egress for website crawling only
 
 Example local `.env` values:
@@ -84,12 +86,16 @@ CRAWL_RECRAWL_HOURS=168
 REGION_CATALOG_COUNTRIES=TH
 CRAWLER_IGNORE_ROBOTS=1
 CRAWLER_INSECURE_SSL_FALLBACK=1
+CRAWLER_PROXY_URL=
 BROWSER_FALLBACK_ENABLED=1
 BROWSER_MAX_PAGES_PER_SITE=6
 BROWSER_NAVIGATION_TIMEOUT_SECONDS=30
 BROWSER_WAIT_AFTER_LOAD_MS=2500
 BROWSER_RETRY_ATTEMPTS=2
 BROWSER_STEALTH_SCROLL_STEPS=3
+BROWSER_PROXY_URL=
+BROWSER_PROXY_BYPASS=
+BROWSER_STEALTH_PLUGIN_ENABLED=1
 WORKER_PROCESSES=1
 WORKER_THREADS=1
 CRAWL_WORKER_PROCESSES=1
@@ -103,6 +109,7 @@ BROWSER_WORKER_THREADS=1
 - One run per region can be active at a time
 - Discovery and website crawling run on separate Dramatiq queues and separate worker services
 - Browser-assisted crawling runs on its own queue and only handles sites that the static crawler could not recover
+- Each browser worker instance can be given its own proxy by overriding `BROWSER_PROXY_URL`, which is the intended scaling path for proxy-backed worker pools
 - Discovery is cached per `region + category` and reused until the cooldown expires
 - Repeated runs focus on stale or failed company crawls instead of querying Overpass again
 - Self-hosted Overpass removes dependence on the shared public endpoint for normal operation

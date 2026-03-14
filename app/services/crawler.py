@@ -75,6 +75,20 @@ BROWSER_FALLBACK_HEADERS = {
 }
 
 
+def build_httpx_client(
+    *,
+    headers: dict[str, str],
+    verify: bool = True,
+) -> httpx.Client:
+    return httpx.Client(
+        timeout=settings.request_timeout_seconds,
+        headers=headers,
+        follow_redirects=True,
+        verify=verify,
+        proxy=settings.crawler_proxy_url or None,
+    )
+
+
 @dataclass
 class CrawlPageResult:
     url: str
@@ -160,12 +174,7 @@ def fetch_page(
             raise
 
     started = time.perf_counter()
-    with httpx.Client(
-        timeout=settings.request_timeout_seconds,
-        headers=headers,
-        follow_redirects=True,
-        verify=False,
-    ) as insecure_client:
+    with build_httpx_client(headers=headers, verify=False) as insecure_client:
         response = insecure_client.get(candidate)
     duration_ms = int((time.perf_counter() - started) * 1000)
     if on_request:
@@ -440,7 +449,7 @@ def crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
     pages = []
     headers = {"User-Agent": settings.user_agent}
 
-    with httpx.Client(timeout=settings.request_timeout_seconds, headers=headers, follow_redirects=True) as client:
+    with build_httpx_client(headers=headers) as client:
         for candidate in candidates[: settings.max_pages_per_site]:
             if candidate in seen:
                 continue
@@ -448,10 +457,8 @@ def crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
             try:
                 response, insecure_fallback = fetch_page(client, candidate, headers=headers, on_request=on_request)
                 if should_retry_with_browser_headers(response, headers):
-                    with httpx.Client(
-                        timeout=settings.request_timeout_seconds,
+                    with build_httpx_client(
                         headers=BROWSER_FALLBACK_HEADERS,
-                        follow_redirects=True,
                         verify=not insecure_fallback,
                     ) as browser_client:
                         response, insecure_fallback = fetch_page(

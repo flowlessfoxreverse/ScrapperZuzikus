@@ -76,6 +76,52 @@ def _perform_humanish_actions(page) -> None:
     page.wait_for_timeout(300)
 
 
+def _build_playwright_proxy() -> dict[str, str] | None:
+    if not settings.browser_proxy_url:
+        return None
+    parsed = urlparse(settings.browser_proxy_url)
+    if not parsed.scheme or not parsed.hostname:
+        return None
+    server = f"{parsed.scheme}://{parsed.hostname}"
+    if parsed.port:
+        server = f"{server}:{parsed.port}"
+    proxy: dict[str, str] = {"server": server}
+    if parsed.username:
+        proxy["username"] = parsed.username
+    if parsed.password:
+        proxy["password"] = parsed.password
+    if settings.browser_proxy_bypass:
+        proxy["bypass"] = settings.browser_proxy_bypass
+    return proxy
+
+
+def _apply_stealth(page) -> None:
+    if not settings.browser_stealth_plugin_enabled:
+        return
+    try:
+        from playwright_stealth import Stealth, stealth_sync
+    except Exception:
+        try:
+            from playwright_stealth import stealth_sync
+        except Exception:
+            return
+        stealth_sync(page)
+        return
+
+    try:
+        stealth_sync(page)
+        return
+    except Exception:
+        pass
+
+    try:
+        stealth = Stealth(init_scripts_only=True)
+        if hasattr(stealth, "apply_stealth_sync"):
+            stealth.apply_stealth_sync(page)
+    except Exception:
+        return
+
+
 def browser_crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
     from playwright.sync_api import sync_playwright
 
@@ -91,6 +137,7 @@ def browser_crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
             headless=True,
+            proxy=_build_playwright_proxy(),
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
@@ -126,6 +173,7 @@ def browser_crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
                 page = context.new_page()
                 started = time.perf_counter()
                 try:
+                    _apply_stealth(page)
                     response = None
                     content = ""
                     final_url = candidate
@@ -221,5 +269,10 @@ def browser_crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
             context.close()
             browser.close()
 
-    crawl_status = "completed" if any(page.status_code for page in pages) else "failed"
+    if any(page.error == "anti_bot_challenge" for page in pages):
+        crawl_status = "anti_bot_challenge"
+    elif any(page.status_code for page in pages):
+        crawl_status = "completed"
+    else:
+        crawl_status = "failed"
     return CrawlSiteResult(pages=pages, crawl_status=crawl_status)
