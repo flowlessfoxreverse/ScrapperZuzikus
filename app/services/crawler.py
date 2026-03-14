@@ -25,6 +25,7 @@ CONTACT_PATH_HINTS = (
 )
 SOCIAL_HOSTS = ("facebook.com", "instagram.com", "linkedin.com", "tiktok.com", "youtube.com")
 CAPTCHA_HINTS = ("captcha", "g-recaptcha", "hcaptcha", "cf-turnstile")
+ASSET_SCAN_EXTENSIONS = (".js", ".mjs", ".css", ".json")
 NOISE_EMAIL_DOMAINS = (
     "sentry.io",
     "sentry.wixpress.com",
@@ -215,6 +216,60 @@ def extract_emails(soup: BeautifulSoup) -> list[str]:
     return sorted(email for email in candidates if not is_noise_email(email))
 
 
+def iter_same_origin_assets(soup: BeautifulSoup, page_url: str) -> list[str]:
+    page_host = urlparse(page_url).netloc.lower().removeprefix("www.")
+    assets: list[str] = []
+    seen: set[str] = set()
+
+    def consider(candidate: str | None) -> None:
+        if not candidate:
+            return
+        absolute = urljoin(page_url, candidate)
+        parsed = urlparse(absolute)
+        host = parsed.netloc.lower().removeprefix("www.")
+        if not host or host != page_host:
+            return
+        path = parsed.path.lower()
+        if not path.endswith(ASSET_SCAN_EXTENSIONS):
+            return
+        if absolute in seen:
+            return
+        seen.add(absolute)
+        assets.append(absolute)
+
+    for tag in soup.find_all("script", src=True):
+        consider(tag.get("src"))
+    for tag in soup.find_all("link", href=True):
+        rel = " ".join(tag.get("rel", [])).lower()
+        if rel in {"stylesheet", "preload", "modulepreload"} or "stylesheet" in rel or "preload" in rel:
+            consider(tag.get("href"))
+
+    return assets[:4]
+
+
+def extract_emails_from_assets(
+    client: httpx.Client,
+    soup: BeautifulSoup,
+    page_url: str,
+    *,
+    headers: dict[str, str],
+    on_request=None,
+) -> list[str]:
+    candidates: set[str] = set()
+    for asset_url in iter_same_origin_assets(soup=soup, page_url=page_url):
+        try:
+            response, _ = fetch_page(client, asset_url, headers=headers, on_request=on_request)
+        except Exception:
+            continue
+        if response.status_code >= 400:
+            continue
+        content_type = (response.headers.get("content-type") or "").lower()
+        if "javascript" not in content_type and "json" not in content_type and "css" not in content_type and "text" not in content_type:
+            continue
+        candidates.update(match.group(1).lower() for match in EMAIL_REGEX.finditer(unescape(response.text)))
+    return sorted(email for email in candidates if not is_noise_email(email))
+
+
 def crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
     website_url = normalize_url(website_url)
     robots_blocked = not fetch_robots_allowed(website_url)
@@ -254,6 +309,14 @@ def crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
                 soup = BeautifulSoup(response.text, "html.parser")
                 title = soup.title.text.strip() if soup.title and soup.title.text else None
                 emails = extract_emails(soup)
+                if not emails:
+                    emails = extract_emails_from_assets(
+                        client=client,
+                        soup=soup,
+                        page_url=str(response.url),
+                        headers=headers,
+                        on_request=on_request,
+                    )
                 social_links = []
                 for link in soup.find_all("a", href=True):
                     href = link["href"]
