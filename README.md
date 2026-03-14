@@ -99,7 +99,7 @@ CRAWL_WORKER_THREADS=1
 - Keep `OVERPASS_MODE=init` for the first bootstrap; after the database is initialized you can leave it as-is unless you intentionally rebuild the Overpass volume
 - If you replace the Overpass volume, the import process starts from scratch again
 - Geofabrik region extracts are downloaded by this image as `/db/planet.osm.bz2`, even when the source is a `.pbf`, so the preprocess step must rename that downloaded file to `.pbf` before converting it back to `osm.bz2`
-- The Compose service now uses a small wrapper entrypoint that runs `chmod og+rx /db` before delegating to the image's normal startup command, so the Overpass CGI process can reach the runtime socket in the mounted volume without breaking the container lifecycle.
+- The Compose service now uses a small wrapper entrypoint that runs `chmod og+rx /db` before delegating to `/app/docker-entrypoint.sh`, so the Overpass CGI process can reach the runtime socket in the mounted volume without breaking the container lifecycle.
 
 ## Notes
 

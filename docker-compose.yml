@@ -84,6 +84,8 @@ services:
     entrypoint:
       - /bin/sh
       - /usr/local/bin/overpass-entrypoint.sh
+    command:
+      - /app/docker-entrypoint.sh
     environment:
       OVERPASS_META: "no"
       OVERPASS_MODE: ${OVERPASS_MODE:-init}
