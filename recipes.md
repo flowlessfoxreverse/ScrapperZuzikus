@@ -18,11 +18,102 @@ Recipes are platform assets, not private one-off tag blobs.
 Core idea:
 
 - users describe a business niche in plain language
-- AI proposes a draft recipe
+- AI proposes a draft recipe set
 - the platform validates it on sampled locations
 - validated recipes become reusable templates available to all users
+- one business intent can expand into multiple ranked recipe variations
 
 This avoids repeated work and reduces duplicated Overpass validation requests across the SaaS.
+
+## Taxonomy Direction
+
+The long-term system should not use a hardcoded enum like:
+
+- `vehicle`
+- `tourism`
+
+Instead, the platform should use a database-backed taxonomy.
+
+Planned taxonomy layers:
+
+- `verticals`
+- `niche_clusters`
+- `recipe_variants`
+
+Example:
+
+- user prompt: `complete beauty experience in Thailand`
+- vertical: `beauty`
+- cluster: `beauty_services`
+- candidate variants:
+  - `nail-salon`
+  - `hair-salon`
+  - `barber-shop`
+  - `beauty-salon`
+  - `spa`
+  - `massage-spa`
+  - `lash-brow-studio`
+  - `waxing-salon`
+
+This is a better SaaS model than generating one recipe per user prompt.
+
+## Category Generation Model
+
+The platform should move from:
+
+- one prompt -> one recipe
+
+to:
+
+- one prompt -> one vertical
+- one vertical -> one niche cluster
+- one niche cluster -> many candidate recipe variations
+- each variation -> validation + ranking
+
+This creates a reusable pool of category templates instead of one-off mappings.
+
+## Ranking Strategy
+
+The system should rank candidate recipe variations on multiple layers.
+
+### 1. Intent Match Ranking
+
+How well does the variation match the user prompt?
+
+Examples:
+
+- `complete beauty experience`
+- `beauty services`
+- `hair and nails`
+
+This layer ranks the semantic fit of a variation before validation.
+
+### 2. Query Quality Ranking
+
+How strong are the source rules?
+
+Examples:
+
+- OSM tag confidence
+- alias overlap
+- expected false positives
+- search keyword quality
+- multilingual coverage
+
+### 3. Validation Yield Ranking
+
+How useful is the variation after sampled validation?
+
+Examples:
+
+- businesses found
+- website rate
+- phone rate
+- email rate
+- duplicate ratio
+- noise ratio
+
+The platform should combine these into one recommendation score so the best variants surface first.
 
 ## Scope Split
 
@@ -80,6 +171,17 @@ Future adapters:
 - directories
 - internal imports
 
+In the multi-variant model, a recipe is not always the first artifact produced by the builder.
+
+Builder output should often be:
+
+- `intent`
+- `vertical`
+- `cluster`
+- `candidate recipe variants`
+
+Each candidate can then become its own recipe version if it survives validation.
+
 ## Recipe Object Model
 
 Each recipe should contain:
@@ -97,6 +199,9 @@ Each recipe should contain:
 Recipe content should include:
 
 - `intent_summary`
+- `variant_label`
+- `variant_group`
+- `variant_rank`
 - `osm_include_tags`
 - `osm_exclude_tags`
 - `osm_alternative_queries`
@@ -258,10 +363,23 @@ Users may:
 But the platform should prefer:
 
 - one canonical validated recipe per broad business intent
+- multiple validated variants within that intent when they represent distinct discoverable niches
 
 This prevents duplicated drift and inconsistent mappings like:
 
 - multiple categories sharing the same bad OSM tag
+
+Example:
+
+- broad intent: `beauty services`
+- canonical variant set:
+  - hair salon
+  - nail salon
+  - beauty salon
+  - spa
+  - massage spa
+
+This is better than forcing all of them into one generic beauty recipe.
 
 ## Problem We Are Explicitly Solving
 
@@ -283,6 +401,8 @@ The recipe system should prevent this by:
 
 Planned tables:
 
+- `verticals`
+- `niche_clusters`
 - `query_recipes`
 - `query_recipe_versions`
 - `query_recipe_validations`
@@ -300,6 +420,52 @@ Useful supporting fields:
 - `overall_score`
 - `lint_passed`
 - `activated_at`
+- `cluster_slug`
+- `variant_rank`
+- `parent_recipe_id`
+
+### Planned Supporting Objects
+
+#### `verticals`
+
+Database-backed top-level business buckets.
+
+Examples:
+
+- beauty
+- tourism
+- vehicle
+- health
+- food
+- fitness
+- real_estate
+- education
+- legal
+- retail
+
+#### `niche_clusters`
+
+Curated platform groupings inside a vertical.
+
+Examples:
+
+- beauty_services
+- beauty_clinics
+- diving_services
+- tour_operators
+- vehicle_rentals
+
+#### `recipe_variants`
+
+Generated or curated niche slices within a cluster.
+
+Examples:
+
+- hair-salon
+- nail-salon
+- barber-shop
+- spa
+- waxing-salon
 
 ## UI Plan
 
@@ -323,9 +489,26 @@ Input:
 
 Output:
 
-- AI-generated draft recipe
+- detected vertical
+- detected niche cluster
+- ranked candidate recipe variations
+- AI-generated draft variant rules
 - editable include/exclude rules
-- validation button
+- validation button per variant
+
+### 2b. Variant Explorer
+
+The builder should show a variation pool instead of only one draft.
+
+Each variation row should include:
+
+- label
+- rank
+- rationale
+- tags
+- keyword hints
+- validation status
+- activate button
 
 ### 3. Validation Report
 
@@ -337,6 +520,7 @@ Show:
 - website/email/phone rates
 - duplicate/noise scores
 - final recommendation
+- comparison across sibling variants in the same cluster
 
 ### 4. Activation Controls
 
@@ -417,6 +601,21 @@ Because validation will use public Overpass:
 - add template fork/version review flow
 - add adapter abstraction for future Google Maps / directory connectors
 
+### Phase 5
+
+- replace fixed vertical enum with database-backed `verticals`
+- add `niche_clusters`
+- change prompt builder to produce multiple candidate variants
+- add ranking across variants
+- let users activate one or many validated variants from the same prompt
+
+### Phase 6
+
+- add curated vertical and cluster seed library
+- add multilingual keyword packs per vertical/cluster
+- add platform-level variant dedupe and alias detection
+- track adoption and yield by variant family
+
 ## Success Criteria
 
 We should consider the recipe foundation successful when:
@@ -426,3 +625,5 @@ We should consider the recipe foundation successful when:
 - new business niches can be added without editing seed code manually
 - noisy mappings are caught before full scrape runs
 - validated templates become reusable assets across the whole platform
+- one user prompt can produce multiple high-quality validated category variations
+- vertical and cluster expansion no longer requires code enums for every new domain

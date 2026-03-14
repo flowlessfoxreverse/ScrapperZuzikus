@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import Category, Company, ContactChannel, ContactChannelType, Email, Phone, ProxyEndpoint, ProxyKind, QueryRecipe, QueryRecipeValidation, QueryRecipeVersion, RecipeAdapter, RecipeStatus, Region, RequestMetric, RunCategory, RunStatus, ScrapeRun, ValidationStatus, Vertical
+from app.models import Category, Company, ContactChannel, ContactChannelType, Email, NicheCluster, Phone, ProxyEndpoint, ProxyKind, QueryRecipe, QueryRecipeValidation, QueryRecipeVersion, RecipeAdapter, RecipeStatus, Region, RequestMetric, RunCategory, RunStatus, ScrapeRun, TaxonomyVertical, ValidationStatus
 from app.schemas import EmailRow
 from app.services.category_recipes import latest_recipe_version, sync_recipe_to_category, upsert_recipe_backed_category
 from app.services.host_suppression import normalize_host_key
@@ -22,6 +22,7 @@ from app.services.overpass import fetch_status
 from app.services.proxy_pool import active_proxy_count, effective_proxy_capacity, lease_counts, list_proxies, release_proxy, upsert_proxy
 from app.services.recipe_drafts import DraftProposal, build_draft_from_prompt
 from app.services.recipe_lint import RecipeLintResult, lint_recipe_content, parse_tag_block
+from app.services.taxonomy import list_active_clusters, list_active_verticals
 from app.services.recipe_validation import get_validation_quota_snapshot, validate_recipe_version
 from app.services.region_catalog import country_catalog, upsert_country_with_subdivisions
 from app.services.runs import find_active_run, request_run_cancellation
@@ -192,6 +193,10 @@ class CategoryRow:
     linked_recipe_adapter: str | None
     linked_recipe_version: int | None
     linked_recipe_template: bool
+
+
+def taxonomy_context(db: Session) -> tuple[list[TaxonomyVertical], list[NicheCluster]]:
+    return list_active_verticals(db), list_active_clusters(db)
 
 
 def proxy_status_label(proxy: ProxyEndpoint) -> str:
@@ -696,7 +701,7 @@ def build_recipe_rows(db: Session) -> list[RecipeRow]:
                 id=recipe.id,
                 slug=recipe.slug,
                 label=recipe.label,
-                vertical=recipe.vertical.value,
+                vertical=recipe.vertical,
                 status=recipe.status.value,
                 adapter=version.adapter.value if version else None,
                 version_number=version.version_number if version else None,
@@ -740,7 +745,7 @@ def build_category_rows(db: Session) -> list[CategoryRow]:
                 id=category.id,
                 label=category.label,
                 slug=category.slug,
-                vertical=category.vertical.value,
+                vertical=category.vertical,
                 osm_tags=category.osm_tags,
                 search_terms=category.search_terms,
                 is_active=category.is_active,
@@ -979,11 +984,14 @@ def category_editor(
     error: str | None = None,
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    verticals, clusters = taxonomy_context(db)
     return templates.TemplateResponse(
         request=request,
         name="categories.html",
         context={
             "categories": build_category_rows(db),
+            "verticals": verticals,
+            "clusters": clusters,
             "message": message,
             "error": error,
         },
@@ -1012,6 +1020,7 @@ def recipe_editor(
 ) -> HTMLResponse:
     draft_proposal = None
     draft_lint = None
+    verticals, clusters = taxonomy_context(db)
     if draft_prompt:
         try:
             draft_proposal = build_draft_from_prompt(draft_prompt)
@@ -1028,7 +1037,8 @@ def recipe_editor(
         name="recipes.html",
         context={
             "recipes": build_recipe_rows(db),
-            "verticals": list(Vertical),
+            "verticals": verticals,
+            "clusters": clusters,
             "recipe_adapters": list(RecipeAdapter),
             "validation_quota": get_validation_quota_snapshot(db),
             "message": message,
@@ -1116,7 +1126,8 @@ def request_metrics_view(request: Request, db: Session = Depends(get_db)) -> HTM
 def create_recipe_html(
     slug: str = Form(...),
     label: str = Form(...),
-    vertical: Vertical = Form(...),
+    vertical: str = Form(...),
+    cluster_slug: str = Form(""),
     description: str = Form(""),
     adapter: RecipeAdapter = Form(RecipeAdapter.OVERPASS_PUBLIC),
     osm_tags: str = Form(""),
@@ -1139,6 +1150,7 @@ def create_recipe_html(
             label=label.strip(),
             description=description.strip() or None,
             vertical=vertical,
+            cluster_slug=cluster_slug.strip() or None,
             status=RecipeStatus.DRAFT,
             is_platform_template=True,
         )
@@ -1174,6 +1186,7 @@ def generate_recipe_draft_html(
     draft_proposal = None
     error = None
     draft_lint = None
+    verticals, clusters = taxonomy_context(db)
     try:
         draft_proposal = build_draft_from_prompt(prompt)
         draft_lint = lint_recipe_content(
@@ -1189,7 +1202,8 @@ def generate_recipe_draft_html(
         name="recipes.html",
         context={
             "recipes": build_recipe_rows(db),
-            "verticals": list(Vertical),
+            "verticals": verticals,
+            "clusters": clusters,
             "recipe_adapters": list(RecipeAdapter),
             "validation_quota": get_validation_quota_snapshot(db),
             "message": None,
@@ -1344,6 +1358,7 @@ def create_category_html(
     slug: str = Form(...),
     label: str = Form(...),
     vertical: str = Form(...),
+    cluster_slug: str = Form(""),
     osm_tags: str = Form(...),
     search_terms: str = Form(...),
     db: Session = Depends(get_db),
@@ -1359,7 +1374,8 @@ def create_category_html(
         db,
         slug=slug,
         label=label,
-        vertical=Vertical(vertical),
+        vertical=vertical,
+        cluster_slug=cluster_slug.strip() or None,
         osm_tags=tag_pairs,
         search_terms=terms,
         description=f"Recipe created from category editor for {label.strip()}.",

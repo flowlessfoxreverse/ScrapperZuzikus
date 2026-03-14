@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models import RunStatus, ValidationStatus, Vertical
+from app.models import RunStatus, ValidationStatus
 
 
 class RegionOut(BaseModel):
@@ -29,7 +29,8 @@ class CategoryOut(BaseModel):
     id: int
     slug: str
     label: str
-    vertical: Vertical
+    vertical: str
+    cluster_slug: str | None = None
     is_active: bool
 
 
@@ -81,6 +82,7 @@ class EmailRow(BaseModel):
 class CategoryCreate(BaseModel):
     slug: str
     label: str
-    vertical: Vertical
+    vertical: str
+    cluster_slug: str | None = None
     osm_tags: list[dict[str, str]]
     search_terms: list[str]

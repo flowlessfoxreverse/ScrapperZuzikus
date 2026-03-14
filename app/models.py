@@ -13,11 +13,6 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class Vertical(str, Enum):
-    VEHICLE = "vehicle"
-    TOURISM = "tourism"
-
-
 class RunStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
@@ -79,6 +74,35 @@ class RecipeStatus(str, Enum):
 class RecipeAdapter(str, Enum):
     OVERPASS_PUBLIC = "overpass_public"
     OVERPASS_LOCAL = "overpass_local"
+
+
+class TaxonomyVertical(Base):
+    __tablename__ = "taxonomy_verticals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    slug: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    label: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    clusters: Mapped[list["NicheCluster"]] = relationship(back_populates="vertical_ref")
+
+
+class NicheCluster(Base):
+    __tablename__ = "niche_clusters"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    slug: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    vertical_slug: Mapped[str] = mapped_column(ForeignKey("taxonomy_verticals.slug"), String(64), index=True)
+    label: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    vertical_ref: Mapped["TaxonomyVertical"] = relationship(back_populates="clusters")
 
 
 class Region(Base):
@@ -146,7 +170,8 @@ class Category(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     slug: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     label: Mapped[str] = mapped_column(String(128))
-    vertical: Mapped[Vertical] = mapped_column(SqlEnum(Vertical), index=True)
+    vertical: Mapped[str] = mapped_column(ForeignKey("taxonomy_verticals.slug"), String(64), index=True)
+    cluster_slug: Mapped[str | None] = mapped_column(ForeignKey("niche_clusters.slug"), String(64), nullable=True, index=True)
     osm_tags: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
     search_terms: Mapped[list[str]] = mapped_column(JSON, default=list)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -157,6 +182,8 @@ class Category(Base):
     region_states: Mapped[list["RegionCategoryState"]] = relationship(back_populates="category")
     seeded_recipe_id: Mapped[int | None] = mapped_column(ForeignKey("query_recipes.id"), nullable=True)
     seeded_recipe: Mapped["QueryRecipe | None"] = relationship(foreign_keys=[seeded_recipe_id])
+    vertical_ref: Mapped["TaxonomyVertical | None"] = relationship(foreign_keys=[vertical])
+    cluster_ref: Mapped["NicheCluster | None"] = relationship(foreign_keys=[cluster_slug])
 
 
 class QueryRecipe(Base):
@@ -166,7 +193,8 @@ class QueryRecipe(Base):
     slug: Mapped[str] = mapped_column(String(96), unique=True, index=True)
     label: Mapped[str] = mapped_column(String(128))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    vertical: Mapped[Vertical] = mapped_column(SqlEnum(Vertical), index=True)
+    vertical: Mapped[str] = mapped_column(ForeignKey("taxonomy_verticals.slug"), String(64), index=True)
+    cluster_slug: Mapped[str | None] = mapped_column(ForeignKey("niche_clusters.slug"), String(64), nullable=True, index=True)
     status: Mapped[RecipeStatus] = mapped_column(SqlEnum(RecipeStatus), default=RecipeStatus.DRAFT, index=True)
     is_platform_template: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -177,6 +205,8 @@ class QueryRecipe(Base):
         cascade="all, delete-orphan",
         order_by="QueryRecipeVersion.version_number.desc()",
     )
+    vertical_ref: Mapped["TaxonomyVertical | None"] = relationship(foreign_keys=[vertical])
+    cluster_ref: Mapped["NicheCluster | None"] = relationship(foreign_keys=[cluster_slug])
 
 
 class QueryRecipeVersion(Base):

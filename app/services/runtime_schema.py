@@ -214,14 +214,74 @@ def ensure_recipe_schema(engine: Engine) -> None:
     dialect = engine.dialect.name
     inspector = inspect(engine)
 
+    statements: list[str] = []
+
+    if "taxonomy_verticals" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE taxonomy_verticals ("
+                "id SERIAL PRIMARY KEY, "
+                "slug VARCHAR(64) NOT NULL UNIQUE, "
+                "label VARCHAR(128) NOT NULL, "
+                "description TEXT NULL, "
+                "sort_order INTEGER NOT NULL DEFAULT 0, "
+                "is_active BOOLEAN NOT NULL DEFAULT TRUE, "
+                "created_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE taxonomy_verticals ("
+                "id INTEGER PRIMARY KEY, "
+                "slug VARCHAR(64) NOT NULL UNIQUE, "
+                "label VARCHAR(128) NOT NULL, "
+                "description TEXT NULL, "
+                "sort_order INTEGER NOT NULL DEFAULT 0, "
+                "is_active BOOLEAN NOT NULL DEFAULT 1, "
+                "created_at TIMESTAMP NOT NULL"
+                ")"
+            )
+        statements.append("CREATE INDEX ix_taxonomy_verticals_slug ON taxonomy_verticals(slug)")
+
+    if "niche_clusters" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE niche_clusters ("
+                "id SERIAL PRIMARY KEY, "
+                "slug VARCHAR(64) NOT NULL UNIQUE, "
+                "vertical_slug VARCHAR(64) NOT NULL REFERENCES taxonomy_verticals(slug), "
+                "label VARCHAR(128) NOT NULL, "
+                "description TEXT NULL, "
+                "sort_order INTEGER NOT NULL DEFAULT 0, "
+                "is_active BOOLEAN NOT NULL DEFAULT TRUE, "
+                "created_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE niche_clusters ("
+                "id INTEGER PRIMARY KEY, "
+                "slug VARCHAR(64) NOT NULL UNIQUE, "
+                "vertical_slug VARCHAR(64) NOT NULL REFERENCES taxonomy_verticals(slug), "
+                "label VARCHAR(128) NOT NULL, "
+                "description TEXT NULL, "
+                "sort_order INTEGER NOT NULL DEFAULT 0, "
+                "is_active BOOLEAN NOT NULL DEFAULT 1, "
+                "created_at TIMESTAMP NOT NULL"
+                ")"
+            )
+        statements.append("CREATE INDEX ix_niche_clusters_slug ON niche_clusters(slug)")
+        statements.append("CREATE INDEX ix_niche_clusters_vertical_slug ON niche_clusters(vertical_slug)")
+
     try:
         category_columns = {column["name"] for column in inspector.get_columns("categories")}
     except Exception:
         category_columns = set()
 
-    statements: list[str] = []
     if "seeded_recipe_id" not in category_columns and "categories" in tables:
         statements.append("ALTER TABLE categories ADD COLUMN seeded_recipe_id INTEGER NULL")
+    if "cluster_slug" not in category_columns and "categories" in tables:
+        statements.append("ALTER TABLE categories ADD COLUMN cluster_slug VARCHAR(64) NULL")
 
     if "query_recipes" not in tables:
         if dialect == "postgresql":
@@ -231,7 +291,8 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 "slug VARCHAR(96) NOT NULL UNIQUE, "
                 "label VARCHAR(128) NOT NULL, "
                 "description TEXT NULL, "
-                "vertical VARCHAR(8) NOT NULL, "
+                "vertical VARCHAR(64) NOT NULL, "
+                "cluster_slug VARCHAR(64) NULL, "
                 "status VARCHAR(10) NOT NULL DEFAULT 'draft', "
                 "is_platform_template BOOLEAN NOT NULL DEFAULT TRUE, "
                 "created_at TIMESTAMP WITH TIME ZONE NOT NULL, "
@@ -245,7 +306,8 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 "slug VARCHAR(96) NOT NULL UNIQUE, "
                 "label VARCHAR(128) NOT NULL, "
                 "description TEXT NULL, "
-                "vertical VARCHAR(8) NOT NULL, "
+                "vertical VARCHAR(64) NOT NULL, "
+                "cluster_slug VARCHAR(64) NULL, "
                 "status VARCHAR(10) NOT NULL DEFAULT 'draft', "
                 "is_platform_template BOOLEAN NOT NULL DEFAULT 1, "
                 "created_at TIMESTAMP NOT NULL, "
@@ -253,6 +315,27 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 ")"
             )
         statements.append("CREATE INDEX ix_query_recipes_slug ON query_recipes(slug)")
+    else:
+        try:
+            recipe_columns = {column["name"]: column for column in inspector.get_columns("query_recipes")}
+        except Exception:
+            recipe_columns = {}
+        if "cluster_slug" not in recipe_columns:
+            statements.append("ALTER TABLE query_recipes ADD COLUMN cluster_slug VARCHAR(64) NULL")
+        recipe_vertical = recipe_columns.get("vertical")
+        recipe_vertical_length = getattr(recipe_vertical.get("type"), "length", None) if recipe_vertical else None
+        if dialect == "postgresql" and recipe_vertical_length is not None and recipe_vertical_length < 64:
+            statements.append("ALTER TABLE query_recipes ALTER COLUMN vertical TYPE VARCHAR(64)")
+
+    category_vertical = None
+    if "vertical" in category_columns:
+        try:
+            category_vertical = next(column for column in inspector.get_columns("categories") if column["name"] == "vertical")
+        except StopIteration:
+            category_vertical = None
+    category_vertical_length = getattr(category_vertical.get("type"), "length", None) if category_vertical else None
+    if dialect == "postgresql" and category_vertical_length is not None and category_vertical_length < 64:
+        statements.append("ALTER TABLE categories ALTER COLUMN vertical TYPE VARCHAR(64)")
 
     if "query_recipe_versions" not in tables:
         if dialect == "postgresql":

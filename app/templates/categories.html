@@ -93,8 +93,18 @@
             <label>
               <span>Vertical</span>
               <select name="vertical">
-                <option value="vehicle">vehicle</option>
-                <option value="tourism">tourism</option>
+                {% for vertical in verticals %}
+                <option value="{{ vertical.slug }}">{{ vertical.label }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>
+              <span>Cluster</span>
+              <select name="cluster_slug">
+                <option value="">None</option>
+                {% for cluster in clusters %}
+                <option value="{{ cluster.slug }}">{{ cluster.label }} ({{ cluster.vertical_slug }})</option>
+                {% endfor %}
               </select>
             </label>
             <label>

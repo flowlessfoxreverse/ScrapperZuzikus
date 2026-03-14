@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Category, QueryRecipe, QueryRecipeVersion, RecipeAdapter, RecipeStatus, Vertical
+from app.models import Category, QueryRecipe, QueryRecipeVersion, RecipeAdapter, RecipeStatus
 
 
 @dataclass
@@ -59,6 +59,7 @@ def sync_recipe_to_category(db: Session, recipe: QueryRecipe, version: QueryReci
             slug=recipe.slug,
             label=recipe.label,
             vertical=recipe.vertical,
+            cluster_slug=recipe.cluster_slug,
             osm_tags=version.osm_tags,
             search_terms=version.search_terms,
             is_active=True,
@@ -71,6 +72,7 @@ def sync_recipe_to_category(db: Session, recipe: QueryRecipe, version: QueryReci
     category.slug = recipe.slug
     category.label = recipe.label
     category.vertical = recipe.vertical
+    category.cluster_slug = recipe.cluster_slug
     category.osm_tags = version.osm_tags
     category.search_terms = version.search_terms
     category.is_active = True
@@ -84,7 +86,8 @@ def upsert_recipe_backed_category(
     *,
     slug: str,
     label: str,
-    vertical: Vertical,
+    vertical: str,
+    cluster_slug: str | None,
     osm_tags: list[dict[str, str]],
     search_terms: list[str],
     description: str | None,
@@ -101,6 +104,7 @@ def upsert_recipe_backed_category(
             label=normalized_label,
             description=(description or "").strip() or None,
             vertical=vertical,
+            cluster_slug=cluster_slug,
             status=recipe_status,
             is_platform_template=True,
         )
@@ -112,6 +116,7 @@ def upsert_recipe_backed_category(
         recipe.label = normalized_label
         recipe.description = (description or "").strip() or recipe.description
         recipe.vertical = vertical
+        recipe.cluster_slug = cluster_slug
         recipe.status = recipe_status
         db.add(recipe)
 

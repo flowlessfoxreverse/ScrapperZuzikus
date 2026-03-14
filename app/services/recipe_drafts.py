@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
-from app.models import RecipeAdapter, Vertical
+from app.models import RecipeAdapter
 
 
 @dataclass
@@ -12,7 +12,8 @@ class DraftProposal:
     slug: str
     label: str
     description: str
-    vertical: Vertical
+    vertical: str
+    cluster_slug: str | None
     adapter: RecipeAdapter
     osm_tags: list[dict[str, str]]
     exclude_tags: list[dict[str, str]]
@@ -25,7 +26,8 @@ class DraftProposal:
 KEYWORD_RECIPES: list[dict[str, object]] = [
     {
         "match": ("car rental", "rent a car", "car hire"),
-        "vertical": Vertical.VEHICLE,
+        "vertical": "vehicle",
+        "cluster_slug": "vehicle_rentals",
         "label": "Car Rental",
         "osm_tags": [{"amenity": "car_rental"}],
         "exclude_tags": [],
@@ -34,7 +36,8 @@ KEYWORD_RECIPES: list[dict[str, object]] = [
     },
     {
         "match": ("motorbike rental", "motorcycle rental", "scooter rental", "bike rental", "atv rental", "quad rental"),
-        "vertical": Vertical.VEHICLE,
+        "vertical": "vehicle",
+        "cluster_slug": "vehicle_rentals",
         "label": "Motorbike Rental",
         "osm_tags": [{"shop": "motorcycle_rental"}, {"amenity": "bicycle_rental"}],
         "exclude_tags": [{"shop": "travel_agency"}],
@@ -43,7 +46,8 @@ KEYWORD_RECIPES: list[dict[str, object]] = [
     },
     {
         "match": ("travel agency", "travel agent", "tour agency", "tour operator", "excursion"),
-        "vertical": Vertical.TOURISM,
+        "vertical": "tourism",
+        "cluster_slug": "tour_operators",
         "label": "Travel Agency",
         "osm_tags": [{"shop": "travel_agency"}, {"office": "travel_agent"}],
         "exclude_tags": [{"tourism": "information"}],
@@ -52,7 +56,8 @@ KEYWORD_RECIPES: list[dict[str, object]] = [
     },
     {
         "match": ("tour guide", "tour guide service", "guide service"),
-        "vertical": Vertical.TOURISM,
+        "vertical": "tourism",
+        "cluster_slug": "tour_operators",
         "label": "Tour Guide Service",
         "osm_tags": [{"tourism": "information"}],
         "exclude_tags": [{"shop": "travel_agency"}],
@@ -61,7 +66,8 @@ KEYWORD_RECIPES: list[dict[str, object]] = [
     },
     {
         "match": ("elephant sanctuary", "elephant camp", "diving", "diver", "scuba", "snorkel"),
-        "vertical": Vertical.TOURISM,
+        "vertical": "tourism",
+        "cluster_slug": "tourism_activities",
         "label": "Tourism Activity",
         "osm_tags": [{"tourism": "attraction"}, {"tourism": "information"}],
         "exclude_tags": [],
@@ -94,7 +100,8 @@ def build_draft_from_prompt(prompt: str) -> DraftProposal:
 
     if selected is None:
         selected = {
-            "vertical": Vertical.TOURISM,
+            "vertical": "tourism",
+            "cluster_slug": "tour_operators",
             "label": _titleize(normalized),
             "osm_tags": [{"tourism": "information"}],
             "exclude_tags": [],
@@ -134,6 +141,7 @@ def build_draft_from_prompt(prompt: str) -> DraftProposal:
         label=label,
         description=f"Draft generated from prompt: {prompt.strip()}",
         vertical=selected["vertical"],
+        cluster_slug=selected.get("cluster_slug"),
         adapter=RecipeAdapter.OVERPASS_PUBLIC,
         osm_tags=list(selected["osm_tags"]),
         exclude_tags=list(selected["exclude_tags"]),

@@ -1,6 +1,7 @@
 from sqlalchemy.exc import IntegrityError
 
-from app.models import Category, QueryRecipe, QueryRecipeVersion, RecipeAdapter, RecipeStatus, Region, Vertical
+from app.models import Category, QueryRecipe, QueryRecipeVersion, RecipeAdapter, RecipeStatus, Region
+from app.services.taxonomy import seed_taxonomy
 
 
 DEFAULT_REGIONS = [
@@ -17,56 +18,64 @@ DEFAULT_CATEGORIES = [
     {
         "slug": "car-rental-agency",
         "label": "Car Rental Agency",
-        "vertical": Vertical.VEHICLE,
+        "vertical": "vehicle",
+        "cluster_slug": "vehicle_rentals",
         "osm_tags": [{"amenity": "car_rental"}],
         "search_terms": ["car rental agency", "rent a car"],
     },
     {
         "slug": "motorcycle-rental-agency",
         "label": "Motorcycle Rental Agency",
-        "vertical": Vertical.VEHICLE,
+        "vertical": "vehicle",
+        "cluster_slug": "vehicle_rentals",
         "osm_tags": [{"shop": "motorcycle_rental"}],
         "search_terms": ["motorcycle rental agency", "motorbike rental"],
     },
     {
         "slug": "scooter-rental-service",
         "label": "Scooter Rental Service",
-        "vertical": Vertical.VEHICLE,
+        "vertical": "vehicle",
+        "cluster_slug": "vehicle_rentals",
         "osm_tags": [{"shop": "motorcycle_rental"}],
         "search_terms": ["scooter rental service"],
     },
     {
         "slug": "bike-rental",
         "label": "Bike Rental",
-        "vertical": Vertical.VEHICLE,
+        "vertical": "vehicle",
+        "cluster_slug": "vehicle_rentals",
         "osm_tags": [{"amenity": "bicycle_rental"}],
         "search_terms": ["bike rental"],
     },
     {
         "slug": "quad-rental",
         "label": "Quad Rental",
-        "vertical": Vertical.VEHICLE,
+        "vertical": "vehicle",
+        "cluster_slug": "vehicle_rentals",
         "osm_tags": [{"shop": "motorcycle_rental"}],
         "search_terms": ["quad rental", "ATV rental"],
     },
     {
         "slug": "tour-agency",
         "label": "Tour Agency",
-        "vertical": Vertical.TOURISM,
+        "vertical": "tourism",
+        "cluster_slug": "tour_operators",
         "osm_tags": [{"shop": "travel_agency"}],
         "search_terms": ["tour agency", "tour operator"],
     },
     {
         "slug": "travel-agency",
         "label": "Travel Agency",
-        "vertical": Vertical.TOURISM,
+        "vertical": "tourism",
+        "cluster_slug": "tour_operators",
         "osm_tags": [{"shop": "travel_agency"}],
         "search_terms": ["travel agency"],
     },
     {
         "slug": "tour-guide-service",
         "label": "Tour Guide Service",
-        "vertical": Vertical.TOURISM,
+        "vertical": "tourism",
+        "cluster_slug": "tour_operators",
         "osm_tags": [{"tourism": "information"}],
         "search_terms": ["tour guide service", "excursions agency"],
     },
@@ -79,6 +88,9 @@ def _latest_recipe_version(recipe: QueryRecipe) -> QueryRecipeVersion | None:
 
 
 def seed_defaults(session) -> None:
+    seed_taxonomy(session)
+    session.commit()
+
     for region_data in DEFAULT_REGIONS:
         region = session.query(Region).filter(Region.code == region_data["code"]).one_or_none()
         if region is None:
@@ -107,6 +119,7 @@ def seed_defaults(session) -> None:
                     label=category.label,
                     description=f"Seeded platform recipe for {category.label}.",
                     vertical=category.vertical,
+                    cluster_slug=category.cluster_slug,
                     status=RecipeStatus.ACTIVE,
                     is_platform_template=True,
                 )
@@ -132,6 +145,7 @@ def seed_defaults(session) -> None:
                 session.rollback()
         elif category.seeded_recipe_id != recipe.id:
             category.seeded_recipe_id = recipe.id
+            category.cluster_slug = recipe.cluster_slug
             session.add(category)
             session.commit()
 
@@ -150,6 +164,7 @@ def seed_defaults(session) -> None:
                 slug=recipe.slug,
                 label=recipe.label,
                 vertical=recipe.vertical,
+                cluster_slug=recipe.cluster_slug,
                 osm_tags=version.osm_tags,
                 search_terms=version.search_terms,
                 is_active=True,
@@ -161,6 +176,7 @@ def seed_defaults(session) -> None:
         category.slug = recipe.slug
         category.label = recipe.label
         category.vertical = recipe.vertical
+        category.cluster_slug = recipe.cluster_slug
         category.osm_tags = version.osm_tags
         category.search_terms = version.search_terms
         category.is_active = True

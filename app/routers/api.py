@@ -47,6 +47,7 @@ def create_category(payload: CategoryCreate, db: Session = Depends(get_db)) -> C
         slug=payload.slug,
         label=payload.label,
         vertical=payload.vertical,
+        cluster_slug=payload.cluster_slug,
         osm_tags=payload.osm_tags,
         search_terms=payload.search_terms,
         description=f"Recipe created from API category sync for {payload.label}.",

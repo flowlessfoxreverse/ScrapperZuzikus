@@ -76,7 +76,11 @@
           </div>
           <div class="stat-card">
             <span class="subtle">Vertical</span>
-            <strong>{{ draft_proposal.vertical.value }}</strong>
+            <strong>{{ draft_proposal.vertical }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Cluster</span>
+            <strong>{{ draft_proposal.cluster_slug or "-" }}</strong>
           </div>
           <div class="stat-card">
             <span class="subtle">Adapter</span>
@@ -131,7 +135,16 @@
             <span>Vertical</span>
             <select name="vertical">
               {% for vertical in verticals %}
-              <option value="{{ vertical.value }}" {% if draft_proposal and draft_proposal.vertical == vertical %}selected{% endif %}>{{ vertical.value }}</option>
+              <option value="{{ vertical.slug }}" {% if draft_proposal and draft_proposal.vertical == vertical.slug %}selected{% endif %}>{{ vertical.label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            <span>Cluster</span>
+            <select name="cluster_slug">
+              <option value="">None</option>
+              {% for cluster in clusters %}
+              <option value="{{ cluster.slug }}" {% if draft_proposal and draft_proposal.cluster_slug == cluster.slug %}selected{% endif %}>{{ cluster.label }} ({{ cluster.vertical_slug }})</option>
               {% endfor %}
             </select>
           </label>
