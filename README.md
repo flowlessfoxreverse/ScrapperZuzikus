@@ -73,7 +73,7 @@ OVERPASS_DAILY_QUERY_CAP=0
 OVERPASS_MODE=init
 OVERPASS_HOST_PORT=12346
 OVERPASS_PLANET_URL=https://download.geofabrik.de/asia/thailand-latest.osm.pbf
-OVERPASS_PLANET_PREPROCESS=osmium cat -o /db/planet.osm.bz2 -f osm.bz2 /db/planet.osm.pbf
+OVERPASS_PLANET_PREPROCESS=mv /db/planet.osm.bz2 /db/planet.osm.pbf && osmium cat -o /db/planet.osm.bz2 -f osm.bz2 /db/planet.osm.pbf && rm /db/planet.osm.pbf
 OVERPASS_DIFF_URL=https://download.geofabrik.de/asia/thailand-updates/
 DISCOVERY_COOLDOWN_HOURS=168
 CRAWL_RECRAWL_HOURS=168
@@ -97,6 +97,7 @@ CRAWL_WORKER_THREADS=1
 - First startup can take time because the Overpass container needs to import the Thailand extract before it can answer queries
 - Keep `OVERPASS_MODE=init` for the first bootstrap; after the database is initialized you can leave it as-is unless you intentionally rebuild the Overpass volume
 - If you replace the Overpass volume, the import process starts from scratch again
+- Geofabrik region extracts are downloaded by this image as `/db/planet.osm.bz2`, even when the source is a `.pbf`, so the preprocess step must rename that downloaded file to `.pbf` before converting it back to `osm.bz2`
 
 ## Notes
 
