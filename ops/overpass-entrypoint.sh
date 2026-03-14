@@ -2,4 +2,4 @@
 set -eu
 
 chmod og+rx /db || true
-exec /docker-entrypoint.sh "$@"
+exec "$@"
