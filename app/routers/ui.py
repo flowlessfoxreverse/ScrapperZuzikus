@@ -15,7 +15,7 @@ from app.db import get_db
 from app.models import Category, Company, Email, Phone, ProxyEndpoint, ProxyKind, Region, RunCategory, RunStatus, ScrapeRun, ValidationStatus, Vertical
 from app.schemas import EmailRow
 from app.services.overpass import fetch_status
-from app.services.proxy_pool import active_proxy_count, list_proxies, upsert_proxy
+from app.services.proxy_pool import active_proxy_count, effective_proxy_capacity, lease_counts, list_proxies, release_proxy, upsert_proxy
 from app.services.region_catalog import country_catalog, upsert_country_with_subdivisions
 from app.services.runs import find_active_run, request_run_cancellation
 from app.tasks import run_scrape, sync_region_catalog_task
@@ -69,6 +69,12 @@ class ProxyRow:
     label: str
     proxy_url: str
     kind: str
+    supports_http: bool
+    supports_browser: bool
+    max_http_leases: int
+    max_browser_leases: int
+    current_http_leases: int
+    current_browser_leases: int
     is_active: bool
     leased_by: str | None
     failure_count: int
@@ -369,8 +375,10 @@ def dashboard(
     region_stats = build_region_stats(db, selected_country_code)
     overpass_status = fetch_status()
     browser_proxy_slots = active_proxy_count(db, ProxyKind.BROWSER)
+    crawler_proxy_slots = active_proxy_count(db, ProxyKind.CRAWLER)
     browser_thread_capacity = settings.browser_worker_threads
-    effective_browser_capacity = min(browser_proxy_slots, browser_thread_capacity)
+    effective_browser_capacity = min(effective_proxy_capacity(db, ProxyKind.BROWSER), browser_thread_capacity)
+    effective_crawler_capacity = effective_proxy_capacity(db, ProxyKind.CRAWLER)
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
@@ -393,8 +401,10 @@ def dashboard(
             "region_stats": region_stats,
             "overpass_status": overpass_status,
             "browser_proxy_slots": browser_proxy_slots,
+            "crawler_proxy_slots": crawler_proxy_slots,
             "browser_thread_capacity": browser_thread_capacity,
             "effective_browser_capacity": effective_browser_capacity,
+            "effective_crawler_capacity": effective_crawler_capacity,
             "message": message,
             "validation_statuses": list(ValidationStatus),
         },
@@ -554,13 +564,21 @@ def region_editor(request: Request, db: Session = Depends(get_db)) -> HTMLRespon
 @router.get("/proxies", response_class=HTMLResponse)
 def proxy_editor(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     browser_proxy_slots = active_proxy_count(db, ProxyKind.BROWSER)
+    crawler_proxy_slots = active_proxy_count(db, ProxyKind.CRAWLER)
     browser_thread_capacity = settings.browser_worker_threads
+    current_leases = lease_counts(db)
     proxies = [
         ProxyRow(
             id=proxy.id,
             label=proxy.label,
             proxy_url=proxy.proxy_url,
             kind=proxy.kind.value,
+            supports_http=proxy.supports_http,
+            supports_browser=proxy.supports_browser,
+            max_http_leases=proxy.max_http_leases,
+            max_browser_leases=proxy.max_browser_leases,
+            current_http_leases=current_leases.get(proxy.id, {}).get("crawler", 0),
+            current_browser_leases=current_leases.get(proxy.id, {}).get("browser", 0),
             is_active=proxy.is_active,
             leased_by=proxy.leased_by,
             failure_count=proxy.failure_count,
@@ -573,10 +591,11 @@ def proxy_editor(request: Request, db: Session = Depends(get_db)) -> HTMLRespons
         name="proxies.html",
         context={
             "proxies": proxies,
-            "proxy_kinds": list(ProxyKind),
             "browser_proxy_slots": browser_proxy_slots,
+            "crawler_proxy_slots": crawler_proxy_slots,
             "browser_thread_capacity": browser_thread_capacity,
-            "effective_browser_capacity": min(browser_proxy_slots, browser_thread_capacity),
+            "effective_browser_capacity": min(effective_proxy_capacity(db, ProxyKind.BROWSER), browser_thread_capacity),
+            "effective_crawler_capacity": effective_proxy_capacity(db, ProxyKind.CRAWLER),
         },
     )
 
@@ -585,16 +604,28 @@ def proxy_editor(request: Request, db: Session = Depends(get_db)) -> HTMLRespons
 def create_proxy_html(
     label: str = Form(...),
     proxy_url: str = Form(...),
-    kind: str = Form("browser"),
+    supports_http: str | None = Form(None),
+    supports_browser: str | None = Form(None),
+    max_http_leases: int = Form(8),
+    max_browser_leases: int = Form(1),
     is_active: str | None = Form(None),
     notes: str | None = Form(None),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    supports_http_enabled = supports_http == "1"
+    supports_browser_enabled = supports_browser == "1"
+    if not supports_http_enabled and not supports_browser_enabled:
+        supports_http_enabled = True
+    kind = ProxyKind.BROWSER if supports_browser_enabled else ProxyKind.CRAWLER
     upsert_proxy(
         db,
         label=label.strip(),
         proxy_url=proxy_url.strip(),
-        kind=ProxyKind(kind),
+        kind=kind,
+        supports_http=supports_http_enabled,
+        supports_browser=supports_browser_enabled,
+        max_http_leases=max_http_leases,
+        max_browser_leases=max_browser_leases,
         is_active=is_active == "1",
         notes=(notes or "").strip() or None,
     )
@@ -611,9 +642,7 @@ def toggle_proxy_html(
     if proxy is not None:
         proxy.is_active = not proxy.is_active
         if not proxy.is_active:
-            proxy.leased_by = None
-            proxy.leased_at = None
-            proxy.lease_expires_at = None
+            release_proxy(db, proxy.id)
         db.add(proxy)
         db.commit()
     return RedirectResponse(url="/proxies", status_code=303)

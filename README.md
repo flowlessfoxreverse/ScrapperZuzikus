@@ -111,6 +111,7 @@ BROWSER_WORKER_THREADS=64
 - Browser-assisted crawling runs on its own queue and only handles sites that the static crawler could not recover
 - Browser concurrency is capped by `BROWSER_WORKER_THREADS`; keep it comfortably above the number of active browser proxies if you want one usable slot per proxy
 - The current app model uses one shared `browser_worker` with a high thread ceiling and proxy leasing, not one Docker container per proxy
+- Proxies can now support HTTP crawling, browser sessions, or both; the scheduler leases them automatically instead of forcing a manual split
 - Discovery is cached per `region + category` and reused until the cooldown expires
 - Repeated runs focus on stale or failed company crawls instead of querying Overpass again
 - Self-hosted Overpass removes dependence on the shared public endpoint for normal operation

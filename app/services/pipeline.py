@@ -410,8 +410,24 @@ def execute_crawl(session: Session, run_id: int, company_id: int) -> None:
     mark_run_company_running(session, run_id, company_id)
     session.commit()
 
+    proxy = None
+    owner = f"run-{run_id}-company-{company_id}-crawler"
     try:
-        result = persist_crawl(session=session, company=company, run_id=run_id)
+        if active_proxy_count(session, ProxyKind.CRAWLER) > 0:
+            proxy = acquire_proxy(session, owner=owner, workload=ProxyKind.CRAWLER)
+            if proxy is None:
+                requeue_run_company(session, run_id, company_id, "Waiting for crawler proxy slot.")
+                session.commit()
+                from app.tasks import crawl_company
+                crawl_company.send_with_options(args=(run_id, company_id), delay=5_000)
+                return
+            session.commit()
+        result = persist_crawl(
+            session=session,
+            company=company,
+            run_id=run_id,
+            crawler_kwargs={"proxy_url": proxy.proxy_url if proxy else None},
+        )
         if settings.browser_fallback_enabled and result is not None and should_browser_escalate(result):
             requeue_run_company(session, run_id, company_id, "Escalated to browser crawl.")
             session.commit()
@@ -423,6 +439,9 @@ def execute_crawl(session: Session, run_id: int, company_id: int) -> None:
         company.crawl_status = "failed"
         session.add(company)
         mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.FAILED, str(exc))
+        release_proxy(session, proxy.id if proxy else None, owner=owner, workload=ProxyKind.CRAWLER, failed=True)
+    else:
+        release_proxy(session, proxy.id if proxy else None, owner=owner, workload=ProxyKind.CRAWLER, failed=False)
     session.refresh(run)
     if run.cancel_requested:
         finalize_cancelled_run(session, run, "Run stopped by request.")
@@ -457,7 +476,7 @@ def execute_browser_crawl(session: Session, run_id: int, company_id: int) -> Non
     try:
         owner = f"run-{run_id}-company-{company_id}"
         if active_proxy_count(session, ProxyKind.BROWSER) > 0:
-            proxy = acquire_proxy(session, owner=owner, kind=ProxyKind.BROWSER)
+            proxy = acquire_proxy(session, owner=owner, workload=ProxyKind.BROWSER)
             if proxy is None:
                 requeue_run_company(session, run_id, company_id, "Waiting for proxy worker slot.")
                 session.commit()
@@ -478,9 +497,9 @@ def execute_browser_crawl(session: Session, run_id: int, company_id: int) -> Non
         company.crawl_status = "failed"
         session.add(company)
         mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.FAILED, str(exc))
-        release_proxy(session, proxy.id if proxy else None, failed=True)
+        release_proxy(session, proxy.id if proxy else None, owner=owner, workload=ProxyKind.BROWSER, failed=True)
     else:
-        release_proxy(session, proxy.id if proxy else None, failed=False)
+        release_proxy(session, proxy.id if proxy else None, owner=owner, workload=ProxyKind.BROWSER, failed=False)
 
     session.refresh(run)
     if run.cancel_requested:

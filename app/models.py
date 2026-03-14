@@ -85,6 +85,10 @@ class ProxyEndpoint(Base):
     label: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     proxy_url: Mapped[str] = mapped_column(String(500), unique=True)
     kind: Mapped[ProxyKind] = mapped_column(SqlEnum(ProxyKind), default=ProxyKind.BROWSER, index=True)
+    supports_http: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    supports_browser: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    max_http_leases: Mapped[int] = mapped_column(Integer, default=8)
+    max_browser_leases: Mapped[int] = mapped_column(Integer, default=1)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     leased_by: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
@@ -93,6 +97,21 @@ class ProxyEndpoint(Base):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     failure_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    leases: Mapped[list["ProxyLease"]] = relationship(back_populates="proxy", cascade="all, delete-orphan")
+
+
+class ProxyLease(Base):
+    __tablename__ = "proxy_leases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    proxy_id: Mapped[int] = mapped_column(ForeignKey("proxy_endpoints.id"), index=True)
+    owner: Mapped[str] = mapped_column(String(255), index=True)
+    workload: Mapped[ProxyKind] = mapped_column(SqlEnum(ProxyKind), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+    proxy: Mapped["ProxyEndpoint"] = relationship(back_populates="leases")
 
 
 class Category(Base):

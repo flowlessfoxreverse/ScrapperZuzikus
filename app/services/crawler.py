@@ -79,13 +79,14 @@ def build_httpx_client(
     *,
     headers: dict[str, str],
     verify: bool = True,
+    proxy_url: str | None = None,
 ) -> httpx.Client:
     return httpx.Client(
         timeout=settings.request_timeout_seconds,
         headers=headers,
         follow_redirects=True,
         verify=verify,
-        proxy=settings.crawler_proxy_url or None,
+        proxy=proxy_url or settings.crawler_proxy_url or None,
     )
 
 
@@ -434,7 +435,7 @@ def should_browser_escalate(result: CrawlSiteResult) -> bool:
     return result.crawl_status in {"blocked_by_robots", "robots_bypassed", "failed", "completed"}
 
 
-def crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
+def crawl_site(website_url: str, on_request=None, proxy_url: str | None = None) -> CrawlSiteResult:
     website_url = normalize_url(website_url)
     robots_blocked = not fetch_robots_allowed(website_url)
     if robots_blocked and not settings.crawler_ignore_robots:
@@ -449,7 +450,7 @@ def crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
     pages = []
     headers = {"User-Agent": settings.user_agent}
 
-    with build_httpx_client(headers=headers) as client:
+    with build_httpx_client(headers=headers, proxy_url=proxy_url) as client:
         for candidate in candidates[: settings.max_pages_per_site]:
             if candidate in seen:
                 continue
@@ -460,6 +461,7 @@ def crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
                     with build_httpx_client(
                         headers=BROWSER_FALLBACK_HEADERS,
                         verify=not insecure_fallback,
+                        proxy_url=proxy_url,
                     ) as browser_client:
                         response, insecure_fallback = fetch_page(
                             browser_client,

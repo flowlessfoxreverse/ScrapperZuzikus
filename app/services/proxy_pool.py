@@ -1,73 +1,171 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import ProxyEndpoint, ProxyKind
+from app.models import ProxyEndpoint, ProxyKind, ProxyLease
 
 
 LEASE_MINUTES = 10
 
 
-def active_proxy_count(session: Session, kind: ProxyKind = ProxyKind.BROWSER) -> int:
-    return session.scalar(
-        select(func.count())
-        .select_from(ProxyEndpoint)
-        .where(ProxyEndpoint.kind == kind, ProxyEndpoint.is_active.is_(True))
-    ) or 0
+@dataclass
+class ProxyCapacity:
+    active_proxy_count: int
+    configured_capacity: int
+
+
+def _supports(proxy: ProxyEndpoint, workload: ProxyKind) -> bool:
+    return proxy.supports_browser if workload == ProxyKind.BROWSER else proxy.supports_http
+
+
+def _capacity(proxy: ProxyEndpoint, workload: ProxyKind) -> int:
+    return proxy.max_browser_leases if workload == ProxyKind.BROWSER else proxy.max_http_leases
+
+
+def expire_old_leases(session: Session) -> None:
+    now = datetime.now(timezone.utc)
+    for lease in session.scalars(select(ProxyLease).where(ProxyLease.expires_at <= now)).all():
+        session.delete(lease)
+    session.flush()
+
+
+def lease_counts(session: Session) -> dict[int, dict[str, int]]:
+    now = datetime.now(timezone.utc)
+    rows = session.execute(
+        select(
+            ProxyLease.proxy_id,
+            ProxyLease.workload,
+            func.count(ProxyLease.id),
+        )
+        .where(ProxyLease.expires_at > now)
+        .group_by(ProxyLease.proxy_id, ProxyLease.workload)
+    ).all()
+    counts: dict[int, dict[str, int]] = {}
+    for proxy_id, workload, count in rows:
+        bucket = counts.setdefault(proxy_id, {"crawler": 0, "browser": 0})
+        bucket[workload.value] = int(count or 0)
+    return counts
+
+
+def active_proxy_count(session: Session, workload: ProxyKind = ProxyKind.BROWSER) -> int:
+    proxies = [
+        proxy
+        for proxy in list_proxies(session)
+        if proxy.is_active and _supports(proxy, workload)
+    ]
+    return len(proxies)
+
+
+def effective_proxy_capacity(session: Session, workload: ProxyKind = ProxyKind.BROWSER) -> int:
+    proxies = [
+        proxy
+        for proxy in list_proxies(session)
+        if proxy.is_active and _supports(proxy, workload)
+    ]
+    return sum(_capacity(proxy, workload) for proxy in proxies)
+
+
+def capacity_snapshot(session: Session, workload: ProxyKind = ProxyKind.BROWSER) -> ProxyCapacity:
+    return ProxyCapacity(
+        active_proxy_count=active_proxy_count(session, workload),
+        configured_capacity=effective_proxy_capacity(session, workload),
+    )
 
 
 def list_proxies(session: Session) -> list[ProxyEndpoint]:
-    return session.scalars(select(ProxyEndpoint).order_by(ProxyEndpoint.kind, ProxyEndpoint.label)).all()
+    return session.scalars(select(ProxyEndpoint).order_by(ProxyEndpoint.label)).all()
 
 
 def acquire_proxy(
     session: Session,
     *,
     owner: str,
-    kind: ProxyKind = ProxyKind.BROWSER,
+    workload: ProxyKind = ProxyKind.BROWSER,
 ) -> ProxyEndpoint | None:
     now = datetime.now(timezone.utc)
-    candidate = session.scalar(
-        select(ProxyEndpoint)
-        .where(
-            ProxyEndpoint.kind == kind,
-            ProxyEndpoint.is_active.is_(True),
-            or_(
-                ProxyEndpoint.lease_expires_at.is_(None),
-                ProxyEndpoint.lease_expires_at < now,
-            ),
+    expire_old_leases(session)
+    counts = lease_counts(session)
+    candidates = [
+        proxy
+        for proxy in list_proxies(session)
+        if proxy.is_active and _supports(proxy, workload)
+    ]
+    if workload == ProxyKind.BROWSER:
+        candidates.sort(
+            key=lambda proxy: (
+                counts.get(proxy.id, {}).get("browser", 0),
+                counts.get(proxy.id, {}).get("crawler", 0),
+                proxy.last_used_at is not None,
+                proxy.last_used_at or datetime.min.replace(tzinfo=timezone.utc),
+                proxy.id,
+            )
         )
-        .order_by(ProxyEndpoint.last_used_at.is_not(None), ProxyEndpoint.last_used_at.asc(), ProxyEndpoint.id.asc())
-        .limit(1)
-    )
-    if candidate is None:
-        return None
-    candidate.leased_by = owner
-    candidate.leased_at = now
-    candidate.lease_expires_at = now + timedelta(minutes=LEASE_MINUTES)
-    candidate.last_used_at = now
-    session.add(candidate)
-    session.flush()
-    return candidate
+    else:
+        candidates.sort(
+            key=lambda proxy: (
+                1 if counts.get(proxy.id, {}).get("browser", 0) > 0 else 0,
+                counts.get(proxy.id, {}).get("crawler", 0),
+                proxy.last_used_at is not None,
+                proxy.last_used_at or datetime.min.replace(tzinfo=timezone.utc),
+                proxy.id,
+            )
+        )
+
+    for proxy in candidates:
+        current = counts.get(proxy.id, {"crawler": 0, "browser": 0})
+        if current.get(workload.value, 0) >= _capacity(proxy, workload):
+            continue
+        lease = ProxyLease(
+            proxy_id=proxy.id,
+            owner=owner,
+            workload=workload,
+            expires_at=now + timedelta(minutes=LEASE_MINUTES),
+        )
+        session.add(lease)
+        proxy.leased_by = owner if workload == ProxyKind.BROWSER else proxy.leased_by
+        proxy.leased_at = now
+        proxy.lease_expires_at = now + timedelta(minutes=LEASE_MINUTES)
+        proxy.last_used_at = now
+        session.add(proxy)
+        session.flush()
+        return proxy
+    return None
 
 
 def release_proxy(
     session: Session,
     proxy_id: int | None,
     *,
+    owner: str | None = None,
+    workload: ProxyKind | None = None,
     failed: bool = False,
 ) -> None:
     if proxy_id is None:
         return
+    expire_old_leases(session)
+    stmt = select(ProxyLease).where(ProxyLease.proxy_id == proxy_id)
+    if owner is not None:
+        stmt = stmt.where(ProxyLease.owner == owner)
+    if workload is not None:
+        stmt = stmt.where(ProxyLease.workload == workload)
+    leases = session.scalars(stmt).all()
+    for lease in leases:
+        session.delete(lease)
+
     proxy = session.get(ProxyEndpoint, proxy_id)
     if proxy is None:
         return
-    proxy.leased_by = None
-    proxy.leased_at = None
-    proxy.lease_expires_at = None
+    remaining = lease_counts(session).get(proxy_id, {"crawler": 0, "browser": 0})
+    if remaining["crawler"] + remaining["browser"] == 0:
+        proxy.leased_by = None
+        proxy.leased_at = None
+        proxy.lease_expires_at = None
+    elif remaining["browser"] == 0:
+        proxy.leased_by = None
     proxy.last_used_at = datetime.now(timezone.utc)
     if failed:
         proxy.failure_count += 1
@@ -80,6 +178,10 @@ def upsert_proxy(
     label: str,
     proxy_url: str,
     kind: ProxyKind,
+    supports_http: bool,
+    supports_browser: bool,
+    max_http_leases: int,
+    max_browser_leases: int,
     is_active: bool,
     notes: str | None,
 ) -> ProxyEndpoint:
@@ -93,6 +195,10 @@ def upsert_proxy(
             label=label,
             proxy_url=proxy_url,
             kind=kind,
+            supports_http=supports_http,
+            supports_browser=supports_browser,
+            max_http_leases=max(1, max_http_leases),
+            max_browser_leases=max(1, max_browser_leases),
             is_active=is_active,
             notes=notes,
         )
@@ -100,9 +206,12 @@ def upsert_proxy(
         existing.label = label
         existing.proxy_url = proxy_url
         existing.kind = kind
+        existing.supports_http = supports_http
+        existing.supports_browser = supports_browser
+        existing.max_http_leases = max(1, max_http_leases)
+        existing.max_browser_leases = max(1, max_browser_leases)
         existing.is_active = is_active
         existing.notes = notes
     session.add(existing)
     session.flush()
     return existing
-

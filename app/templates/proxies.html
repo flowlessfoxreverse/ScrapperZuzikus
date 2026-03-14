@@ -12,7 +12,7 @@
         <div>
           <p class="eyebrow">Configuration</p>
           <h1>Proxy Editor</h1>
-          <p class="subtle">Each active browser proxy becomes one browser worker slot. Keep browser worker thread capacity at or above the number of active browser proxies.</p>
+          <p class="subtle">Each proxy can serve HTTP crawls, browser sessions, or both. The scheduler leases capacity automatically, while browser throughput is still capped by the browser worker thread ceiling.</p>
         </div>
         <div class="hero-actions">
           <a class="ghost-button" href="/">Back</a>
@@ -21,8 +21,12 @@
 
       <section class="country-summary">
         <div class="stat-card">
-          <span class="subtle">Active Browser Slots</span>
+          <span class="subtle">Active Browser Proxies</span>
           <strong>{{ browser_proxy_slots }}</strong>
+        </div>
+        <div class="stat-card">
+          <span class="subtle">Active Crawler Proxies</span>
+          <strong>{{ crawler_proxy_slots }}</strong>
         </div>
         <div class="stat-card">
           <span class="subtle">Browser Thread Ceiling</span>
@@ -31,6 +35,10 @@
         <div class="stat-card">
           <span class="subtle">Effective Browser Capacity</span>
           <strong>{{ effective_browser_capacity }}</strong>
+        </div>
+        <div class="stat-card">
+          <span class="subtle">Effective Crawler Capacity</span>
+          <strong>{{ effective_crawler_capacity }}</strong>
         </div>
       </section>
 
@@ -47,10 +55,12 @@
             <thead>
               <tr>
                 <th>Label</th>
-                <th>Kind</th>
+                <th>Capabilities</th>
                 <th>Proxy URL</th>
+                <th>HTTP Leases</th>
+                <th>Browser Leases</th>
                 <th>Status</th>
-                <th>Lease</th>
+                <th>Active Lease Owner</th>
                 <th>Failures</th>
                 <th>Action</th>
               </tr>
@@ -59,8 +69,14 @@
               {% for proxy in proxies %}
               <tr>
                 <td>{{ proxy.label }}</td>
-                <td>{{ proxy.kind }}</td>
+                <td>
+                  {% if proxy.supports_http %}<span class="badge muted">http</span>{% endif %}
+                  {% if proxy.supports_browser %}<span class="badge muted">browser</span>{% endif %}
+                  {% if not proxy.supports_http and not proxy.supports_browser %}<span class="badge warn">none</span>{% endif %}
+                </td>
                 <td>{{ proxy.proxy_url }}</td>
+                <td>{{ proxy.current_http_leases }}/{{ proxy.max_http_leases }}</td>
+                <td>{{ proxy.current_browser_leases }}/{{ proxy.max_browser_leases }}</td>
                 <td>
                   {% if proxy.is_active %}
                   <span class="badge muted">active</span>
@@ -79,7 +95,7 @@
                 </td>
               </tr>
               {% else %}
-              <tr><td colspan="7">No proxies configured yet.</td></tr>
+              <tr><td colspan="9">No proxies configured yet.</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -92,13 +108,23 @@
               <span>Label</span>
               <input type="text" name="label" placeholder="TH Browser Proxy 1" required />
             </label>
+            <label class="checkbox-card">
+              <input type="checkbox" name="supports_http" value="1" checked />
+              <span>Allow HTTP crawler</span>
+              <small>Used by the lightweight HTML crawler queue.</small>
+            </label>
+            <label class="checkbox-card">
+              <input type="checkbox" name="supports_browser" value="1" checked />
+              <span>Allow Browser worker</span>
+              <small>Used by Playwright fallback sessions.</small>
+            </label>
             <label>
-              <span>Kind</span>
-              <select name="kind">
-                {% for kind in proxy_kinds %}
-                <option value="{{ kind.value }}">{{ kind.value }}</option>
-                {% endfor %}
-              </select>
+              <span>HTTP Lease Capacity</span>
+              <input type="number" name="max_http_leases" value="8" min="1" max="128" />
+            </label>
+            <label>
+              <span>Browser Lease Capacity</span>
+              <input type="number" name="max_browser_leases" value="1" min="1" max="8" />
             </label>
             <label>
               <span>Proxy URL</span>

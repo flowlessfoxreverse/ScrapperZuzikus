@@ -110,8 +110,12 @@
             <strong>{{ selected_country.total_emails }}</strong>
           </div>
           <div class="stat-card">
-            <span class="subtle">Browser Proxy Slots</span>
+            <span class="subtle">Browser Proxies</span>
             <strong>{{ browser_proxy_slots }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Crawler Proxies</span>
+            <strong>{{ crawler_proxy_slots }}</strong>
           </div>
           <div class="stat-card">
             <span class="subtle">Browser Thread Ceiling</span>
@@ -120,6 +124,10 @@
           <div class="stat-card">
             <span class="subtle">Effective Browser Capacity</span>
             <strong>{{ effective_browser_capacity }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Effective Crawler Capacity</span>
+            <strong>{{ effective_crawler_capacity }}</strong>
           </div>
         </div>
         {% endif %}
