@@ -10,7 +10,7 @@
   <td>{{ run.overpass_queries_used }}</td>
   <td>{{ run.discovered_count }}</td>
   <td>{{ run.crawled_count }}</td>
-  <td><small class="subtle">{{ run.note or "-" }}</small></td>
+  <td><small class="subtle" title="{{ run.note or '' }}">{{ summarize_run_note(run.note) }}</small></td>
   <td>
     {% if run.status.value in ["pending", "running"] and not run.cancel_requested %}
     <form action="/runs/{{ run.id }}/cancel" method="post">

@@ -13,7 +13,7 @@ from app.seed import seed_defaults
 from app.services.company_dedupe import reconcile_duplicate_companies
 from app.services.region_catalog import sync_region_catalog
 from app.services.runtime_schema import ensure_scrape_run_control_columns
-from app.services.run_companies import reconcile_terminal_runs
+from app.services.run_companies import reconcile_active_runs, reconcile_terminal_runs
 
 
 settings = get_settings()
@@ -27,6 +27,7 @@ async def lifespan(_app: FastAPI):
         seed_defaults(session)
         sync_region_catalog(session)
         reconcile_terminal_runs(session)
+        reconcile_active_runs(session)
         reconcile_duplicate_companies(session)
         session.commit()
     yield

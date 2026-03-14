@@ -72,7 +72,13 @@ def upsert_company_from_element(
         .filter(CompanyCategory.company_id == company.id, CompanyCategory.category_id == category.id)
         .one_or_none()
     )
-    if company_category is None:
+    pending_company_category = any(
+        isinstance(obj, CompanyCategory)
+        and obj.company_id == company.id
+        and obj.category_id == category.id
+        for obj in session.new
+    )
+    if company_category is None and not pending_company_category:
         session.add(CompanyCategory(company_id=company.id, category_id=category.id))
 
     return company
@@ -199,6 +205,8 @@ def execute_discovery(
     if run is None:
         return
     session.refresh(run)
+    if run.status in {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.SKIPPED}:
+        return
     if run.cancel_requested:
         finalize_cancelled_run(session, run)
         session.commit()
@@ -345,6 +353,8 @@ def execute_crawl(session: Session, run_id: int, company_id: int) -> None:
     if run is None or company is None:
         return
     session.refresh(run)
+    if run.status in {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.SKIPPED}:
+        return
     if run.cancel_requested:
         mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.SKIPPED, "Cancelled before crawl start.")
         finalize_cancelled_run(session, run, "Run stopped by request.")

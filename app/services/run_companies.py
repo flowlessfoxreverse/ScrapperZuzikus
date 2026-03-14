@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -18,6 +18,7 @@ TERMINAL_RUN_STATUSES = (
     RunStatus.FAILED,
     RunStatus.SKIPPED,
 )
+STALE_ACTIVE_RUN_MINUTES = 10
 
 
 def utcnow() -> datetime:
@@ -128,6 +129,63 @@ def reconcile_terminal_runs(session: Session) -> int:
         )
     session.flush()
     return cleaned
+
+
+def reconcile_active_runs(session: Session) -> int:
+    runs = session.scalars(
+        select(ScrapeRun).where(ScrapeRun.status.not_in(TERMINAL_RUN_STATUSES))
+    ).all()
+    reconciled = 0
+    cutoff = utcnow() - timedelta(minutes=STALE_ACTIVE_RUN_MINUTES)
+
+    for run in runs:
+        total = session.scalar(select(func.count()).select_from(RunCompany).where(RunCompany.run_id == run.id)) or 0
+        queued = session.scalar(
+            select(func.count()).select_from(RunCompany).where(
+                RunCompany.run_id == run.id,
+                RunCompany.status == RunCompanyStatus.QUEUED,
+            )
+        ) or 0
+        running = session.scalar(
+            select(func.count()).select_from(RunCompany).where(
+                RunCompany.run_id == run.id,
+                RunCompany.status == RunCompanyStatus.RUNNING,
+            )
+        ) or 0
+        terminal = session.scalar(
+            select(func.count()).select_from(RunCompany).where(
+                RunCompany.run_id == run.id,
+                RunCompany.status.in_(TERMINAL_RUN_COMPANY_STATUSES),
+            )
+        ) or 0
+
+        if queued == 0 and running == 0 and total > 0 and terminal >= total:
+            run.status = RunStatus.SKIPPED if run.cancel_requested else RunStatus.COMPLETED
+            run.finished_at = run.finished_at or utcnow()
+            if not run.note:
+                run.note = "Discovery completed."
+            session.add(run)
+            reconciled += 1
+            continue
+
+        if queued == 0 and running == 0 and total == 0 and run.finished_at is not None:
+            run.status = RunStatus.SKIPPED if run.cancel_requested else RunStatus.COMPLETED
+            if not run.note:
+                run.note = "Discovery completed."
+            session.add(run)
+            reconciled += 1
+            continue
+
+        if queued == 0 and running == 0 and run.started_at <= cutoff:
+            run.status = RunStatus.FAILED
+            run.finished_at = utcnow()
+            run.note = "Closed stale run after worker crash."
+            close_open_run_companies(session, run.id, RunCompanyStatus.FAILED, run.note)
+            session.add(run)
+            reconciled += 1
+
+    session.flush()
+    return reconciled
 
 
 def maybe_complete_run(session: Session, run_id: int) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from urllib.parse import quote_plus
+import re
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -55,6 +56,50 @@ class CompanyAuditRow:
     has_contact_form: bool
     email_count: int
     latest_email: str | None
+
+
+def summarize_run_note(note: str | None) -> str:
+    if not note:
+        return "-"
+    if len(note) <= 140:
+        return note
+
+    if "Partial category failures:" in note:
+        failures = note.split("Partial category failures:", 1)[1]
+        categories = []
+        for raw in failures.split(" ; "):
+            category = raw.split(":", 1)[0].strip()
+            if category:
+                categories.append(category)
+        categories = list(dict.fromkeys(categories))
+        if categories:
+            shown = ", ".join(categories[:3])
+            remainder = len(categories) - min(len(categories), 3)
+            suffix = f" +{remainder} more" if remainder > 0 else ""
+            return f"Discovery completed with warnings: {shown}{suffix}."
+        return "Discovery completed with category warnings."
+
+    if "Overpass connection failed" in note or "Connection refused" in note:
+        categories = re.findall(r"([a-z0-9-]+): Overpass connection failed", note)
+        if categories:
+            shown = ", ".join(categories[:3])
+            remainder = len(categories) - min(len(categories), 3)
+            suffix = f" +{remainder} more" if remainder > 0 else ""
+            return f"Failed: Overpass unavailable for {shown}{suffix}."
+        return "Failed: Overpass was unavailable."
+
+    if "Overpass returned non-JSON payload" in note:
+        categories = re.findall(r"([a-z0-9-]+): Overpass returned non-JSON payload", note)
+        if categories:
+            return f"Completed with warnings: unsupported Overpass response for {', '.join(categories[:3])}."
+        return "Completed with warnings: unsupported Overpass response."
+
+    if note.startswith("Worker crashed during discovery:"):
+        return "Failed: discovery worker crashed."
+    if note.startswith("Worker crashed during crawl:"):
+        return "Failed: crawl worker crashed."
+
+    return f"{note[:137]}..."
 
 
 def build_email_rows(
@@ -297,6 +342,7 @@ def dashboard(
             "runs": runs,
             "runs_has_more": runs_has_more,
             "runs_page_size": RECENT_RUNS_PAGE_SIZE,
+            "summarize_run_note": summarize_run_note,
             "region_stats": region_stats,
             "overpass_status": overpass_status,
             "message": message,
@@ -410,6 +456,7 @@ def recent_runs_partial(
             "runs_offset": offset,
             "runs_page_size": RECENT_RUNS_PAGE_SIZE,
             "selected_country_code": country_code,
+            "summarize_run_note": summarize_run_note,
         },
     )
 
