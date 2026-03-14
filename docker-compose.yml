@@ -100,6 +100,7 @@ services:
     restart: unless-stopped
     networks:
       scrapper_net:
+        ipv4_address: 172.30.0.10
         aliases:
           - overpass
 
@@ -109,3 +110,6 @@ volumes:
 
 networks:
   scrapper_net:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

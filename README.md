@@ -50,6 +50,7 @@ docker compose up --build -d
 - The app connects to Redis using `REDIS_URL`
 - Redis is password-protected with `REDIS_PASSWORD`
 - Overpass is served internally at `OVERPASS_URL` and exposed on `OVERPASS_HOST_PORT`
+- The default internal `OVERPASS_URL` uses a fixed container IP to avoid intermittent Docker DNS resolution issues for the `overpass` hostname
 - Production defaults keep `APP_RELOAD=0` and `WORKER_PROCESSES=1`, `WORKER_THREADS=1`
 - Discovery is cached per `region + category` and only refreshed after `DISCOVERY_COOLDOWN_HOURS`
 - Website recrawls are limited by `CRAWL_RECRAWL_HOURS`
@@ -68,7 +69,7 @@ DATABASE_URL=postgresql+psycopg://scrapper:use-a-strong-password@db:5432/scrappe
 REDIS_PASSWORD=use-a-different-strong-password
 REDIS_HOST_PORT=6380
 REDIS_URL=redis://:use-a-different-strong-password@redis:6379/0
-OVERPASS_URL=http://overpass/api/interpreter
+OVERPASS_URL=http://172.30.0.10/api/interpreter
 OVERPASS_DAILY_QUERY_CAP=0
 OVERPASS_MODE=init
 OVERPASS_HOST_PORT=12346
