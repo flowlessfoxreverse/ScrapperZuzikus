@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -23,6 +24,32 @@ from app.services.run_companies import (
     requeue_run_company,
 )
 from app.services.usage import can_consume, consume_units
+
+
+def _is_proxy_transport_error(exc: Exception, proxy_url: str | None) -> bool:
+    message = str(exc).lower()
+    proxy_host = ""
+    if proxy_url:
+        parsed = urlparse(proxy_url)
+        proxy_host = (parsed.hostname or "").lower()
+    indicators = (
+        "proxy",
+        "407",
+        "proxy authentication",
+        "tunnel connection failed",
+        "socks",
+        "tunneling",
+        "connection reset by peer",
+        "temporary failure in name resolution",
+        "name or service not known",
+        "network is unreachable",
+        "no route to host",
+        "econnreset",
+        "connection aborted",
+    )
+    if proxy_host and proxy_host in message:
+        return True
+    return any(indicator in message for indicator in indicators)
 
 
 def _find_pending_email(session: Session, company_id: int, normalized_email: str) -> Email | None:
@@ -727,7 +754,15 @@ def execute_crawl(session: Session, run_id: int, company_id: int) -> None:
         company.crawl_status = "failed"
         session.add(company)
         mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.FAILED, str(exc))
-        release_proxy(session, proxy.id if proxy else None, owner=owner, workload=ProxyKind.CRAWLER, failed=True)
+        proxy_failed = _is_proxy_transport_error(exc, proxy_url if "proxy_url" in locals() else None)
+        release_proxy(
+            session,
+            proxy.id if proxy else None,
+            owner=owner,
+            workload=ProxyKind.CRAWLER,
+            failed=proxy_failed,
+            record_result=proxy_failed,
+        )
     else:
         release_proxy(session, proxy.id if proxy else None, owner=owner, workload=ProxyKind.CRAWLER, failed=False)
     session.refresh(run)
@@ -791,7 +826,15 @@ def execute_browser_crawl(session: Session, run_id: int, company_id: int) -> Non
         company.crawl_status = "failed"
         session.add(company)
         mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.FAILED, str(exc))
-        release_proxy(session, proxy.id if proxy else None, owner=owner, workload=ProxyKind.BROWSER, failed=True)
+        proxy_failed = _is_proxy_transport_error(exc, proxy_url if "proxy_url" in locals() else None)
+        release_proxy(
+            session,
+            proxy.id if proxy else None,
+            owner=owner,
+            workload=ProxyKind.BROWSER,
+            failed=proxy_failed,
+            record_result=proxy_failed,
+        )
     else:
         release_proxy(session, proxy.id if proxy else None, owner=owner, workload=ProxyKind.BROWSER, failed=False)
 

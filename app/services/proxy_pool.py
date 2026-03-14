@@ -228,7 +228,10 @@ def release_proxy(
         proxy.failure_count += 1
         proxy.consecutive_failures += 1
         proxy.last_failure_at = now
-        proxy.cooldown_until = now + timedelta(minutes=settings.proxy_failure_cooldown_minutes)
+        if proxy.consecutive_failures >= settings.proxy_cooldown_failure_threshold:
+            proxy.cooldown_until = now + timedelta(minutes=settings.proxy_failure_cooldown_minutes)
+        else:
+            proxy.cooldown_until = None
         proxy.health_score = _clamp_health(proxy.health_score - settings.proxy_health_failure_penalty)
         if proxy.consecutive_failures >= settings.proxy_auto_disable_threshold:
             proxy.is_active = False
