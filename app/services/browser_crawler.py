@@ -12,10 +12,16 @@ from app.services.crawler import (
     SOCIAL_HOSTS,
     CrawlPageResult,
     CrawlSiteResult,
+    build_httpx_client,
+    extract_channels,
     extract_emails,
+    extract_emails_from_assets,
     extract_forms,
+    extract_pdf_page_results,
     extract_phones,
+    extract_structured_contacts,
     normalize_url,
+    should_scan_assets,
 )
 
 
@@ -123,7 +129,12 @@ def _apply_stealth(page) -> None:
         return
 
 
-def browser_crawl_site(website_url: str, on_request=None, proxy_url: str | None = None) -> CrawlSiteResult:
+def browser_crawl_site(
+    website_url: str,
+    on_request=None,
+    proxy_url: str | None = None,
+    default_region_code: str | None = None,
+) -> CrawlSiteResult:
     from playwright.sync_api import sync_playwright
 
     website_url = normalize_url(website_url)
@@ -215,8 +226,28 @@ def browser_crawl_site(website_url: str, on_request=None, proxy_url: str | None 
 
                     soup = BeautifulSoup(content, "html.parser")
                     title = title or (soup.title.text.strip() if soup.title and soup.title.text else None)
-                    emails = extract_emails(soup)
-                    phones = extract_phones(soup)
+                    emails = set(extract_emails(soup))
+                    phones = list(extract_phones(soup, default_region_code=default_region_code))
+                    channels = extract_channels(soup, final_url, default_region_code=default_region_code)
+                    structured_emails, structured_phones, structured_channels = extract_structured_contacts(
+                        soup,
+                        final_url,
+                        default_region_code=default_region_code,
+                    )
+                    emails.update(structured_emails)
+                    phones.extend(structured_phones)
+                    channels.extend(structured_channels)
+                    if not emails and should_scan_assets(soup, final_url):
+                        with build_httpx_client(headers=BROWSER_FALLBACK_HEADERS, proxy_url=proxy_url) as asset_client:
+                            emails.update(
+                                extract_emails_from_assets(
+                                    client=asset_client,
+                                    soup=soup,
+                                    page_url=final_url,
+                                    headers=BROWSER_FALLBACK_HEADERS,
+                                    on_request=on_request,
+                                )
+                            )
                     social_links: list[str] = []
                     for link in soup.find_all("a", href=True):
                         href = link["href"]
@@ -228,19 +259,35 @@ def browser_crawl_site(website_url: str, on_request=None, proxy_url: str | None 
                         if any(host in absolute for host in SOCIAL_HOSTS):
                             social_links.append(absolute)
                     has_contact_form, forms = extract_forms(soup=soup, page_url=final_url)
+                    deduped_channels: dict[tuple[str, str], dict[str, str]] = {}
+                    for channel in channels:
+                        key = (channel["channel_type"], channel["normalized_value"])
+                        deduped_channels.setdefault(key, channel)
                     pages.append(
                         CrawlPageResult(
                             url=final_url,
                             title=title,
                             status_code=status_code,
-                            emails=emails[: settings.max_emails_per_company],
-                            phones=phones,
+                            emails=sorted(emails)[: settings.max_emails_per_company],
+                            phones=sorted(set(phones)),
+                            channels=list(deduped_channels.values()),
                             social_links=sorted(set(social_links)),
                             has_contact_form=has_contact_form,
                             forms=forms,
                             error="anti_bot_challenge" if _looks_like_challenge(content, title, status_code) else None,
                         )
                     )
+                    with build_httpx_client(headers=BROWSER_FALLBACK_HEADERS, proxy_url=proxy_url) as pdf_client:
+                        pages.extend(
+                            extract_pdf_page_results(
+                                client=pdf_client,
+                                soup=soup,
+                                page_url=final_url,
+                                headers=BROWSER_FALLBACK_HEADERS,
+                                on_request=on_request,
+                                default_region_code=default_region_code,
+                            )
+                        )
                 except Exception as exc:
                     duration_ms = int((time.perf_counter() - started) * 1000)
                     if on_request:
@@ -258,6 +305,7 @@ def browser_crawl_site(website_url: str, on_request=None, proxy_url: str | None 
                             status_code=None,
                             emails=[],
                             phones=[],
+                            channels=[],
                             social_links=[],
                             has_contact_form=False,
                             forms=[],

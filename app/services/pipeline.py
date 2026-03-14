@@ -5,11 +5,11 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Category, Company, CompanyCategory, Email, Form, Page, Phone, ProxyKind, Region, RunCategory, RunCompanyStatus, RunStatus, ScrapeRun
+from app.models import Category, Company, CompanyCategory, ContactChannel, ContactChannelType, Email, Form, Page, Phone, ProxyKind, Region, RunCategory, RunCompanyStatus, RunStatus, ScrapeRun
 from app.services.company_dedupe import find_company_by_website_key, should_replace_name
 from app.services.discovery_state import ensure_utc, get_or_create_region_category_state, should_refresh_discovery
 from app.services.browser_crawler import browser_crawl_site
-from app.services.crawler import crawl_site, normalize_phone_number, should_browser_escalate
+from app.services.crawler import crawl_site, normalize_phone_number, normalize_telegram_value, should_browser_escalate
 from app.services.metrics import record_request_metric
 from app.services.overpass import fetch_places
 from app.services.proxy_pool import acquire_proxy, active_proxy_count, release_proxy, render_proxy_url
@@ -84,7 +84,224 @@ def upsert_company_from_element(
     if company_category is None and not pending_company_category:
         session.add(CompanyCategory(company_id=company.id, category_id=category.id))
 
+    persist_overpass_contacts(session, company, tags, region.country_code)
     return company
+
+
+def _merge_provenance_metadata(existing_metadata: dict | None, *, source_type: str, source_page_url: str | None, payload: dict | None) -> dict:
+    metadata = dict(existing_metadata or {})
+    sources = list(metadata.get("sources") or [])
+    source_entry = {
+        "source_type": source_type,
+        "source_page_url": source_page_url,
+    }
+    if payload:
+        source_entry.update(payload)
+    if source_entry not in sources:
+        sources.append(source_entry)
+    metadata["sources"] = sources
+    if payload:
+        metadata.update(payload)
+    return metadata
+
+
+def persist_email_value(
+    session: Session,
+    company: Company,
+    email_value: str,
+    *,
+    source_type: str,
+    source_page_url: str | None,
+    metadata: dict | None = None,
+) -> None:
+    normalized_email = email_value.strip().lower()
+    if not normalized_email:
+        return
+    existing = (
+        session.query(Email)
+        .filter(Email.company_id == company.id, Email.email == normalized_email)
+        .one_or_none()
+    )
+    if existing is None:
+        session.add(
+            Email(
+                company_id=company.id,
+                email=normalized_email,
+                source_type=source_type,
+                source_page_url=source_page_url,
+                technical_metadata=_merge_provenance_metadata({}, source_type=source_type, source_page_url=source_page_url, payload=metadata),
+            )
+        )
+        return
+    existing.source_page_url = existing.source_page_url or source_page_url
+    existing.source_type = existing.source_type or source_type
+    existing.technical_metadata = _merge_provenance_metadata(
+        existing.technical_metadata,
+        source_type=source_type,
+        source_page_url=source_page_url,
+        payload=metadata,
+    )
+    existing.last_seen_at = datetime.now(timezone.utc)
+    session.add(existing)
+
+
+def persist_phone_value(
+    session: Session,
+    company: Company,
+    phone_value: str,
+    *,
+    source_type: str,
+    source_page_url: str | None,
+    metadata: dict | None = None,
+    default_region_code: str | None = None,
+) -> str | None:
+    normalized_phone = normalize_phone_number(phone_value, default_region_code=default_region_code)
+    if not normalized_phone:
+        return None
+    existing_phone = (
+        session.query(Phone)
+        .filter(Phone.company_id == company.id, Phone.normalized_number == normalized_phone)
+        .one_or_none()
+    )
+    merged_metadata = _merge_provenance_metadata(
+        existing_phone.technical_metadata if existing_phone else {},
+        source_type=source_type,
+        source_page_url=source_page_url,
+        payload=metadata,
+    )
+    if existing_phone is None:
+        session.add(
+            Phone(
+                company_id=company.id,
+                phone_number=phone_value,
+                normalized_number=normalized_phone,
+                source_type=source_type,
+                source_page_url=source_page_url,
+                technical_metadata=merged_metadata,
+            )
+        )
+        return normalized_phone
+    if len(phone_value.strip()) > len((existing_phone.phone_number or "").strip()):
+        existing_phone.phone_number = phone_value
+    existing_phone.source_page_url = existing_phone.source_page_url or source_page_url
+    existing_phone.source_type = existing_phone.source_type or source_type
+    existing_phone.technical_metadata = merged_metadata
+    existing_phone.last_seen_at = datetime.now(timezone.utc)
+    session.add(existing_phone)
+    return normalized_phone
+
+
+def persist_contact_channel(
+    session: Session,
+    company: Company,
+    *,
+    channel_type: str,
+    channel_value: str,
+    normalized_value: str,
+    source_type: str,
+    source_page_url: str | None,
+    metadata: dict | None = None,
+) -> None:
+    existing = (
+        session.query(ContactChannel)
+        .filter(
+            ContactChannel.company_id == company.id,
+            ContactChannel.channel_type == channel_type,
+            ContactChannel.normalized_value == normalized_value,
+        )
+        .one_or_none()
+    )
+    merged_metadata = _merge_provenance_metadata(
+        existing.technical_metadata if existing else {},
+        source_type=source_type,
+        source_page_url=source_page_url,
+        payload=metadata,
+    )
+    if existing is None:
+        session.add(
+            ContactChannel(
+                company_id=company.id,
+                    channel_type=ContactChannelType(channel_type),
+                channel_value=channel_value,
+                normalized_value=normalized_value,
+                source_type=source_type,
+                source_page_url=source_page_url,
+                technical_metadata=merged_metadata,
+            )
+        )
+        return
+    if len(channel_value.strip()) > len((existing.channel_value or "").strip()):
+        existing.channel_value = channel_value
+    existing.source_page_url = existing.source_page_url or source_page_url
+    existing.source_type = existing.source_type or source_type
+    existing.technical_metadata = merged_metadata
+    existing.last_seen_at = datetime.now(timezone.utc)
+    session.add(existing)
+
+
+def persist_overpass_contacts(session: Session, company: Company, tags: dict, default_region_code: str | None) -> None:
+    def iter_tag_values(raw_value: str | None) -> list[str]:
+        if not raw_value:
+            return []
+        return [item.strip() for item in raw_value.replace("|", ";").split(";") if item.strip()]
+
+    email_tags = ("email", "contact:email")
+    phone_tags = ("phone", "contact:phone", "mobile", "contact:mobile")
+    whatsapp_tags = ("contact:whatsapp", "whatsapp")
+    telegram_tags = ("contact:telegram", "telegram")
+
+    for key in email_tags:
+        for value in iter_tag_values(tags.get(key)):
+            persist_email_value(
+                session,
+                company,
+                value,
+                source_type="overpass_tag",
+                source_page_url=None,
+                metadata={"tag": key},
+            )
+
+    for key in phone_tags:
+        for value in iter_tag_values(tags.get(key)):
+            persist_phone_value(
+                session,
+                company,
+                value,
+                source_type="overpass_tag",
+                source_page_url=None,
+                metadata={"tag": key},
+                default_region_code=default_region_code,
+            )
+
+    for key in whatsapp_tags:
+        for value in iter_tag_values(tags.get(key)):
+            normalized_value = normalize_phone_number(value, default_region_code=default_region_code)
+            if normalized_value:
+                persist_contact_channel(
+                    session,
+                    company,
+                    channel_type=ContactChannelType.WHATSAPP,
+                    channel_value=value,
+                    normalized_value=normalized_value,
+                    source_type="overpass_tag",
+                    source_page_url=None,
+                    metadata={"tag": key},
+                )
+
+    for key in telegram_tags:
+        for value in iter_tag_values(tags.get(key)):
+            normalized_value = normalize_telegram_value(value)
+            if normalized_value:
+                persist_contact_channel(
+                    session,
+                    company,
+                    channel_type=ContactChannelType.TELEGRAM,
+                    channel_value=value,
+                    normalized_value=normalized_value,
+                    source_type="overpass_tag",
+                    source_page_url=None,
+                    metadata={"tag": key},
+                )
 
 
 def persist_crawl(
@@ -95,11 +312,12 @@ def persist_crawl(
     crawler=crawl_site,
     request_provider: str = "website",
     crawler_kwargs: dict | None = None,
-) -> object:
+    ) -> object:
     if not company.website_url:
         company.crawl_status = "no_website"
         session.add(company)
         return None
+    default_region_code = company.region.country_code if company.region else None
 
     def on_request(**metric):
         record_request_metric(
@@ -111,7 +329,9 @@ def persist_crawl(
             **metric,
         )
 
-    result = crawler(company.website_url, on_request=on_request, **(crawler_kwargs or {}))
+    effective_crawler_kwargs = dict(crawler_kwargs or {})
+    effective_crawler_kwargs.setdefault("default_region_code", default_region_code)
+    result = crawler(company.website_url, on_request=on_request, **effective_crawler_kwargs)
     company.crawl_status = result.crawl_status
     company.has_contact_form = any(page.has_contact_form for page in result.pages)
     session.add(company)
@@ -133,55 +353,45 @@ def persist_crawl(
         session.add(page)
         session.flush()
 
-        for email_value in page_result.emails:
-            existing = (
-                session.query(Email)
-                .filter(Email.company_id == company.id, Email.email == email_value)
-                .one_or_none()
-            )
-            if existing is None:
-                session.add(
-                    Email(
-                        company_id=company.id,
-                        email=email_value,
-                        source_type="regex",
-                        source_page_url=page_result.url,
-                        technical_metadata={"title": page_result.title},
-                    )
-                )
-            else:
-                existing.source_page_url = page_result.url
-                existing.technical_metadata = {"title": page_result.title}
-                existing.last_seen_at = datetime.now(timezone.utc)
-                session.add(existing)
-
+        phone_map: dict[str, str] = {}
         for phone_value in page_result.phones:
-            normalized_phone = normalize_phone_number(phone_value)
-            if not normalized_phone:
-                continue
-            existing_phone = (
-                session.query(Phone)
-                .filter(Phone.company_id == company.id, Phone.normalized_number == normalized_phone)
-                .one_or_none()
+            normalized_phone = persist_phone_value(
+                session,
+                company,
+                phone_value,
+                source_type="regex",
+                source_page_url=page_result.url,
+                metadata={"title": page_result.title},
+                default_region_code=default_region_code,
             )
-            if existing_phone is None:
-                session.add(
-                    Phone(
-                        company_id=company.id,
-                        phone_number=phone_value,
-                        normalized_number=normalized_phone,
-                        source_type="regex",
-                        source_page_url=page_result.url,
-                        technical_metadata={"title": page_result.title},
-                    )
-                )
-            else:
-                if len(phone_value.strip()) > len((existing_phone.phone_number or "").strip()):
-                    existing_phone.phone_number = phone_value
-                existing_phone.source_page_url = page_result.url
-                existing_phone.technical_metadata = {"title": page_result.title}
-                existing_phone.last_seen_at = datetime.now(timezone.utc)
-                session.add(existing_phone)
+            if normalized_phone:
+                phone_map[normalized_phone] = phone_value
+
+        for email_value in page_result.emails:
+            persist_email_value(
+                session,
+                company,
+                email_value,
+                source_type="regex",
+                source_page_url=page_result.url,
+                metadata={"title": page_result.title},
+            )
+
+        for channel in page_result.channels:
+            metadata = {"title": page_result.title}
+            normalized_channel_value = channel.get("normalized_value")
+            if channel.get("channel_type") == "whatsapp" and normalized_channel_value in phone_map:
+                metadata["linked_phone"] = phone_map[normalized_channel_value]
+            persist_contact_channel(
+                session,
+                company,
+                channel_type=channel["channel_type"],
+                channel_value=channel["channel_value"],
+                normalized_value=normalized_channel_value,
+                source_type="channel_link",
+                source_page_url=page_result.url,
+                metadata=metadata,
+            )
 
         for form_data in page_result.forms:
             existing_form = (

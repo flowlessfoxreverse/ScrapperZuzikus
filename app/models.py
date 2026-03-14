@@ -62,6 +62,11 @@ class ProxyKind(str, Enum):
     CRAWLER = "crawler"
 
 
+class ContactChannelType(str, Enum):
+    WHATSAPP = "whatsapp"
+    TELEGRAM = "telegram"
+
+
 class Region(Base):
     __tablename__ = "regions"
 
@@ -165,6 +170,7 @@ class Company(Base):
     pages: Mapped[list["Page"]] = relationship(back_populates="company", cascade="all, delete-orphan")
     emails: Mapped[list["Email"]] = relationship(back_populates="company", cascade="all, delete-orphan")
     phones: Mapped[list["Phone"]] = relationship(back_populates="company", cascade="all, delete-orphan")
+    contact_channels: Mapped[list["ContactChannel"]] = relationship(back_populates="company", cascade="all, delete-orphan")
     forms: Mapped[list["Form"]] = relationship(back_populates="company", cascade="all, delete-orphan")
     run_companies: Mapped[list["RunCompany"]] = relationship(back_populates="company", cascade="all, delete-orphan")
 
@@ -235,6 +241,26 @@ class Phone(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     company: Mapped["Company"] = relationship(back_populates="phones")
+
+
+class ContactChannel(Base):
+    __tablename__ = "contact_channels"
+    __table_args__ = (
+        UniqueConstraint("company_id", "channel_type", "normalized_value", name="uq_company_contact_channel"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    channel_type: Mapped[ContactChannelType] = mapped_column(SqlEnum(ContactChannelType), index=True)
+    channel_value: Mapped[str] = mapped_column(String(255), index=True)
+    normalized_value: Mapped[str] = mapped_column(String(255), index=True)
+    source_type: Mapped[str] = mapped_column(String(32), default="link")
+    source_page_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    technical_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    company: Mapped["Company"] = relationship(back_populates="contact_channels")
 
 
 class Form(Base):

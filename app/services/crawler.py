@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import io
+import json
 import re
 import time
 from dataclasses import dataclass
 from html import unescape
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
 import httpx
+import phonenumbers
 from bs4 import BeautifulSoup
+from pypdf import PdfReader
 
 from app.config import get_settings
 
@@ -23,11 +27,76 @@ CONTACT_PATH_HINTS = (
     "about-us",
     "reservation",
     "booking",
+    "support",
+    "help",
+    "locations",
+    "branches",
+    "faq",
+    "team",
+    "impressum",
+    "kontakt",
+    "contacto",
+    "contato",
+    "contatti",
+    "contactez",
+    "iletisim",
+    "iletişim",
+    "联系我们",
+    "聯絡我們",
 )
-SOCIAL_HOSTS = ("facebook.com", "instagram.com", "linkedin.com", "tiktok.com", "youtube.com")
+SOCIAL_HOSTS = (
+    "facebook.com",
+    "instagram.com",
+    "linkedin.com",
+    "tiktok.com",
+    "youtube.com",
+    "wa.me",
+    "api.whatsapp.com",
+    "t.me",
+    "telegram.me",
+)
+WHATSAPP_HOSTS = ("wa.me", "api.whatsapp.com", "chat.whatsapp.com", "whatsapp.com")
+TELEGRAM_HOSTS = ("t.me", "telegram.me", "telegram.dog")
 CAPTCHA_HINTS = ("captcha", "g-recaptcha", "hcaptcha", "cf-turnstile")
 ASSET_SCAN_EXTENSIONS = (".js", ".mjs", ".css", ".json")
-PHONE_CONTEXT_HINTS = ("phone", "tel", "telephone", "mobile", "call", "contact", "whatsapp", "hotline", "โทร", "มือถือ")
+PDF_SCAN_EXTENSIONS = (".pdf",)
+PHONE_CONTEXT_HINTS = (
+    "phone",
+    "tel",
+    "telephone",
+    "mobile",
+    "cell",
+    "call",
+    "contact",
+    "whatsapp",
+    "telegram",
+    "hotline",
+    "office",
+    "reservation",
+    "booking",
+    "support",
+    "telefone",
+    "telefono",
+    "teléfono",
+    "movil",
+    "móvil",
+    "celular",
+    "telefon",
+    "telefonnummer",
+    "numara",
+    "контакт",
+    "телефон",
+    "тел",
+    "โทร",
+    "เบอร์",
+    "มือถือ",
+    "ติดต่อ",
+    "电话",
+    "電話",
+    "手机",
+    "手機",
+    "联系",
+)
 ANTI_BOT_HINTS = (
     "verify you're not a robot",
     "verify you are not a robot",
@@ -75,6 +144,26 @@ BROWSER_FALLBACK_HEADERS = {
 }
 
 
+@dataclass
+class CrawlPageResult:
+    url: str
+    title: str | None
+    status_code: int | None
+    emails: list[str]
+    phones: list[str]
+    channels: list[dict[str, str]]
+    social_links: list[str]
+    has_contact_form: bool
+    forms: list[dict]
+    error: str | None = None
+
+
+@dataclass
+class CrawlSiteResult:
+    pages: list[CrawlPageResult]
+    crawl_status: str
+
+
 def build_httpx_client(
     *,
     headers: dict[str, str],
@@ -88,25 +177,6 @@ def build_httpx_client(
         verify=verify,
         proxy=proxy_url or settings.crawler_proxy_url or None,
     )
-
-
-@dataclass
-class CrawlPageResult:
-    url: str
-    title: str | None
-    status_code: int | None
-    emails: list[str]
-    phones: list[str]
-    social_links: list[str]
-    has_contact_form: bool
-    forms: list[dict]
-    error: str | None = None
-
-
-@dataclass
-class CrawlSiteResult:
-    pages: list[CrawlPageResult]
-    crawl_status: str
 
 
 def normalize_url(url: str) -> str:
@@ -212,7 +282,6 @@ def extract_forms(soup: BeautifulSoup, page_url: str) -> tuple[bool, list[dict]]
                     "value": field.get("value"),
                 }
             )
-
         html_blob = str(form).lower()
         forms.append(
             {
@@ -256,6 +325,10 @@ def is_asset_candidate_email(email: str, page_url: str) -> bool:
     return domain in COMMON_MAILBOX_DOMAINS
 
 
+def _extract_emails_from_text(text: str) -> set[str]:
+    return {match.group(1).lower() for match in EMAIL_REGEX.finditer(unescape(text))}
+
+
 def extract_emails(soup: BeautifulSoup) -> list[str]:
     extraction_soup = BeautifulSoup(str(soup), "html.parser")
     for tag in extraction_soup(["script", "style", "noscript", "template"]):
@@ -263,14 +336,14 @@ def extract_emails(soup: BeautifulSoup) -> list[str]:
 
     candidates: set[str] = set()
     visible_text = unescape(extraction_soup.get_text(" ", strip=True))
-    candidates.update(match.group(1).lower() for match in EMAIL_REGEX.finditer(visible_text))
+    candidates.update(_extract_emails_from_text(visible_text))
 
     for link in extraction_soup.find_all("a", href=True):
         href = unescape(link["href"]).strip()
         if href.lower().startswith("mailto:"):
-            candidates.update(match.group(1).lower() for match in EMAIL_REGEX.finditer(href))
+            candidates.update(_extract_emails_from_text(href))
         link_text = unescape(link.get_text(" ", strip=True))
-        candidates.update(match.group(1).lower() for match in EMAIL_REGEX.finditer(link_text))
+        candidates.update(_extract_emails_from_text(link_text))
 
     for protected_email in extraction_soup.select("a.__cf_email__, span.__cf_email__"):
         decoded = decode_cloudflare_email(protected_email.get("data-cfemail"))
@@ -280,28 +353,32 @@ def extract_emails(soup: BeautifulSoup) -> list[str]:
     return sorted(email for email in candidates if not is_noise_email(email))
 
 
-def normalize_phone_number(value: str) -> str | None:
-    candidate = re.sub(r"(?i)(ext|extension|x)\s*\d+$", "", value).strip()
+def normalize_phone_number(value: str, default_region_code: str | None = None) -> str | None:
+    candidate = re.sub(r"(?i)(ext|extension|x)\s*\d+$", "", unescape(value or "")).strip()
     if not candidate:
         return None
     lowered = candidate.lower()
-    if ":" in lowered or re.search(r"\b\d{1,2}[.:]\d{2}\b", lowered):
+    if re.search(r"\b\d{1,2}[.:]\d{2}\b", lowered):
         return None
-    if re.search(r"\b(19|20)\d{2}\b", lowered):
-        return None
-    has_plus = candidate.startswith("+")
+
+    default_region = (default_region_code or "ZZ").upper()
+    try:
+        parsed = phonenumbers.parse(candidate, default_region)
+        if phonenumbers.is_possible_number(parsed) and (
+            phonenumbers.is_valid_number(parsed) or parsed.country_code
+        ):
+            return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
+    except Exception:
+        pass
+
     digits = re.sub(r"\D", "", candidate)
     if len(digits) < 9 or len(digits) > 15:
         return None
     if digits.startswith("00"):
         digits = digits[2:]
-        has_plus = True
-    if digits.startswith("66") and len(digits) in {10, 11}:
-        digits = f"0{digits[2:]}"
-        has_plus = False
-    if not has_plus and not (digits.startswith("0") or digits.startswith("66")):
-        return None
-    return f"+{digits}" if has_plus else digits
+    if candidate.startswith("+") or digits:
+        return f"+{digits}"
+    return None
 
 
 def is_noise_phone(phone: str) -> bool:
@@ -311,7 +388,12 @@ def is_noise_phone(phone: str) -> bool:
     return digits in {"12345678", "123456789", "1234567890"}
 
 
-def extract_phones(soup: BeautifulSoup) -> list[str]:
+def _context_has_phone_hint(text: str, start: int, end: int) -> bool:
+    window = text[max(0, start - 40):min(len(text), end + 40)].lower()
+    return any(hint in window for hint in PHONE_CONTEXT_HINTS)
+
+
+def extract_phones(soup: BeautifulSoup, default_region_code: str | None = None) -> list[str]:
     extraction_soup = BeautifulSoup(str(soup), "html.parser")
     for tag in extraction_soup(["script", "style", "noscript", "template"]):
         tag.decompose()
@@ -319,26 +401,29 @@ def extract_phones(soup: BeautifulSoup) -> list[str]:
     ordered: list[tuple[str, str]] = []
     seen: set[str] = set()
 
-    def add_candidate(raw_value: str) -> None:
-        normalized = normalize_phone_number(unescape(raw_value))
+    def add_candidate(raw_value: str, *, require_context: bool = False, source_text: str | None = None, start: int = 0, end: int = 0) -> None:
+        if require_context and source_text is not None and not _context_has_phone_hint(source_text, start, end):
+            return
+        normalized = normalize_phone_number(raw_value, default_region_code=default_region_code)
         if not normalized or normalized in seen or is_noise_phone(normalized):
             return
         seen.add(normalized)
         ordered.append((normalized, raw_value.strip()))
 
     visible_text = unescape(extraction_soup.get_text(" ", strip=True))
-    for match in PHONE_REGEX.finditer(visible_text):
-        start = max(match.start() - 32, 0)
-        end = min(match.end() + 32, len(visible_text))
-        context = visible_text[start:end].lower()
-        if any(hint in context for hint in PHONE_CONTEXT_HINTS):
-            add_candidate(match.group(1))
+    try:
+        matcher = phonenumbers.PhoneNumberMatcher(visible_text, (default_region_code or "ZZ").upper())
+        for match in matcher:
+            add_candidate(match.raw_string, require_context=True, source_text=visible_text, start=match.start, end=match.end)
+    except Exception:
+        for match in PHONE_REGEX.finditer(visible_text):
+            add_candidate(match.group(1), require_context=True, source_text=visible_text, start=match.start(), end=match.end())
 
     for link in extraction_soup.find_all("a", href=True):
         href = unescape(link["href"]).strip()
         if href.lower().startswith("tel:"):
             add_candidate(href.split(":", 1)[1])
-        if "wa.me/" in href.lower() or "api.whatsapp.com/send" in href.lower():
+        if any(host in href.lower() for host in WHATSAPP_HOSTS):
             digits = "".join(re.findall(r"\d+", href))
             if digits:
                 add_candidate(f"+{digits}")
@@ -350,12 +435,123 @@ def extract_phones(soup: BeautifulSoup) -> list[str]:
     return [raw for _, raw in ordered]
 
 
+def normalize_telegram_value(value: str) -> str | None:
+    candidate = unescape(value or "").strip()
+    if not candidate:
+        return None
+    lowered = candidate.lower()
+    if any(host in lowered for host in TELEGRAM_HOSTS):
+        parsed = urlparse(candidate)
+        parts = [part for part in parsed.path.split("/") if part]
+        if parts:
+            return f"@{parts[-1].lower().lstrip('@')}"
+    if candidate.startswith("@"):
+        return f"@{candidate[1:].lower()}"
+    return None
+
+
+def extract_channels(soup: BeautifulSoup, page_url: str, default_region_code: str | None = None) -> list[dict[str, str]]:
+    channels: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add_channel(channel_type: str, raw_value: str, normalized_value: str) -> None:
+        key = (channel_type, normalized_value)
+        if key in seen:
+            return
+        seen.add(key)
+        channels.append(
+            {
+                "channel_type": channel_type,
+                "channel_value": raw_value,
+                "normalized_value": normalized_value,
+                "source_page_url": page_url,
+            }
+        )
+
+    for link in soup.find_all("a", href=True):
+        href = unescape(link["href"]).strip()
+        lowered = href.lower()
+        if any(host in lowered for host in WHATSAPP_HOSTS):
+            parsed = urlparse(href)
+            digits = "".join(re.findall(r"\d+", href))
+            if not digits and parsed.query:
+                query = parse_qs(parsed.query)
+                digits = "".join(re.findall(r"\d+", "".join(query.get("phone", []))))
+            normalized = normalize_phone_number(f"+{digits}" if digits else href, default_region_code=default_region_code)
+            if normalized:
+                add_channel("whatsapp", href, normalized)
+        if any(host in lowered for host in TELEGRAM_HOSTS):
+            normalized = normalize_telegram_value(href)
+            if normalized:
+                add_channel("telegram", href, normalized)
+    return channels
+
+
+def _walk_jsonld(node, page_url: str, default_region_code: str | None, emails: set[str], phones: set[str], channels: list[dict[str, str]]) -> None:
+    if isinstance(node, dict):
+        for key, value in node.items():
+            lowered_key = str(key).lower()
+            if lowered_key == "email" and isinstance(value, str):
+                emails.update(_extract_emails_from_text(value))
+            elif lowered_key == "telephone" and isinstance(value, str):
+                normalized = normalize_phone_number(value, default_region_code=default_region_code)
+                if normalized and not is_noise_phone(normalized):
+                    phones.add(value.strip())
+            elif lowered_key == "sameas":
+                values = value if isinstance(value, list) else [value]
+                for item in values:
+                    if not isinstance(item, str):
+                        continue
+                    channels.extend(
+                        extract_channels(
+                            BeautifulSoup(f'<a href="{item}"></a>', "html.parser"),
+                            page_url,
+                            default_region_code=default_region_code,
+                        )
+                    )
+            else:
+                _walk_jsonld(value, page_url, default_region_code, emails, phones, channels)
+    elif isinstance(node, list):
+        for item in node:
+            _walk_jsonld(item, page_url, default_region_code, emails, phones, channels)
+    elif isinstance(node, str):
+        emails.update(_extract_emails_from_text(node))
+        normalized = normalize_phone_number(node, default_region_code=default_region_code)
+        if normalized and not is_noise_phone(normalized):
+            phones.add(node.strip())
+
+
+def extract_structured_contacts(
+    soup: BeautifulSoup,
+    page_url: str,
+    default_region_code: str | None = None,
+) -> tuple[list[str], list[str], list[dict[str, str]]]:
+    emails: set[str] = set()
+    phones: set[str] = set()
+    channels: list[dict[str, str]] = []
+    for script in soup.find_all("script", attrs={"type": lambda value: value and "ld+json" in value.lower()}):
+        raw_value = script.string or script.get_text(" ", strip=True)
+        if not raw_value:
+            continue
+        try:
+            data = json.loads(raw_value)
+        except Exception:
+            continue
+        _walk_jsonld(data, page_url, default_region_code, emails, phones, channels)
+
+    deduped_channels: dict[tuple[str, str], dict[str, str]] = {}
+    for channel in channels:
+        key = (channel["channel_type"], channel["normalized_value"])
+        deduped_channels.setdefault(key, channel)
+    return sorted(email for email in emails if not is_noise_email(email)), sorted(phones), list(deduped_channels.values())
+
+
 def iter_same_origin_assets(soup: BeautifulSoup, page_url: str) -> list[str]:
     page_host = urlparse(page_url).netloc.lower().removeprefix("www.")
     assets: list[str] = []
     seen: set[str] = set()
 
-    def consider(candidate: str | None) -> None:
+    def consider(candidate: str | None, extensions: tuple[str, ...]) -> None:
         if not candidate:
             return
         absolute = urljoin(page_url, candidate)
@@ -364,7 +560,7 @@ def iter_same_origin_assets(soup: BeautifulSoup, page_url: str) -> list[str]:
         if not host or host != page_host:
             return
         path = parsed.path.lower()
-        if not path.endswith(ASSET_SCAN_EXTENSIONS):
+        if not any(path.endswith(ext) for ext in extensions):
             return
         if absolute in seen:
             return
@@ -372,13 +568,31 @@ def iter_same_origin_assets(soup: BeautifulSoup, page_url: str) -> list[str]:
         assets.append(absolute)
 
     for tag in soup.find_all("script", src=True):
-        consider(tag.get("src"))
+        consider(tag.get("src"), ASSET_SCAN_EXTENSIONS)
     for tag in soup.find_all("link", href=True):
         rel = " ".join(tag.get("rel", [])).lower()
         if rel in {"stylesheet", "preload", "modulepreload"} or "stylesheet" in rel or "preload" in rel:
-            consider(tag.get("href"))
-
+            consider(tag.get("href"), ASSET_SCAN_EXTENSIONS)
     return assets[:4]
+
+
+def iter_same_origin_pdf_links(soup: BeautifulSoup, page_url: str) -> list[str]:
+    page_host = urlparse(page_url).netloc.lower().removeprefix("www.")
+    pdfs: list[str] = []
+    seen: set[str] = set()
+    for link in soup.find_all("a", href=True):
+        absolute = urljoin(page_url, link["href"])
+        parsed = urlparse(absolute)
+        host = parsed.netloc.lower().removeprefix("www.")
+        if host != page_host:
+            continue
+        if not any(parsed.path.lower().endswith(ext) for ext in PDF_SCAN_EXTENSIONS):
+            continue
+        if absolute in seen:
+            continue
+        seen.add(absolute)
+        pdfs.append(absolute)
+    return pdfs[:2]
 
 
 def extract_emails_from_assets(
@@ -400,12 +614,97 @@ def extract_emails_from_assets(
         content_type = (response.headers.get("content-type") or "").lower()
         if "javascript" not in content_type and "json" not in content_type and "css" not in content_type and "text" not in content_type:
             continue
-        candidates.update(match.group(1).lower() for match in EMAIL_REGEX.finditer(unescape(response.text)))
+        candidates.update(_extract_emails_from_text(response.text))
     return sorted(
         email
         for email in candidates
         if not is_noise_email(email) and is_asset_candidate_email(email, page_url)
     )
+
+
+def extract_pdf_page_results(
+    client: httpx.Client,
+    soup: BeautifulSoup,
+    page_url: str,
+    *,
+    headers: dict[str, str],
+    on_request=None,
+    default_region_code: str | None = None,
+) -> list[CrawlPageResult]:
+    pdf_pages: list[CrawlPageResult] = []
+    for pdf_url in iter_same_origin_pdf_links(soup, page_url):
+        try:
+            response, _ = fetch_page(client, pdf_url, headers=headers, on_request=on_request)
+        except Exception as exc:
+            pdf_pages.append(
+                CrawlPageResult(
+                    url=pdf_url,
+                    title="PDF",
+                    status_code=None,
+                    emails=[],
+                    phones=[],
+                    channels=[],
+                    social_links=[],
+                    has_contact_form=False,
+                    forms=[],
+                    error=str(exc),
+                )
+            )
+            continue
+        if response.status_code >= 400:
+            continue
+        if "pdf" not in (response.headers.get("content-type") or "").lower() and not pdf_url.lower().endswith(".pdf"):
+            continue
+        try:
+            reader = PdfReader(io.BytesIO(response.content))
+            text = " ".join(page.extract_text() or "" for page in reader.pages)
+        except Exception as exc:
+            pdf_pages.append(
+                CrawlPageResult(
+                    url=pdf_url,
+                    title="PDF",
+                    status_code=response.status_code,
+                    emails=[],
+                    phones=[],
+                    channels=[],
+                    social_links=[],
+                    has_contact_form=False,
+                    forms=[],
+                    error=f"pdf_parse_failed: {exc}",
+                )
+            )
+            continue
+
+        email_values = sorted(email for email in _extract_emails_from_text(text) if not is_noise_email(email))
+        phone_values: list[str] = []
+        try:
+            matcher = phonenumbers.PhoneNumberMatcher(text, (default_region_code or "ZZ").upper())
+            for match in matcher:
+                normalized = normalize_phone_number(match.raw_string, default_region_code=default_region_code)
+                if normalized and not is_noise_phone(normalized):
+                    phone_values.append(match.raw_string.strip())
+        except Exception:
+            for match in PHONE_REGEX.finditer(text):
+                normalized = normalize_phone_number(match.group(1), default_region_code=default_region_code)
+                if normalized and not is_noise_phone(normalized):
+                    phone_values.append(match.group(1).strip())
+
+        pdf_soup = BeautifulSoup(text, "html.parser")
+        channels = extract_channels(pdf_soup, pdf_url, default_region_code=default_region_code)
+        pdf_pages.append(
+            CrawlPageResult(
+                url=pdf_url,
+                title="PDF",
+                status_code=response.status_code,
+                emails=email_values[: settings.max_emails_per_company],
+                phones=phone_values,
+                channels=channels,
+                social_links=[],
+                has_contact_form=False,
+                forms=[],
+            )
+        )
+    return pdf_pages
 
 
 def should_scan_assets(soup: BeautifulSoup, page_url: str) -> bool:
@@ -422,20 +721,26 @@ def should_browser_escalate(result: CrawlSiteResult) -> bool:
     if not result.pages:
         return result.crawl_status in {"blocked_by_robots", "failed"}
 
-    has_contacts = any(page.emails or page.phones or page.has_contact_form for page in result.pages)
+    has_contacts = any(page.emails or page.phones or page.channels or page.has_contact_form for page in result.pages)
     if has_contacts:
         return False
 
-    if any((page.status_code or 0) in {401, 403} for page in result.pages):
+    if any((page.status_code or 0) in {401, 403, 429, 503} for page in result.pages):
         return True
-
+    if any(page.error == "anti_bot_challenge" for page in result.pages):
+        return True
     if any(page.error == "cross_domain_redirect_after_ssl_fallback" for page in result.pages):
         return False
 
     return result.crawl_status in {"blocked_by_robots", "robots_bypassed", "failed", "completed"}
 
 
-def crawl_site(website_url: str, on_request=None, proxy_url: str | None = None) -> CrawlSiteResult:
+def crawl_site(
+    website_url: str,
+    on_request=None,
+    proxy_url: str | None = None,
+    default_region_code: str | None = None,
+) -> CrawlSiteResult:
     website_url = normalize_url(website_url)
     robots_blocked = not fetch_robots_allowed(website_url)
     if robots_blocked and not settings.crawler_ignore_robots:
@@ -447,7 +752,7 @@ def crawl_site(website_url: str, on_request=None, proxy_url: str | None = None) 
         candidates.append(urljoin(website_url, f"/{path}"))
 
     seen = set()
-    pages = []
+    pages: list[CrawlPageResult] = []
     headers = {"User-Agent": settings.user_agent}
 
     with build_httpx_client(headers=headers, proxy_url=proxy_url) as client:
@@ -477,6 +782,7 @@ def crawl_site(website_url: str, on_request=None, proxy_url: str | None = None) 
                             status_code=response.status_code,
                             emails=[],
                             phones=[],
+                            channels=[],
                             social_links=[],
                             has_contact_form=False,
                             forms=[],
@@ -484,18 +790,33 @@ def crawl_site(website_url: str, on_request=None, proxy_url: str | None = None) 
                         )
                     )
                     continue
+
                 soup = BeautifulSoup(response.text, "html.parser")
                 title = soup.title.text.strip() if soup.title and soup.title.text else None
-                emails = extract_emails(soup)
-                phones = extract_phones(soup)
+                emails = set(extract_emails(soup))
+                phones = list(extract_phones(soup, default_region_code=default_region_code))
+                channels = extract_channels(soup, str(response.url), default_region_code=default_region_code)
+
+                structured_emails, structured_phones, structured_channels = extract_structured_contacts(
+                    soup,
+                    str(response.url),
+                    default_region_code=default_region_code,
+                )
+                emails.update(structured_emails)
+                phones.extend(structured_phones)
+                channels.extend(structured_channels)
+
                 if not emails and should_scan_assets(soup, str(response.url)):
-                    emails = extract_emails_from_assets(
-                        client=client,
-                        soup=soup,
-                        page_url=str(response.url),
-                        headers=headers,
-                        on_request=on_request,
+                    emails.update(
+                        extract_emails_from_assets(
+                            client=client,
+                            soup=soup,
+                            page_url=str(response.url),
+                            headers=headers,
+                            on_request=on_request,
+                        )
                     )
+
                 social_links = []
                 for link in soup.find_all("a", href=True):
                     href = link["href"]
@@ -506,17 +827,34 @@ def crawl_site(website_url: str, on_request=None, proxy_url: str | None = None) 
                             candidates.append(absolute)
                     if any(host in absolute for host in SOCIAL_HOSTS):
                         social_links.append(absolute)
+
                 has_contact_form, forms = extract_forms(soup=soup, page_url=str(response.url))
+                deduped_channels: dict[tuple[str, str], dict[str, str]] = {}
+                for channel in channels:
+                    key = (channel["channel_type"], channel["normalized_value"])
+                    deduped_channels.setdefault(key, channel)
+
                 pages.append(
                     CrawlPageResult(
                         url=str(response.url),
                         title=title,
                         status_code=response.status_code,
-                        emails=emails[: settings.max_emails_per_company],
-                        phones=phones,
+                        emails=sorted(emails)[: settings.max_emails_per_company],
+                        phones=sorted(set(phones)),
+                        channels=list(deduped_channels.values()),
                         social_links=sorted(set(social_links)),
                         has_contact_form=has_contact_form,
                         forms=forms,
+                    )
+                )
+                pages.extend(
+                    extract_pdf_page_results(
+                        client=client,
+                        soup=soup,
+                        page_url=str(response.url),
+                        headers=headers,
+                        on_request=on_request,
+                        default_region_code=default_region_code,
                     )
                 )
             except Exception as exc:
@@ -527,6 +865,7 @@ def crawl_site(website_url: str, on_request=None, proxy_url: str | None = None) 
                         status_code=None,
                         emails=[],
                         phones=[],
+                        channels=[],
                         social_links=[],
                         has_contact_form=False,
                         forms=[],

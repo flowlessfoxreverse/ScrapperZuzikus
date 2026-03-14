@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Company, Email, Form, Page, Phone, RequestMetric, RunCompany, RunCompanyStatus, Submission
+from app.models import Company, ContactChannel, Email, Form, Page, Phone, RequestMetric, RunCompany, RunCompanyStatus, Submission
 
 
 RUN_COMPANY_STATUS_PRIORITY = {
@@ -149,6 +149,27 @@ def merge_phone(target_phone: Phone, source_phone: Phone) -> None:
         )
 
 
+def merge_contact_channel(target_channel: ContactChannel, source_channel: ContactChannel) -> None:
+    target_channel.source_page_url = target_channel.source_page_url or source_channel.source_page_url
+    target_channel.source_type = target_channel.source_type or source_channel.source_type
+    if len((source_channel.channel_value or "").strip()) > len((target_channel.channel_value or "").strip()):
+        target_channel.channel_value = source_channel.channel_value
+    if source_channel.technical_metadata:
+        merged_metadata = dict(target_channel.technical_metadata or {})
+        merged_metadata.update(source_channel.technical_metadata)
+        target_channel.technical_metadata = merged_metadata
+    if source_channel.first_seen_at:
+        target_channel.first_seen_at = min(
+            filter(None, [target_channel.first_seen_at, source_channel.first_seen_at]),
+            default=source_channel.first_seen_at,
+        )
+    if source_channel.last_seen_at:
+        target_channel.last_seen_at = max(
+            filter(None, [target_channel.last_seen_at, source_channel.last_seen_at]),
+            default=source_channel.last_seen_at,
+        )
+
+
 def merge_run_company(target_row: RunCompany, source_row: RunCompany) -> None:
     if RUN_COMPANY_STATUS_PRIORITY[source_row.status] > RUN_COMPANY_STATUS_PRIORITY[target_row.status]:
         target_row.status = source_row.status
@@ -240,6 +261,22 @@ def merge_company_into(session: Session, target: Company, source: Company) -> No
         merge_phone(target_phone, source_phone)
         session.add(target_phone)
         session.delete(source_phone)
+
+    existing_channels = {
+        (channel.channel_type, channel.normalized_value): channel
+        for channel in target.contact_channels
+    }
+    for source_channel in list(source.contact_channels):
+        key = (source_channel.channel_type, source_channel.normalized_value)
+        target_channel = existing_channels.get(key)
+        if target_channel is None:
+            source_channel.company_id = target.id
+            session.add(source_channel)
+            existing_channels[key] = source_channel
+            continue
+        merge_contact_channel(target_channel, source_channel)
+        session.add(target_channel)
+        session.delete(source_channel)
 
     existing_forms = {form.page_url: form for form in target.forms}
     for source_form in list(source.forms):

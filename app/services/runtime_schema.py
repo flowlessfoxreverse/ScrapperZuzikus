@@ -80,3 +80,62 @@ def ensure_proxy_pool_schema(engine: Engine) -> None:
                     "supports_browser = CASE WHEN kind::text = 'BROWSER' THEN TRUE ELSE supports_browser END"
                 )
             )
+
+
+def ensure_contact_channel_schema(engine: Engine) -> None:
+    inspector = inspect(engine)
+    try:
+        tables = set(inspector.get_table_names())
+    except Exception:
+        return
+    if "contact_channels" in tables:
+        return
+
+    dialect = engine.dialect.name
+    if dialect == "postgresql":
+        channel_type_sql = "VARCHAR(32)"
+    else:
+        channel_type_sql = "VARCHAR(32)"
+
+    statements = [
+        (
+            "CREATE TABLE contact_channels ("
+            "id INTEGER PRIMARY KEY, "
+            "company_id INTEGER NOT NULL REFERENCES companies(id), "
+            f"channel_type {channel_type_sql} NOT NULL, "
+            "channel_value VARCHAR(255) NOT NULL, "
+            "normalized_value VARCHAR(255) NOT NULL, "
+            "source_type VARCHAR(32) NOT NULL DEFAULT 'link', "
+            "source_page_url VARCHAR(500) NULL, "
+            "technical_metadata JSON NOT NULL DEFAULT '{}' , "
+            "first_seen_at TIMESTAMP NULL, "
+            "last_seen_at TIMESTAMP NULL"
+            ")"
+        ),
+        "CREATE INDEX ix_contact_channels_company_id ON contact_channels(company_id)",
+        "CREATE INDEX ix_contact_channels_channel_type ON contact_channels(channel_type)",
+        "CREATE INDEX ix_contact_channels_normalized_value ON contact_channels(normalized_value)",
+        (
+            "CREATE UNIQUE INDEX uq_company_contact_channel "
+            "ON contact_channels(company_id, channel_type, normalized_value)"
+        ),
+    ]
+    if dialect == "postgresql":
+        statements[0] = (
+            "CREATE TABLE contact_channels ("
+            "id SERIAL PRIMARY KEY, "
+            "company_id INTEGER NOT NULL REFERENCES companies(id), "
+            f"channel_type {channel_type_sql} NOT NULL, "
+            "channel_value VARCHAR(255) NOT NULL, "
+            "normalized_value VARCHAR(255) NOT NULL, "
+            "source_type VARCHAR(32) NOT NULL DEFAULT 'link', "
+            "source_page_url VARCHAR(500) NULL, "
+            "technical_metadata JSONB NOT NULL DEFAULT '{}'::jsonb, "
+            "first_seen_at TIMESTAMP WITH TIME ZONE NULL, "
+            "last_seen_at TIMESTAMP WITH TIME ZONE NULL"
+            ")"
+        )
+
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
