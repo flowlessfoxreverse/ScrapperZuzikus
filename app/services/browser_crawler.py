@@ -23,6 +23,7 @@ from app.services.crawler import (
     normalize_url,
     should_scan_assets,
 )
+from app.services.host_suppression import clear_host_failures, is_host_suppressed, normalize_host_key, register_host_failure
 
 
 settings = get_settings()
@@ -62,6 +63,20 @@ CHALLENGE_HINTS = (
     "captcha",
     "access denied",
     "temporarily unavailable",
+)
+THIRD_PARTY_BLOCK_HINTS = (
+    "doubleclick.net",
+    "googleadservices.com",
+    "googletagmanager.com",
+    "google-analytics.com",
+    "facebook.net",
+    "hotjar.com",
+    "clarity.ms",
+    "segment.io",
+    "unpkg.com",
+    "translate.googleapis.com",
+    "gstatic.com",
+    "ytimg.com",
 )
 
 
@@ -138,7 +153,10 @@ def browser_crawl_site(
     from playwright.sync_api import sync_playwright
 
     website_url = normalize_url(website_url)
+    if is_host_suppressed(website_url):
+        return CrawlSiteResult(pages=[], crawl_status="suppressed_host")
     base = urlparse(website_url)
+    base_host = normalize_host_key(website_url)
     candidates = [website_url]
     for path in CONTACT_PATH_HINTS:
         candidates.append(urljoin(website_url, f"/{path}"))
@@ -176,6 +194,29 @@ def browser_crawl_site(
             }
         )
         context.add_init_script(STEALTH_INIT_SCRIPT)
+        if settings.browser_block_third_party_assets:
+            def handle_route(route) -> None:
+                request = route.request
+                request_url = request.url
+                request_host = normalize_host_key(request_url)
+                same_origin = request_host == base_host
+                resource_type = request.resource_type
+                lower_url = request_url.lower()
+                if request.is_navigation_request():
+                    route.continue_()
+                    return
+                if resource_type in {"font", "media"}:
+                    route.abort()
+                    return
+                if any(hint in lower_url for hint in THIRD_PARTY_BLOCK_HINTS):
+                    route.abort()
+                    return
+                if not same_origin and resource_type in {"script", "xhr", "fetch", "image", "stylesheet", "manifest", "other"}:
+                    route.abort()
+                    return
+                route.continue_()
+
+            context.route("**/*", handle_route)
 
         try:
             for candidate in candidates[: settings.browser_max_pages_per_site]:
@@ -277,6 +318,8 @@ def browser_crawl_site(
                             error="anti_bot_challenge" if _looks_like_challenge(content, title, status_code) else None,
                         )
                     )
+                    if emails or phones or channels or has_contact_form:
+                        clear_host_failures(website_url)
                     with build_httpx_client(headers=BROWSER_FALLBACK_HEADERS, proxy_url=proxy_url) as pdf_client:
                         pages.extend(
                             extract_pdf_page_results(
@@ -312,6 +355,7 @@ def browser_crawl_site(
                             error=str(exc),
                         )
                     )
+                    register_host_failure(website_url)
                 finally:
                     page.close()
         finally:

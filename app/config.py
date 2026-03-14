@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     request_timeout_seconds: int = 20
     max_pages_per_site: int = 12
     max_emails_per_company: int = 10
+    host_failure_cache_ttl_minutes: int = 180
+    host_failure_threshold: int = 3
+    crawler_early_stop_core_attempts: int = 3
+    crawler_useless_text_threshold: int = 160
     crawler_ignore_robots: bool = True
     crawler_insecure_ssl_fallback: bool = True
     crawler_proxy_url: str | None = None
@@ -44,6 +48,7 @@ class Settings(BaseSettings):
     browser_wait_after_load_ms: int = 2500
     browser_retry_attempts: int = 2
     browser_stealth_scroll_steps: int = 3
+    browser_block_third_party_assets: bool = True
     browser_proxy_url: str | None = None
     browser_proxy_bypass: str = ""
     browser_stealth_plugin_enabled: bool = True

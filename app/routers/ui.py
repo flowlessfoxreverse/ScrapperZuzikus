@@ -16,6 +16,7 @@ from app.config import get_settings
 from app.db import get_db
 from app.models import Category, Company, ContactChannel, ContactChannelType, Email, Phone, ProxyEndpoint, ProxyKind, Region, RequestMetric, RunCategory, RunStatus, ScrapeRun, ValidationStatus, Vertical
 from app.schemas import EmailRow
+from app.services.host_suppression import normalize_host_key
 from app.services.overpass import fetch_status
 from app.services.proxy_pool import active_proxy_count, effective_proxy_capacity, lease_counts, list_proxies, release_proxy, upsert_proxy
 from app.services.region_catalog import country_catalog, upsert_country_with_subdivisions
@@ -465,7 +466,7 @@ def build_request_metric_views(
         if metric.error:
             summary_bucket["error_count"] += 1
 
-        host = urlparse(metric.url).netloc or urlparse(f"https://{metric.url}").netloc or metric.url[:80]
+        host = normalize_host_key(metric.url) or urlparse(metric.url).netloc or urlparse(f"https://{metric.url}").netloc or metric.url[:80]
         host_key = (host, metric.provider)
         host_bucket = host_buckets.setdefault(
             host_key,

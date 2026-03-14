@@ -15,6 +15,7 @@ from bs4 import BeautifulSoup
 from pypdf import PdfReader
 
 from app.config import get_settings
+from app.services.host_suppression import clear_host_failures, is_host_suppressed, normalize_host_key, register_host_failure
 
 
 EMAIL_REGEX = re.compile(r"(?i)([a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,})")
@@ -206,9 +207,48 @@ def _is_ssl_verification_error(exc: Exception) -> bool:
 
 
 def same_site_family(source_url: str, target_url: str) -> bool:
-    source_host = urlparse(source_url).netloc.lower().removeprefix("www.")
-    target_host = urlparse(target_url).netloc.lower().removeprefix("www.")
+    source_host = normalize_host_key(source_url)
+    target_host = normalize_host_key(target_url)
     return source_host == target_host or source_host.endswith(f".{target_host}") or target_host.endswith(f".{source_host}")
+
+
+def _is_dead_host_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    indicators = (
+        "no host connection",
+        "temporary failure in name resolution",
+        "name or service not known",
+        "nodename nor servname provided",
+        "getaddrinfo failed",
+        "failed to resolve",
+        "no address associated with hostname",
+        "hostname nor servname provided",
+        "server misbehaving",
+        "dns",
+        "no route to host",
+    )
+    return any(indicator in message for indicator in indicators)
+
+
+def _is_useless_page(
+    *,
+    status_code: int | None,
+    visible_text_length: int,
+    emails: set[str],
+    phones: list[str],
+    channels: list[dict[str, str]],
+    has_contact_form: bool,
+    social_links: list[str],
+) -> bool:
+    if emails or phones or channels or has_contact_form:
+        return False
+    if social_links and visible_text_length >= settings.crawler_useless_text_threshold:
+        return False
+    if status_code is None:
+        return True
+    if status_code >= 400:
+        return True
+    return visible_text_length < settings.crawler_useless_text_threshold
 
 
 def fetch_page(
@@ -738,10 +778,11 @@ def should_browser_escalate(result: CrawlSiteResult) -> bool:
         return True
     if any(page.error == "anti_bot_challenge" for page in result.pages):
         return True
+    if any(page.error == "js_shell" for page in result.pages):
+        return True
     if any(page.error == "cross_domain_redirect_after_ssl_fallback" for page in result.pages):
         return False
-
-    return result.crawl_status in {"blocked_by_robots", "robots_bypassed", "failed", "completed"}
+    return result.crawl_status in {"blocked_by_robots", "robots_bypassed"}
 
 
 def crawl_site(
@@ -751,6 +792,8 @@ def crawl_site(
     default_region_code: str | None = None,
 ) -> CrawlSiteResult:
     website_url = normalize_url(website_url)
+    if is_host_suppressed(website_url):
+        return CrawlSiteResult(pages=[], crawl_status="suppressed_host")
     robots_blocked = not fetch_robots_allowed(website_url)
     if robots_blocked and not settings.crawler_ignore_robots:
         return CrawlSiteResult(pages=[], crawl_status="blocked_by_robots")
@@ -763,6 +806,8 @@ def crawl_site(
     seen = set()
     pages: list[CrawlPageResult] = []
     headers = {"User-Agent": settings.user_agent}
+    useless_attempts = 0
+    useful_found = False
 
     with build_httpx_client(headers=headers, proxy_url=proxy_url) as client:
         for candidate in candidates[: settings.max_pages_per_site]:
@@ -805,6 +850,8 @@ def crawl_site(
                 emails = set(extract_emails(soup))
                 phones = list(extract_phones(soup, default_region_code=default_region_code))
                 channels = extract_channels(soup, str(response.url), default_region_code=default_region_code)
+                visible_text = unescape(soup.get_text(" ", strip=True))
+                visible_text_length = len(visible_text)
 
                 structured_emails, structured_phones, structured_channels = extract_structured_contacts(
                     soup,
@@ -838,6 +885,16 @@ def crawl_site(
                         social_links.append(absolute)
 
                 has_contact_form, forms = extract_forms(soup=soup, page_url=str(response.url))
+                page_error = None
+                if (
+                    response.status_code == 200
+                    and not emails
+                    and not phones
+                    and not channels
+                    and not has_contact_form
+                    and should_scan_assets(soup, str(response.url))
+                ):
+                    page_error = "js_shell"
                 deduped_channels: dict[tuple[str, str], dict[str, str]] = {}
                 for channel in channels:
                     key = (channel["channel_type"], channel["normalized_value"])
@@ -854,6 +911,7 @@ def crawl_site(
                         social_links=sorted(set(social_links)),
                         has_contact_form=has_contact_form,
                         forms=forms,
+                        error=page_error,
                     )
                 )
                 pages.extend(
@@ -866,6 +924,23 @@ def crawl_site(
                         default_region_code=default_region_code,
                     )
                 )
+                if _is_useless_page(
+                    status_code=response.status_code,
+                    visible_text_length=visible_text_length,
+                    emails=emails,
+                    phones=phones,
+                    channels=list(deduped_channels.values()),
+                    has_contact_form=has_contact_form,
+                    social_links=social_links,
+                ):
+                    useless_attempts += 1
+                else:
+                    useful_found = True
+                    useless_attempts = 0
+                    clear_host_failures(website_url)
+                if not useful_found and useless_attempts >= settings.crawler_early_stop_core_attempts:
+                    register_host_failure(website_url)
+                    break
             except Exception as exc:
                 pages.append(
                     CrawlPageResult(
@@ -881,6 +956,13 @@ def crawl_site(
                         error=str(exc),
                     )
                 )
+                if _is_dead_host_error(exc):
+                    register_host_failure(website_url)
+                    break
+                useless_attempts += 1
+                if useless_attempts >= settings.crawler_early_stop_core_attempts:
+                    register_host_failure(website_url)
+                    break
 
     crawl_status = "completed" if any(page.status_code for page in pages) else "failed"
     if crawl_status == "completed" and robots_blocked:
