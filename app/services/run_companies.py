@@ -33,7 +33,17 @@ def get_or_create_run_company(session: Session, run_id: int, company_id: int) ->
 
 
 def queue_company_for_run(session: Session, run_id: int, company_id: int) -> bool:
-    row = get_or_create_run_company(session, run_id, company_id)
+    row = (
+        session.query(RunCompany)
+        .filter(RunCompany.run_id == run_id, RunCompany.company_id == company_id)
+        .one_or_none()
+    )
+    if row is None:
+        row = RunCompany(run_id=run_id, company_id=company_id, status=RunCompanyStatus.QUEUED)
+        session.add(row)
+        session.flush()
+        return True
+
     if row.status in {RunCompanyStatus.QUEUED, RunCompanyStatus.RUNNING, RunCompanyStatus.COMPLETED}:
         return False
     row.status = RunCompanyStatus.QUEUED
