@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.models import Category, Company, CompanyCategory, ContactChannel, ContactChannelType, Email, Form, Page, Phone, ProxyKind, Region, RunCategory, RunCompanyStatus, RunStatus, ScrapeRun
 from app.services.company_dedupe import find_company_by_website_key, should_replace_name
 from app.services.discovery_state import ensure_utc, get_or_create_region_category_state, should_refresh_discovery
@@ -26,6 +27,8 @@ from app.services.run_companies import (
     requeue_run_company,
 )
 from app.services.usage import can_consume, consume_units
+
+settings = get_settings()
 
 
 def _is_proxy_transport_error(exc: Exception, proxy_url: str | None) -> bool:
