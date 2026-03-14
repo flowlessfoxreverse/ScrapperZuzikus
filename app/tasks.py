@@ -6,14 +6,26 @@ import dramatiq
 from dramatiq.brokers.redis import RedisBroker
 
 from app.config import get_settings
-from app.db import SessionLocal
+from app.db import SessionLocal, engine
 from app.models import ProxyKind, RunCompanyStatus, RunStatus, ScrapeRun
 from app.services.pipeline import execute_browser_crawl, execute_crawl, execute_discovery
 from app.services.region_catalog import sync_region_catalog
+from app.services.runtime_schema import (
+    ensure_contact_channel_schema,
+    ensure_phone_schema,
+    ensure_proxy_pool_schema,
+    ensure_run_company_retry_schema,
+    ensure_scrape_run_control_columns,
+)
 from app.services.run_companies import close_open_run_companies
 
 
 settings = get_settings()
+ensure_scrape_run_control_columns(engine)
+ensure_proxy_pool_schema(engine)
+ensure_contact_channel_schema(engine)
+ensure_phone_schema(engine)
+ensure_run_company_retry_schema(engine)
 redis_broker = RedisBroker(url=settings.redis_url)
 dramatiq.set_broker(redis_broker)
 
