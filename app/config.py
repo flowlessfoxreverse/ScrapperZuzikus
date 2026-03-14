@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     request_timeout_seconds: int = 20
     max_pages_per_site: int = 12
     max_emails_per_company: int = 10
+    crawler_ignore_robots: bool = True
+    crawler_insecure_ssl_fallback: bool = True
     worker_processes: int = 1
     worker_threads: int = 1
 

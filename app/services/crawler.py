@@ -14,14 +14,29 @@ from app.config import get_settings
 
 
 EMAIL_REGEX = re.compile(r"(?i)([a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,})")
-CONTACT_PATH_HINTS = ("contact", "about", "reservation", "booking")
+CONTACT_PATH_HINTS = (
+    "contact",
+    "contact-us",
+    "contactus",
+    "about",
+    "about-us",
+    "reservation",
+    "booking",
+)
 SOCIAL_HOSTS = ("facebook.com", "instagram.com", "linkedin.com", "tiktok.com", "youtube.com")
 CAPTCHA_HINTS = ("captcha", "g-recaptcha", "hcaptcha", "cf-turnstile")
 NOISE_EMAIL_DOMAINS = (
     "sentry.io",
     "sentry.wixpress.com",
     "sentry-next.wixpress.com",
+    "myemail.com",
 )
+NOISE_EMAIL_LOCALPARTS = {
+    "johnsmith",
+    "janedoe",
+    "test",
+    "example",
+}
 
 settings = get_settings()
 
@@ -63,6 +78,70 @@ def fetch_robots_allowed(base_url: str) -> bool:
     except Exception:
         return True
     return parser.can_fetch(settings.user_agent, base_url)
+
+
+def _is_ssl_verification_error(exc: Exception) -> bool:
+    message = str(exc).upper()
+    return "CERTIFICATE_VERIFY_FAILED" in message or "SELF-SIGNED CERTIFICATE" in message
+
+
+def same_site_family(source_url: str, target_url: str) -> bool:
+    source_host = urlparse(source_url).netloc.lower().removeprefix("www.")
+    target_host = urlparse(target_url).netloc.lower().removeprefix("www.")
+    return source_host == target_host or source_host.endswith(f".{target_host}") or target_host.endswith(f".{source_host}")
+
+
+def fetch_page(
+    client: httpx.Client,
+    candidate: str,
+    *,
+    headers: dict[str, str],
+    on_request=None,
+) -> tuple[httpx.Response, bool]:
+    started = time.perf_counter()
+    try:
+        response = client.get(candidate)
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        if on_request:
+            on_request(
+                method="GET",
+                url=str(response.url),
+                status_code=response.status_code,
+                duration_ms=duration_ms,
+                error=None,
+            )
+        return response, False
+    except Exception as exc:
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        if on_request:
+            on_request(
+                method="GET",
+                url=candidate,
+                status_code=None,
+                duration_ms=duration_ms,
+                error=str(exc),
+            )
+        if not settings.crawler_insecure_ssl_fallback or not _is_ssl_verification_error(exc):
+            raise
+
+    started = time.perf_counter()
+    with httpx.Client(
+        timeout=settings.request_timeout_seconds,
+        headers=headers,
+        follow_redirects=True,
+        verify=False,
+    ) as insecure_client:
+        response = insecure_client.get(candidate)
+    duration_ms = int((time.perf_counter() - started) * 1000)
+    if on_request:
+        on_request(
+            method="GET",
+            url=str(response.url),
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+            error="ssl_verification_bypassed",
+        )
+    return response, True
 
 
 def extract_forms(soup: BeautifulSoup, page_url: str) -> tuple[bool, list[dict]]:
@@ -108,7 +187,8 @@ def decode_cloudflare_email(encoded_value: str | None) -> str | None:
 
 def is_noise_email(email: str) -> bool:
     normalized = email.strip().lower()
-    return any(normalized.endswith(f"@{domain}") for domain in NOISE_EMAIL_DOMAINS)
+    localpart, _, _ = normalized.partition("@")
+    return any(normalized.endswith(f"@{domain}") for domain in NOISE_EMAIL_DOMAINS) or localpart in NOISE_EMAIL_LOCALPARTS
 
 
 def extract_emails(soup: BeautifulSoup) -> list[str]:
@@ -137,7 +217,8 @@ def extract_emails(soup: BeautifulSoup) -> list[str]:
 
 def crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
     website_url = normalize_url(website_url)
-    if not fetch_robots_allowed(website_url):
+    robots_blocked = not fetch_robots_allowed(website_url)
+    if robots_blocked and not settings.crawler_ignore_robots:
         return CrawlSiteResult(pages=[], crawl_status="blocked_by_robots")
 
     base = urlparse(website_url)
@@ -154,18 +235,22 @@ def crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
             if candidate in seen:
                 continue
             seen.add(candidate)
-            started = time.perf_counter()
             try:
-                response = client.get(candidate)
-                duration_ms = int((time.perf_counter() - started) * 1000)
-                if on_request:
-                    on_request(
-                        method="GET",
-                        url=str(response.url),
-                        status_code=response.status_code,
-                        duration_ms=duration_ms,
-                        error=None,
+                response, insecure_fallback = fetch_page(client, candidate, headers=headers, on_request=on_request)
+                if insecure_fallback and not same_site_family(candidate, str(response.url)):
+                    pages.append(
+                        CrawlPageResult(
+                            url=str(response.url),
+                            title=None,
+                            status_code=response.status_code,
+                            emails=[],
+                            social_links=[],
+                            has_contact_form=False,
+                            forms=[],
+                            error="cross_domain_redirect_after_ssl_fallback",
+                        )
                     )
+                    continue
                 soup = BeautifulSoup(response.text, "html.parser")
                 title = soup.title.text.strip() if soup.title and soup.title.text else None
                 emails = extract_emails(soup)
@@ -192,15 +277,6 @@ def crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
                     )
                 )
             except Exception as exc:
-                duration_ms = int((time.perf_counter() - started) * 1000)
-                if on_request:
-                    on_request(
-                        method="GET",
-                        url=candidate,
-                        status_code=None,
-                        duration_ms=duration_ms,
-                        error=str(exc),
-                    )
                 pages.append(
                     CrawlPageResult(
                         url=candidate,
@@ -215,4 +291,6 @@ def crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
                 )
 
     crawl_status = "completed" if any(page.status_code for page in pages) else "failed"
+    if crawl_status == "completed" and robots_blocked:
+        crawl_status = "robots_bypassed"
     return CrawlSiteResult(pages=pages, crawl_status=crawl_status)

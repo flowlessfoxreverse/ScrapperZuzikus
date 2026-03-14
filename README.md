@@ -54,6 +54,7 @@ docker compose up --build -d
 - Production defaults keep `APP_RELOAD=0` and `WORKER_PROCESSES=1`, `WORKER_THREADS=1`
 - Discovery is cached per `region + category` and only refreshed after `DISCOVERY_COOLDOWN_HOURS`
 - Website recrawls are limited by `CRAWL_RECRAWL_HOURS`
+- The crawler can bypass `robots.txt` and retry with `verify=False` on certificate errors via `CRAWLER_IGNORE_ROBOTS` and `CRAWLER_INSECURE_SSL_FALLBACK`
 - If you scale scraping later, add separate proxy-backed worker pools with distinct egress for website crawling only
 
 Example local `.env` values:
@@ -79,6 +80,8 @@ OVERPASS_DIFF_URL=https://download.geofabrik.de/asia/thailand-updates/
 DISCOVERY_COOLDOWN_HOURS=168
 CRAWL_RECRAWL_HOURS=168
 REGION_CATALOG_COUNTRIES=TH
+CRAWLER_IGNORE_ROBOTS=1
+CRAWLER_INSECURE_SSL_FALLBACK=1
 WORKER_PROCESSES=1
 WORKER_THREADS=1
 CRAWL_WORKER_PROCESSES=1
