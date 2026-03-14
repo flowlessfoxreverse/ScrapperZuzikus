@@ -844,6 +844,7 @@ def crawl_site(
     headers = {"User-Agent": settings.user_agent}
     useless_attempts = 0
     useful_found = False
+    duplicate_final_url_attempts = 0
 
     with build_httpx_client(headers=headers, proxy_url=proxy_url) as client:
         for candidate in candidates[: settings.max_pages_per_site]:
@@ -885,7 +886,8 @@ def crawl_site(
                 resolved_key = f"{normalize_host_key(resolved_url)}|{urlparse(resolved_url).path.rstrip('/') or '/'}"
                 if resolved_key in resolved_seen:
                     useless_attempts += 1
-                    if not useful_found and useless_attempts >= settings.crawler_early_stop_core_attempts:
+                    duplicate_final_url_attempts += 1
+                    if duplicate_final_url_attempts >= 2:
                         register_host_failure(website_url)
                         if on_request:
                             on_request(
@@ -894,11 +896,12 @@ def crawl_site(
                                 url=website_url,
                                 status_code=response.status_code,
                                 duration_ms=0,
-                                error=f"duplicate_final_url_after_{useless_attempts}",
+                                error=f"duplicate_final_url_after_{duplicate_final_url_attempts}",
                             )
                         break
                     continue
                 resolved_seen.add(resolved_key)
+                duplicate_final_url_attempts = 0
 
                 soup = BeautifulSoup(response.text, "html.parser")
                 title = soup.title.text.strip() if soup.title and soup.title.text else None
@@ -1001,6 +1004,7 @@ def crawl_site(
                 else:
                     useful_found = True
                     useless_attempts = 0
+                    duplicate_final_url_attempts = 0
                     clear_host_failures(website_url)
                 if not useful_found and useless_attempts >= settings.crawler_early_stop_core_attempts:
                     register_host_failure(website_url)

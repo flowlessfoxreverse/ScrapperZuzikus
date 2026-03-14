@@ -177,6 +177,7 @@ def browser_crawl_site(
     seen: set[str] = set()
     resolved_seen: set[str] = set()
     pages: list[CrawlPageResult] = []
+    duplicate_final_url_attempts = 0
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
@@ -281,8 +282,22 @@ def browser_crawl_site(
 
                     resolved_key = f"{normalize_host_key(final_url)}|{urlparse(final_url).path.rstrip('/') or '/'}"
                     if resolved_key in resolved_seen:
+                        duplicate_final_url_attempts += 1
+                        if duplicate_final_url_attempts >= 2:
+                            register_host_failure(website_url)
+                            if on_request:
+                                on_request(
+                                    request_kind="early_stopped",
+                                    method="EVENT",
+                                    url=website_url,
+                                    status_code=status_code,
+                                    duration_ms=0,
+                                    error=f"duplicate_final_url_after_{duplicate_final_url_attempts}",
+                                )
+                            break
                         continue
                     resolved_seen.add(resolved_key)
+                    duplicate_final_url_attempts = 0
 
                     soup = BeautifulSoup(content, "html.parser")
                     title = title or (soup.title.text.strip() if soup.title and soup.title.text else None)
@@ -347,6 +362,7 @@ def browser_crawl_site(
                             error="anti_bot_challenge",
                         )
                     if emails or phones or channels or has_contact_form:
+                        duplicate_final_url_attempts = 0
                         clear_host_failures(website_url)
                     with build_httpx_client(headers=BROWSER_FALLBACK_HEADERS, proxy_url=proxy_url) as pdf_client:
                         pages.extend(
