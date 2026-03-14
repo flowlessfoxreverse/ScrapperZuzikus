@@ -67,6 +67,20 @@ class ContactChannelType(str, Enum):
     TELEGRAM = "telegram"
 
 
+class RecipeStatus(str, Enum):
+    DRAFT = "draft"
+    CANDIDATE = "candidate"
+    VALIDATED = "validated"
+    ACTIVE = "active"
+    DEPRECATED = "deprecated"
+    REJECTED = "rejected"
+
+
+class RecipeAdapter(str, Enum):
+    OVERPASS_PUBLIC = "overpass_public"
+    OVERPASS_LOCAL = "overpass_local"
+
+
 class Region(Base):
     __tablename__ = "regions"
 
@@ -141,6 +155,72 @@ class Category(Base):
     companies: Mapped[list["CompanyCategory"]] = relationship(back_populates="category")
     run_items: Mapped[list["RunCategory"]] = relationship(back_populates="category")
     region_states: Mapped[list["RegionCategoryState"]] = relationship(back_populates="category")
+    seeded_recipe_id: Mapped[int | None] = mapped_column(ForeignKey("query_recipes.id"), nullable=True)
+    seeded_recipe: Mapped["QueryRecipe | None"] = relationship(foreign_keys=[seeded_recipe_id])
+
+
+class QueryRecipe(Base):
+    __tablename__ = "query_recipes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    slug: Mapped[str] = mapped_column(String(96), unique=True, index=True)
+    label: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    vertical: Mapped[Vertical] = mapped_column(SqlEnum(Vertical), index=True)
+    status: Mapped[RecipeStatus] = mapped_column(SqlEnum(RecipeStatus), default=RecipeStatus.DRAFT, index=True)
+    is_platform_template: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    versions: Mapped[list["QueryRecipeVersion"]] = relationship(
+        back_populates="recipe",
+        cascade="all, delete-orphan",
+        order_by="QueryRecipeVersion.version_number.desc()",
+    )
+
+
+class QueryRecipeVersion(Base):
+    __tablename__ = "query_recipe_versions"
+    __table_args__ = (
+        UniqueConstraint("recipe_id", "version_number", name="uq_recipe_version_number"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    recipe_id: Mapped[int] = mapped_column(ForeignKey("query_recipes.id"), index=True)
+    version_number: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[RecipeStatus] = mapped_column(SqlEnum(RecipeStatus), default=RecipeStatus.DRAFT, index=True)
+    adapter: Mapped[RecipeAdapter] = mapped_column(SqlEnum(RecipeAdapter), default=RecipeAdapter.OVERPASS_PUBLIC, index=True)
+    osm_tags: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
+    exclude_tags: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
+    search_terms: Mapped[list[str]] = mapped_column(JSON, default=list)
+    website_keywords: Mapped[list[str]] = mapped_column(JSON, default=list)
+    language_hints: Mapped[list[str]] = mapped_column(JSON, default=list)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    recipe: Mapped["QueryRecipe"] = relationship(back_populates="versions")
+    validations: Mapped[list["QueryRecipeValidation"]] = relationship(
+        back_populates="recipe_version",
+        cascade="all, delete-orphan",
+        order_by="QueryRecipeValidation.created_at.desc()",
+    )
+
+
+class QueryRecipeValidation(Base):
+    __tablename__ = "query_recipe_validations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    recipe_version_id: Mapped[int] = mapped_column(ForeignKey("query_recipe_versions.id"), index=True)
+    status: Mapped[RecipeStatus] = mapped_column(SqlEnum(RecipeStatus), default=RecipeStatus.DRAFT, index=True)
+    provider: Mapped[str] = mapped_column(String(32), default="overpass_public", index=True)
+    sample_regions: Mapped[list[str]] = mapped_column(JSON, default=list)
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    metrics_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    cache_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    recipe_version: Mapped["QueryRecipeVersion"] = relationship(back_populates="validations")
 
 
 class Company(Base):

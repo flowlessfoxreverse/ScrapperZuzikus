@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     redis_host_port: int = 6380
     redis_url: str = "redis://redis:6379/0"
     overpass_url: str = "http://overpass/api/interpreter"
+    recipe_validation_overpass_url: str = "https://overpass-api.de/api/interpreter"
+    recipe_validation_cache_hours: int = 24
+    recipe_validation_daily_cap: int = 250
+    recipe_validation_sample_regions: int = 3
     overpass_data_path: str = "/overpassdb"
     overpass_daily_query_cap: int = 0
     overpass_connect_retries: int = 4

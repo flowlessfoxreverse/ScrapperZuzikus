@@ -207,3 +207,127 @@ def ensure_request_metric_schema(engine: Engine) -> None:
     with engine.begin() as connection:
         for statement in statements:
             connection.execute(text(statement))
+
+
+def ensure_recipe_schema(engine: Engine) -> None:
+    tables = _table_names(engine)
+    dialect = engine.dialect.name
+    inspector = inspect(engine)
+
+    try:
+        category_columns = {column["name"] for column in inspector.get_columns("categories")}
+    except Exception:
+        category_columns = set()
+
+    statements: list[str] = []
+    if "seeded_recipe_id" not in category_columns and "categories" in tables:
+        statements.append("ALTER TABLE categories ADD COLUMN seeded_recipe_id INTEGER NULL")
+
+    if "query_recipes" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE query_recipes ("
+                "id SERIAL PRIMARY KEY, "
+                "slug VARCHAR(96) NOT NULL UNIQUE, "
+                "label VARCHAR(128) NOT NULL, "
+                "description TEXT NULL, "
+                "vertical VARCHAR(8) NOT NULL, "
+                "status VARCHAR(10) NOT NULL DEFAULT 'draft', "
+                "is_platform_template BOOLEAN NOT NULL DEFAULT TRUE, "
+                "created_at TIMESTAMP WITH TIME ZONE NOT NULL, "
+                "updated_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE query_recipes ("
+                "id INTEGER PRIMARY KEY, "
+                "slug VARCHAR(96) NOT NULL UNIQUE, "
+                "label VARCHAR(128) NOT NULL, "
+                "description TEXT NULL, "
+                "vertical VARCHAR(8) NOT NULL, "
+                "status VARCHAR(10) NOT NULL DEFAULT 'draft', "
+                "is_platform_template BOOLEAN NOT NULL DEFAULT 1, "
+                "created_at TIMESTAMP NOT NULL, "
+                "updated_at TIMESTAMP NOT NULL"
+                ")"
+            )
+        statements.append("CREATE INDEX ix_query_recipes_slug ON query_recipes(slug)")
+
+    if "query_recipe_versions" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE query_recipe_versions ("
+                "id SERIAL PRIMARY KEY, "
+                "recipe_id INTEGER NOT NULL REFERENCES query_recipes(id), "
+                "version_number INTEGER NOT NULL DEFAULT 1, "
+                "status VARCHAR(10) NOT NULL DEFAULT 'draft', "
+                "adapter VARCHAR(16) NOT NULL DEFAULT 'overpass_public', "
+                "osm_tags JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "exclude_tags JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "search_terms JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "website_keywords JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "language_hints JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "notes TEXT NULL, "
+                "created_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE query_recipe_versions ("
+                "id INTEGER PRIMARY KEY, "
+                "recipe_id INTEGER NOT NULL REFERENCES query_recipes(id), "
+                "version_number INTEGER NOT NULL DEFAULT 1, "
+                "status VARCHAR(10) NOT NULL DEFAULT 'draft', "
+                "adapter VARCHAR(16) NOT NULL DEFAULT 'overpass_public', "
+                "osm_tags JSON NOT NULL DEFAULT '[]', "
+                "exclude_tags JSON NOT NULL DEFAULT '[]', "
+                "search_terms JSON NOT NULL DEFAULT '[]', "
+                "website_keywords JSON NOT NULL DEFAULT '[]', "
+                "language_hints JSON NOT NULL DEFAULT '[]', "
+                "notes TEXT NULL, "
+                "created_at TIMESTAMP NOT NULL"
+                ")"
+            )
+        statements.append(
+            "CREATE UNIQUE INDEX uq_recipe_version_number ON query_recipe_versions(recipe_id, version_number)"
+        )
+
+    if "query_recipe_validations" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE query_recipe_validations ("
+                "id SERIAL PRIMARY KEY, "
+                "recipe_version_id INTEGER NOT NULL REFERENCES query_recipe_versions(id), "
+                "status VARCHAR(10) NOT NULL DEFAULT 'draft', "
+                "provider VARCHAR(32) NOT NULL DEFAULT 'overpass_public', "
+                "sample_regions JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "score INTEGER NULL, "
+                "metrics_json JSONB NOT NULL DEFAULT '{}'::jsonb, "
+                "cache_key VARCHAR(255) NULL, "
+                "expires_at TIMESTAMP WITH TIME ZONE NULL, "
+                "created_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE query_recipe_validations ("
+                "id INTEGER PRIMARY KEY, "
+                "recipe_version_id INTEGER NOT NULL REFERENCES query_recipe_versions(id), "
+                "status VARCHAR(10) NOT NULL DEFAULT 'draft', "
+                "provider VARCHAR(32) NOT NULL DEFAULT 'overpass_public', "
+                "sample_regions JSON NOT NULL DEFAULT '[]', "
+                "score INTEGER NULL, "
+                "metrics_json JSON NOT NULL DEFAULT '{}', "
+                "cache_key VARCHAR(255) NULL, "
+                "expires_at TIMESTAMP NULL, "
+                "created_at TIMESTAMP NOT NULL"
+                ")"
+            )
+
+    if not statements:
+        return
+
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))

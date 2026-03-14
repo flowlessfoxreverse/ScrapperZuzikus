@@ -1,6 +1,6 @@
 from sqlalchemy.exc import IntegrityError
 
-from app.models import Category, Region, Vertical
+from app.models import Category, QueryRecipe, QueryRecipeVersion, RecipeAdapter, RecipeStatus, Region, Vertical
 
 
 DEFAULT_REGIONS = [
@@ -73,6 +73,11 @@ DEFAULT_CATEGORIES = [
 ]
 
 
+def _latest_recipe_version(recipe: QueryRecipe) -> QueryRecipeVersion | None:
+    versions = sorted(recipe.versions, key=lambda item: item.version_number, reverse=True)
+    return versions[0] if versions else None
+
+
 def seed_defaults(session) -> None:
     for region_data in DEFAULT_REGIONS:
         region = session.query(Region).filter(Region.code == region_data["code"]).one_or_none()
@@ -91,3 +96,74 @@ def seed_defaults(session) -> None:
                 session.commit()
             except IntegrityError:
                 session.rollback()
+
+    seeded_categories = session.query(Category).all()
+    for category in seeded_categories:
+        recipe = session.query(QueryRecipe).filter(QueryRecipe.slug == category.slug).one_or_none()
+        if recipe is None:
+            try:
+                recipe = QueryRecipe(
+                    slug=category.slug,
+                    label=category.label,
+                    description=f"Seeded platform recipe for {category.label}.",
+                    vertical=category.vertical,
+                    status=RecipeStatus.ACTIVE,
+                    is_platform_template=True,
+                )
+                session.add(recipe)
+                session.flush()
+                session.add(
+                    QueryRecipeVersion(
+                        recipe_id=recipe.id,
+                        version_number=1,
+                        status=RecipeStatus.ACTIVE,
+                        adapter=RecipeAdapter.OVERPASS_LOCAL,
+                        osm_tags=category.osm_tags,
+                        search_terms=category.search_terms,
+                        website_keywords=category.search_terms,
+                        language_hints=[],
+                        notes="Seeded from the built-in category catalog.",
+                    )
+                )
+                category.seeded_recipe_id = recipe.id
+                session.add(category)
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+        elif category.seeded_recipe_id != recipe.id:
+            category.seeded_recipe_id = recipe.id
+            session.add(category)
+            session.commit()
+
+    recipes = session.query(QueryRecipe).all()
+    for recipe in recipes:
+        if recipe.status != RecipeStatus.ACTIVE:
+            continue
+        version = _latest_recipe_version(recipe)
+        if version is None:
+            continue
+        category = session.query(Category).filter(
+            (Category.seeded_recipe_id == recipe.id) | (Category.slug == recipe.slug)
+        ).one_or_none()
+        if category is None:
+            category = Category(
+                slug=recipe.slug,
+                label=recipe.label,
+                vertical=recipe.vertical,
+                osm_tags=version.osm_tags,
+                search_terms=version.search_terms,
+                is_active=True,
+                seeded_recipe_id=recipe.id,
+            )
+            session.add(category)
+            session.commit()
+            continue
+        category.slug = recipe.slug
+        category.label = recipe.label
+        category.vertical = recipe.vertical
+        category.osm_tags = version.osm_tags
+        category.search_terms = version.search_terms
+        category.is_active = True
+        category.seeded_recipe_id = recipe.id
+        session.add(category)
+        session.commit()

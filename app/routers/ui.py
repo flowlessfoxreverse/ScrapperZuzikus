@@ -14,11 +14,15 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import Category, Company, ContactChannel, ContactChannelType, Email, Phone, ProxyEndpoint, ProxyKind, Region, RequestMetric, RunCategory, RunStatus, ScrapeRun, ValidationStatus, Vertical
+from app.models import Category, Company, ContactChannel, ContactChannelType, Email, Phone, ProxyEndpoint, ProxyKind, QueryRecipe, QueryRecipeValidation, QueryRecipeVersion, RecipeAdapter, RecipeStatus, Region, RequestMetric, RunCategory, RunStatus, ScrapeRun, ValidationStatus, Vertical
 from app.schemas import EmailRow
+from app.services.category_recipes import latest_recipe_version, sync_recipe_to_category, upsert_recipe_backed_category
 from app.services.host_suppression import normalize_host_key
 from app.services.overpass import fetch_status
 from app.services.proxy_pool import active_proxy_count, effective_proxy_capacity, lease_counts, list_proxies, release_proxy, upsert_proxy
+from app.services.recipe_drafts import DraftProposal, build_draft_from_prompt
+from app.services.recipe_lint import RecipeLintResult, lint_recipe_content, parse_tag_block
+from app.services.recipe_validation import get_validation_quota_snapshot, validate_recipe_version
 from app.services.region_catalog import country_catalog, upsert_country_with_subdivisions
 from app.services.runs import find_active_run, request_run_cancellation
 from app.tasks import run_scrape, sync_region_catalog_task
@@ -147,6 +151,47 @@ class SignalMetricRow:
     proxied_count: int
     error_count: int
     last_seen_at: datetime
+
+
+@dataclass
+class RecipeRow:
+    id: int
+    slug: str
+    label: str
+    vertical: str
+    status: str
+    adapter: str | None
+    version_number: int | None
+    validation_count: int
+    latest_score: int | None
+    latest_validation_status: str | None
+    latest_total_results: int | None
+    latest_website_rate: float | None
+    last_validated_at: datetime | None
+    cache_expires_at: datetime | None
+    sampled_regions: list[str]
+    lint_passed: bool
+    lint_errors: list[str]
+    lint_warnings: list[str]
+    linked_category_label: str | None
+    linked_category_active: bool
+    created_at: datetime
+
+
+@dataclass
+class CategoryRow:
+    id: int
+    label: str
+    slug: str
+    vertical: str
+    osm_tags: list[dict[str, str]]
+    search_terms: list[str]
+    is_active: bool
+    linked_recipe_slug: str | None
+    linked_recipe_status: str | None
+    linked_recipe_adapter: str | None
+    linked_recipe_version: int | None
+    linked_recipe_template: bool
 
 
 def proxy_status_label(proxy: ProxyEndpoint) -> str:
@@ -625,6 +670,90 @@ def build_proxy_usage_map(db: Session, *, limit: int = 5000) -> dict[int, dict[s
     return usage
 
 
+def build_recipe_rows(db: Session) -> list[RecipeRow]:
+    recipes = db.scalars(select(QueryRecipe).order_by(QueryRecipe.vertical, QueryRecipe.label)).all()
+    rows: list[RecipeRow] = []
+    for recipe in recipes:
+        version = recipe.versions[0] if recipe.versions else None
+        latest_validation = version.validations[0] if version and version.validations else None
+        linked_category = db.scalar(
+            select(Category).where(
+                (Category.seeded_recipe_id == recipe.id) | (Category.slug == recipe.slug)
+            ).limit(1)
+        )
+        lint_result = (
+            lint_recipe_content(
+                osm_tags=version.osm_tags,
+                exclude_tags=version.exclude_tags,
+                search_terms=version.search_terms,
+                website_keywords=version.website_keywords,
+            )
+            if version
+            else RecipeLintResult(False, ["Recipe has no version."], [])
+        )
+        rows.append(
+            RecipeRow(
+                id=recipe.id,
+                slug=recipe.slug,
+                label=recipe.label,
+                vertical=recipe.vertical.value,
+                status=recipe.status.value,
+                adapter=version.adapter.value if version else None,
+                version_number=version.version_number if version else None,
+                validation_count=len(version.validations) if version else 0,
+                latest_score=latest_validation.score if latest_validation else None,
+                latest_validation_status=version.status.value if version else None,
+                latest_total_results=(
+                    latest_validation.metrics_json.get("total_results")
+                    if latest_validation and latest_validation.metrics_json
+                    else None
+                ),
+                latest_website_rate=(
+                    latest_validation.metrics_json.get("website_rate")
+                    if latest_validation and latest_validation.metrics_json
+                    else None
+                ),
+                last_validated_at=latest_validation.created_at if latest_validation else None,
+                cache_expires_at=latest_validation.expires_at if latest_validation else None,
+                sampled_regions=latest_validation.sample_regions if latest_validation else [],
+                lint_passed=lint_result.passed,
+                lint_errors=lint_result.errors,
+                lint_warnings=lint_result.warnings,
+                linked_category_label=linked_category.label if linked_category else None,
+                linked_category_active=linked_category.is_active if linked_category else False,
+                created_at=recipe.created_at,
+            )
+        )
+    return rows
+
+
+def build_category_rows(db: Session) -> list[CategoryRow]:
+    categories = db.scalars(select(Category).order_by(Category.vertical, Category.label)).all()
+    rows: list[CategoryRow] = []
+    for category in categories:
+        recipe = category.seeded_recipe
+        if recipe is None:
+            recipe = db.scalar(select(QueryRecipe).where(QueryRecipe.slug == category.slug).limit(1))
+        version = latest_recipe_version(recipe)
+        rows.append(
+            CategoryRow(
+                id=category.id,
+                label=category.label,
+                slug=category.slug,
+                vertical=category.vertical.value,
+                osm_tags=category.osm_tags,
+                search_terms=category.search_terms,
+                is_active=category.is_active,
+                linked_recipe_slug=recipe.slug if recipe else None,
+                linked_recipe_status=recipe.status.value if recipe else None,
+                linked_recipe_adapter=version.adapter.value if version else None,
+                linked_recipe_version=version.version_number if version else None,
+                linked_recipe_template=recipe.is_platform_template if recipe else False,
+            )
+        )
+    return rows
+
+
 @router.get("/", response_class=HTMLResponse)
 def dashboard(
     request: Request,
@@ -844,12 +973,20 @@ def update_email_status_html(
 
 
 @router.get("/categories", response_class=HTMLResponse)
-def category_editor(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
-    categories = db.scalars(select(Category).order_by(Category.vertical, Category.label)).all()
+def category_editor(
+    request: Request,
+    message: str | None = None,
+    error: str | None = None,
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
     return templates.TemplateResponse(
         request=request,
         name="categories.html",
-        context={"categories": categories},
+        context={
+            "categories": build_category_rows(db),
+            "message": message,
+            "error": error,
+        },
     )
 
 
@@ -861,6 +998,44 @@ def region_editor(request: Request, db: Session = Depends(get_db)) -> HTMLRespon
         context={
             "regions": build_country_options(db),
             "country_catalog": country_catalog(),
+        },
+    )
+
+
+@router.get("/recipes", response_class=HTMLResponse)
+def recipe_editor(
+    request: Request,
+    message: str | None = None,
+    error: str | None = None,
+    draft_prompt: str | None = None,
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    draft_proposal = None
+    draft_lint = None
+    if draft_prompt:
+        try:
+            draft_proposal = build_draft_from_prompt(draft_prompt)
+            draft_lint = lint_recipe_content(
+                osm_tags=draft_proposal.osm_tags,
+                exclude_tags=draft_proposal.exclude_tags,
+                search_terms=draft_proposal.search_terms,
+                website_keywords=draft_proposal.website_keywords,
+            )
+        except ValueError as exc:
+            error = str(exc)
+    return templates.TemplateResponse(
+        request=request,
+        name="recipes.html",
+        context={
+            "recipes": build_recipe_rows(db),
+            "verticals": list(Vertical),
+            "recipe_adapters": list(RecipeAdapter),
+            "validation_quota": get_validation_quota_snapshot(db),
+            "message": message,
+            "error": error,
+            "draft_proposal": draft_proposal,
+            "draft_lint": draft_lint,
+            "draft_prompt": draft_prompt or "",
         },
     )
 
@@ -937,6 +1112,175 @@ def request_metrics_view(request: Request, db: Session = Depends(get_db)) -> HTM
     )
 
 
+@router.post("/recipes", response_class=HTMLResponse)
+def create_recipe_html(
+    slug: str = Form(...),
+    label: str = Form(...),
+    vertical: Vertical = Form(...),
+    description: str = Form(""),
+    adapter: RecipeAdapter = Form(RecipeAdapter.OVERPASS_PUBLIC),
+    osm_tags: str = Form(""),
+    exclude_tags: str = Form(""),
+    search_terms: str = Form(""),
+    website_keywords: str = Form(""),
+    language_hints: str = Form(""),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    normalized_slug = slug.strip().lower()
+    existing = db.scalar(select(QueryRecipe).where(QueryRecipe.slug == normalized_slug))
+    tag_pairs, tag_errors = parse_tag_block(osm_tags)
+    exclude_pairs, exclude_errors = parse_tag_block(exclude_tags)
+    if tag_errors or exclude_errors:
+        joined = "; ".join(tag_errors + exclude_errors)
+        return RedirectResponse(url=f"/recipes?error={quote_plus(joined[:200])}", status_code=303)
+    if existing is None:
+        recipe = QueryRecipe(
+            slug=normalized_slug,
+            label=label.strip(),
+            description=description.strip() or None,
+            vertical=vertical,
+            status=RecipeStatus.DRAFT,
+            is_platform_template=True,
+        )
+        db.add(recipe)
+        db.flush()
+        term_list = [item.strip() for item in search_terms.split(",") if item.strip()]
+        keyword_list = [item.strip() for item in website_keywords.split(",") if item.strip()]
+        language_list = [item.strip() for item in language_hints.split(",") if item.strip()]
+        db.add(
+            QueryRecipeVersion(
+                recipe_id=recipe.id,
+                version_number=1,
+                status=RecipeStatus.DRAFT,
+                adapter=adapter,
+                osm_tags=tag_pairs,
+                exclude_tags=exclude_pairs,
+                search_terms=term_list,
+                website_keywords=keyword_list,
+                language_hints=language_list,
+                notes="Draft recipe created from the recipes console.",
+            )
+        )
+        db.commit()
+    return RedirectResponse(url="/recipes", status_code=303)
+
+
+@router.post("/recipes/draft", response_class=HTMLResponse)
+def generate_recipe_draft_html(
+    request: Request,
+    prompt: str = Form(...),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    draft_proposal = None
+    error = None
+    draft_lint = None
+    try:
+        draft_proposal = build_draft_from_prompt(prompt)
+        draft_lint = lint_recipe_content(
+            osm_tags=draft_proposal.osm_tags,
+            exclude_tags=draft_proposal.exclude_tags,
+            search_terms=draft_proposal.search_terms,
+            website_keywords=draft_proposal.website_keywords,
+        )
+    except ValueError as exc:
+        error = str(exc)
+    return templates.TemplateResponse(
+        request=request,
+        name="recipes.html",
+        context={
+            "recipes": build_recipe_rows(db),
+            "verticals": list(Vertical),
+            "recipe_adapters": list(RecipeAdapter),
+            "validation_quota": get_validation_quota_snapshot(db),
+            "message": None,
+            "error": error,
+            "draft_proposal": draft_proposal,
+            "draft_lint": draft_lint,
+            "draft_prompt": prompt,
+        },
+    )
+
+
+@router.post("/recipes/{recipe_id}/validate", response_class=HTMLResponse)
+def validate_recipe_html(
+    recipe_id: int,
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    try:
+        recipe = db.get(QueryRecipe, recipe_id)
+        version = recipe.versions[0] if recipe and recipe.versions else None
+        if version is None:
+            return RedirectResponse(url="/recipes?error=Recipe%20has%20no%20version%20to%20lint.", status_code=303)
+        lint_result = lint_recipe_content(
+            osm_tags=version.osm_tags,
+            exclude_tags=version.exclude_tags,
+            search_terms=version.search_terms,
+            website_keywords=version.website_keywords,
+        )
+        if not lint_result.passed:
+            return RedirectResponse(
+                url=f"/recipes?error={quote_plus('Lint failed: ' + '; '.join(lint_result.errors)[:180])}",
+                status_code=303,
+            )
+        validation, cache_hit = validate_recipe_version(db, recipe_id)
+        score = validation.score if validation.score is not None else "-"
+        result_message = (
+            f"Validation {'cache hit' if cache_hit else 'completed'}: "
+            f"score {score}, status {validation.status.value}."
+        )
+        return RedirectResponse(url=f"/recipes?message={quote_plus(result_message)}", status_code=303)
+    except Exception as exc:
+        db.rollback()
+        return RedirectResponse(url=f"/recipes?error={quote_plus(str(exc)[:200])}", status_code=303)
+
+
+@router.post("/recipes/{recipe_id}/promote", response_class=HTMLResponse)
+def promote_recipe_html(
+    recipe_id: int,
+    target_status: RecipeStatus = Form(...),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    recipe = db.get(QueryRecipe, recipe_id)
+    version = recipe.versions[0] if recipe and recipe.versions else None
+    if recipe is None or version is None:
+        return RedirectResponse(url="/recipes?error=Recipe%20not%20found.", status_code=303)
+
+    lint_result = lint_recipe_content(
+        osm_tags=version.osm_tags,
+        exclude_tags=version.exclude_tags,
+        search_terms=version.search_terms,
+        website_keywords=version.website_keywords,
+    )
+    if not lint_result.passed:
+        return RedirectResponse(
+            url=f"/recipes?error={quote_plus('Cannot promote recipe with lint failures.')}",
+            status_code=303,
+        )
+
+    allowed_targets = {RecipeStatus.CANDIDATE, RecipeStatus.ACTIVE, RecipeStatus.DEPRECATED}
+    if target_status not in allowed_targets:
+        return RedirectResponse(url="/recipes?error=Unsupported%20recipe%20transition.", status_code=303)
+
+    if target_status == RecipeStatus.ACTIVE:
+        latest_validation = version.validations[0] if version.validations else None
+        if latest_validation is None or latest_validation.status != RecipeStatus.VALIDATED:
+            return RedirectResponse(
+                url="/recipes?error=Recipe%20must%20be%20validated%20before%20activation.",
+                status_code=303,
+            )
+        sync_recipe_to_category(db, recipe, version)
+
+    recipe.status = target_status
+    version.status = target_status
+    db.add(recipe)
+    db.add(version)
+    db.commit()
+    return RedirectResponse(
+        url=f"/recipes?message={quote_plus(f'Recipe {recipe.slug} marked as {target_status.value}.')}",
+        status_code=303,
+    )
+
+
 @router.post("/proxies", response_class=HTMLResponse)
 def create_proxy_html(
     label: str = Form(...),
@@ -1004,16 +1348,30 @@ def create_category_html(
     search_terms: str = Form(...),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
-    tag_pairs = []
-    for row in osm_tags.splitlines():
-        if "=" not in row:
-            continue
-        key, value = row.split("=", 1)
-        tag_pairs.append({key.strip(): value.strip()})
+    tag_pairs, tag_errors = parse_tag_block(osm_tags)
+    if tag_errors:
+        return RedirectResponse(
+            url=f"/categories?error={quote_plus('; '.join(tag_errors)[:200])}",
+            status_code=303,
+        )
     terms = [item.strip() for item in search_terms.split(",") if item.strip()]
-    db.add(Category(slug=slug, label=label, vertical=Vertical(vertical), osm_tags=tag_pairs, search_terms=terms))
+    category, recipe, version = upsert_recipe_backed_category(
+        db,
+        slug=slug,
+        label=label,
+        vertical=Vertical(vertical),
+        osm_tags=tag_pairs,
+        search_terms=terms,
+        description=f"Recipe created from category editor for {label.strip()}.",
+        adapter=RecipeAdapter.OVERPASS_LOCAL,
+        notes="Created or updated from category editor.",
+        recipe_status=RecipeStatus.ACTIVE,
+    )
     db.commit()
-    return RedirectResponse(url="/categories", status_code=303)
+    return RedirectResponse(
+        url=f"/categories?message={quote_plus(f'Category {category.slug} synced to recipe version {version.version_number}.')}",
+        status_code=303,
+    )
 
 
 @router.post("/regions", response_class=HTMLResponse)

@@ -10,6 +10,7 @@ import httpx
 
 from app.config import get_settings
 from app.models import Category, Region
+from app.services.category_recipes import effective_category_config
 
 
 settings = get_settings()
@@ -40,8 +41,9 @@ def _tag_clause(tag_map: dict[str, str]) -> str:
 
 
 def build_query(region: Region, category: Category) -> str:
+    config = effective_category_config(category)
     tag_clauses = "\n".join(
-        [f"  {_tag_clause(tag_map)}" for tag_map in category.osm_tags]
+        [f"  {_tag_clause(tag_map)}" for tag_map in config.osm_tags]
     )
     if "-" in region.code:
         area_selector = f'area["ISO3166-2"="{region.code}"]->.searchArea;'

@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Recipe Builder</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Recipe Console</p>
+          <h1>Shared Query Recipes</h1>
+          <p class="subtle">Platform templates for AI-assisted category design, sampled validation, and later promotion into production discovery.</p>
+        </div>
+        <div class="hero-actions">
+          <a class="ghost-button" href="/">Back to Dashboard</a>
+          <a class="ghost-button" href="/categories">View Categories</a>
+        </div>
+      </section>
+
+      <section class="panel">
+        {% if message %}
+        <div class="notice">{{ message }}</div>
+        {% endif %}
+        {% if error %}
+        <div class="notice warn">{{ error }}</div>
+        {% endif %}
+        <div class="country-summary">
+          <div class="stat-card">
+            <span class="subtle">Validation Requests Used</span>
+            <strong>{{ validation_quota.used }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Daily Cap</span>
+            <strong>{{ validation_quota.cap }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Remaining Today</span>
+            <strong>{{ validation_quota.remaining }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Cache Window</span>
+            <strong>24h</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Generate Draft From Prompt</h2>
+          <span>Natural-language input to editable recipe proposal</span>
+        </div>
+        <form action="/recipes/draft" method="post" class="run-form">
+          <label class="full-width">
+            <span>Prompt</span>
+            <textarea name="prompt" rows="4" placeholder="Example: scooter and ATV rental businesses in Thailand with strong website contact signals">{{ draft_prompt }}</textarea>
+          </label>
+          <div class="hero-actions">
+            <button type="submit">Generate Draft</button>
+          </div>
+        </form>
+      </section>
+
+      {% if draft_proposal %}
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Draft Proposal</h2>
+          <span>Generated proposal before validation</span>
+        </div>
+        <div class="country-summary">
+          <div class="stat-card">
+            <span class="subtle">Suggested Slug</span>
+            <strong>{{ draft_proposal.slug }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Vertical</span>
+            <strong>{{ draft_proposal.vertical.value }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Adapter</span>
+            <strong>{{ draft_proposal.adapter.value }}</strong>
+          </div>
+        </div>
+        <ul>
+          {% for reason in draft_proposal.rationale %}
+          <li>{{ reason }}</li>
+          {% endfor %}
+        </ul>
+        {% if draft_lint %}
+        <div class="country-summary">
+          <div class="stat-card">
+            <span class="subtle">Lint</span>
+            <strong>{{ "pass" if draft_lint.passed else "fail" }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Errors</span>
+            <strong>{{ draft_lint.errors|length }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Warnings</span>
+            <strong>{{ draft_lint.warnings|length }}</strong>
+          </div>
+        </div>
+        {% if draft_lint.errors %}
+        <p class="subtle">Lint errors: {{ draft_lint.errors|join("; ") }}</p>
+        {% endif %}
+        {% if draft_lint.warnings %}
+        <p class="subtle">Lint warnings: {{ draft_lint.warnings|join("; ") }}</p>
+        {% endif %}
+        {% endif %}
+      </section>
+      {% endif %}
+
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Create Draft Recipe</h2>
+          <span>Editable recipe payload before sampled validation</span>
+        </div>
+        <form action="/recipes" method="post" class="run-form">
+          <label>
+            <span>Slug</span>
+            <input type="text" name="slug" placeholder="motorbike-tours" value="{{ draft_proposal.slug if draft_proposal else '' }}" required />
+          </label>
+          <label>
+            <span>Label</span>
+            <input type="text" name="label" placeholder="Motorbike Tours" value="{{ draft_proposal.label if draft_proposal else '' }}" required />
+          </label>
+          <label>
+            <span>Vertical</span>
+            <select name="vertical">
+              {% for vertical in verticals %}
+              <option value="{{ vertical.value }}" {% if draft_proposal and draft_proposal.vertical == vertical %}selected{% endif %}>{{ vertical.value }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            <span>Validation Adapter</span>
+            <select name="adapter">
+              {% for adapter in recipe_adapters %}
+              <option value="{{ adapter.value }}" {% if draft_proposal and draft_proposal.adapter == adapter %}selected{% endif %}>{{ adapter.value }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label class="full-width">
+            <span>Description</span>
+            <textarea name="description" rows="4" placeholder="What should this recipe discover, and what makes a result valid?">{{ draft_proposal.description if draft_proposal else '' }}</textarea>
+          </label>
+          <label class="full-width">
+            <span>OSM Include Tags</span>
+            <textarea name="osm_tags" rows="5" placeholder="shop=travel_agency&#10;office=travel_agent">{% if draft_proposal %}{% for tag in draft_proposal.osm_tags %}{% for key, value in tag.items() %}{{ key }}={{ value }}
+{% endfor %}{% endfor %}{% endif %}</textarea>
+          </label>
+          <label class="full-width">
+            <span>OSM Exclude Tags</span>
+            <textarea name="exclude_tags" rows="4" placeholder="tourism=information">{% if draft_proposal %}{% for tag in draft_proposal.exclude_tags %}{% for key, value in tag.items() %}{{ key }}={{ value }}
+{% endfor %}{% endfor %}{% endif %}</textarea>
+          </label>
+          <label class="full-width">
+            <span>Search Terms</span>
+            <input type="text" name="search_terms" value="{{ draft_proposal.search_terms|join(', ') if draft_proposal else '' }}" placeholder="travel agency, tour operator, excursions" />
+          </label>
+          <label class="full-width">
+            <span>Website Keywords</span>
+            <input type="text" name="website_keywords" value="{{ draft_proposal.website_keywords|join(', ') if draft_proposal else '' }}" placeholder="contact, booking, tour, rent" />
+          </label>
+          <label class="full-width">
+            <span>Language Hints</span>
+            <input type="text" name="language_hints" value="{{ draft_proposal.language_hints|join(', ') if draft_proposal else '' }}" placeholder="en, th" />
+          </label>
+          <div class="hero-actions">
+            <button type="submit">Create Draft Recipe</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Platform Recipes</h2>
+          <span>{{ recipes|length }} recipes</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Label</th>
+              <th>Slug</th>
+              <th>Vertical</th>
+              <th>Status</th>
+              <th>Latest Version</th>
+              <th>Adapter</th>
+              <th>Validations</th>
+              <th>Latest Score</th>
+              <th>Validation Status</th>
+              <th>Lint</th>
+              <th>Sample Results</th>
+              <th>Website Rate</th>
+              <th>Sample Regions</th>
+              <th>Cache Expires</th>
+              <th>Linked Category</th>
+              <th>Created</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for recipe in recipes %}
+            <tr>
+              <td>{{ recipe.label }}</td>
+              <td><code>{{ recipe.slug }}</code></td>
+              <td>{{ recipe.vertical }}</td>
+              <td><span class="badge muted">{{ recipe.status }}</span></td>
+              <td>{{ recipe.version_number or "-" }}</td>
+              <td>{{ recipe.adapter or "-" }}</td>
+              <td>{{ recipe.validation_count }}</td>
+              <td>{{ recipe.latest_score if recipe.latest_score is not none else "-" }}</td>
+              <td>{{ recipe.latest_validation_status or "-" }}</td>
+              <td title="{% if recipe.lint_errors %}Errors: {{ recipe.lint_errors|join('; ') }}{% endif %}{% if recipe.lint_warnings %}{% if recipe.lint_errors %} | {% endif %}Warnings: {{ recipe.lint_warnings|join('; ') }}{% endif %}">
+                <span class="badge {% if recipe.lint_passed %}muted{% else %}warn{% endif %}">
+                  {% if recipe.lint_passed %}pass{% else %}fail{% endif %}
+                </span>
+              </td>
+              <td>{{ recipe.latest_total_results if recipe.latest_total_results is not none else "-" }}</td>
+              <td>
+                {% if recipe.latest_website_rate is not none %}
+                {{ (recipe.latest_website_rate * 100)|round(1) }}%
+                {% else %}
+                -
+                {% endif %}
+              </td>
+              <td>{{ recipe.sampled_regions|join(", ") if recipe.sampled_regions else "-" }}</td>
+              <td>
+                {% if recipe.cache_expires_at %}
+                {{ recipe.cache_expires_at.strftime("%Y-%m-%d %H:%M") }}
+                {% else %}
+                -
+                {% endif %}
+              </td>
+              <td>
+                {% if recipe.linked_category_label %}
+                <span class="badge {% if recipe.linked_category_active %}muted{% else %}warn{% endif %}">
+                  {{ recipe.linked_category_label }}
+                </span>
+                {% else %}
+                -
+                {% endif %}
+              </td>
+              <td>{{ recipe.created_at.strftime("%Y-%m-%d") }}</td>
+              <td>
+                <div class="hero-actions">
+                  <form action="/recipes/{{ recipe.id }}/validate" method="post">
+                    <button type="submit" class="ghost-button small-button" {% if not recipe.lint_passed %}disabled{% endif %}>Validate</button>
+                  </form>
+                  {% if recipe.status == "draft" %}
+                  <form action="/recipes/{{ recipe.id }}/promote" method="post">
+                    <input type="hidden" name="target_status" value="candidate" />
+                    <button type="submit" class="ghost-button small-button" {% if not recipe.lint_passed %}disabled{% endif %}>Mark Candidate</button>
+                  </form>
+                  {% endif %}
+                  {% if recipe.latest_validation_status == "validated" and recipe.status != "active" %}
+                  <form action="/recipes/{{ recipe.id }}/promote" method="post">
+                    <input type="hidden" name="target_status" value="active" />
+                    <button type="submit" class="ghost-button small-button">Activate</button>
+                  </form>
+                  {% endif %}
+                  {% if recipe.status == "active" %}
+                  <form action="/recipes/{{ recipe.id }}/promote" method="post">
+                    <input type="hidden" name="target_status" value="deprecated" />
+                    <button type="submit" class="ghost-button small-button">Deprecate</button>
+                  </form>
+                  {% endif %}
+                </div>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="17">No recipes yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+    </main>
+  </body>
+</html>

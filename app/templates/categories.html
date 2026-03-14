@@ -12,19 +12,31 @@
         <div>
           <p class="eyebrow">Configuration</p>
           <h1>Category Editor</h1>
-          <p class="subtle">OSM tag pairs drive Overpass discovery. Search terms are stored for later search-engine enrichment.</p>
+          <p class="subtle">Categories now mirror the active shared recipe templates. Saving here creates or updates the linked recipe version and keeps production discovery aligned.</p>
         </div>
-        <a class="ghost-button" href="/">Back</a>
+        <div class="hero-actions">
+          <a class="ghost-button" href="/">Back</a>
+          <a class="ghost-button" href="/recipes">View Recipes</a>
+        </div>
       </section>
 
       <section class="grid category-grid">
         <div class="panel">
+          {% if message %}
+          <div class="notice">{{ message }}</div>
+          {% endif %}
+          {% if error %}
+          <div class="notice warn">{{ error }}</div>
+          {% endif %}
           <h2>Existing Categories</h2>
           <table>
             <thead>
               <tr>
                 <th>Label</th>
+                <th>Slug</th>
                 <th>Vertical</th>
+                <th>Status</th>
+                <th>Linked Recipe</th>
                 <th>OSM Tags</th>
                 <th>Search Terms</th>
               </tr>
@@ -33,7 +45,32 @@
               {% for category in categories %}
               <tr>
                 <td>{{ category.label }}</td>
-                <td>{{ category.vertical.value }}</td>
+                <td><code>{{ category.slug }}</code></td>
+                <td>{{ category.vertical }}</td>
+                <td>
+                  <span class="badge {% if category.is_active %}muted{% else %}warn{% endif %}">
+                    {{ "active" if category.is_active else "inactive" }}
+                  </span>
+                </td>
+                <td>
+                  {% if category.linked_recipe_slug %}
+                  <div>
+                    <code>{{ category.linked_recipe_slug }}</code>
+                    <span class="badge muted">{{ category.linked_recipe_status or "unknown" }}</span>
+                  </div>
+                  <div class="subtle">
+                    {{ category.linked_recipe_adapter or "-" }}
+                    {% if category.linked_recipe_version %}
+                    · v{{ category.linked_recipe_version }}
+                    {% endif %}
+                    {% if category.linked_recipe_template %}
+                    · platform
+                    {% endif %}
+                  </div>
+                  {% else %}
+                  <span class="subtle">No recipe link</span>
+                  {% endif %}
+                </td>
                 <td>{{ category.osm_tags }}</td>
                 <td>{{ category.search_terms }}</td>
               </tr>
@@ -68,11 +105,10 @@
               <span>Search Terms</span>
               <input type="text" name="search_terms" placeholder="travel agency, tour operator" />
             </label>
-            <button type="submit">Save Category</button>
+            <button type="submit">Save Category + Recipe Version</button>
           </form>
         </div>
       </section>
     </main>
   </body>
 </html>
-
