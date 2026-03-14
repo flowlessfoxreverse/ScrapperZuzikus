@@ -12,6 +12,7 @@ from app.routers.ui import router as ui_router
 from app.seed import seed_defaults
 from app.services.company_dedupe import reconcile_duplicate_companies
 from app.services.region_catalog import sync_region_catalog
+from app.services.runtime_schema import ensure_scrape_run_control_columns
 from app.services.run_companies import reconcile_terminal_runs
 
 
@@ -21,6 +22,7 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    ensure_scrape_run_control_columns(engine)
     with SessionLocal() as session:
         seed_defaults(session)
         sync_region_catalog(session)

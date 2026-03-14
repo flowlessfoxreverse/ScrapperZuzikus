@@ -11,6 +11,7 @@ from app.services.discovery_state import ensure_utc, get_or_create_region_catego
 from app.services.crawler import crawl_site
 from app.services.metrics import record_request_metric
 from app.services.overpass import fetch_places
+from app.services.runs import finalize_cancelled_run
 from app.services.run_companies import (
     close_open_run_companies,
     mark_run_company_finished,
@@ -197,6 +198,11 @@ def execute_discovery(
     run = session.get(ScrapeRun, run_id)
     if run is None:
         return
+    session.refresh(run)
+    if run.cancel_requested:
+        finalize_cancelled_run(session, run)
+        session.commit()
+        return
 
     region = session.get(Region, run.region_id)
     if region is None:
@@ -221,6 +227,11 @@ def execute_discovery(
     force_refresh_category_ids = force_refresh_category_ids or set()
 
     for category in categories:
+        session.refresh(run)
+        if run.cancel_requested:
+            finalize_cancelled_run(session, run)
+            session.commit()
+            return
         state = get_or_create_region_category_state(session, region.id, category.id)
         state.last_run_id = run.id
         state.last_discovery_attempt_at = datetime.now(timezone.utc)
@@ -293,6 +304,11 @@ def execute_discovery(
             session.commit()
 
         for company in companies_for_category(session, region.id, category.id):
+            session.refresh(run)
+            if run.cancel_requested:
+                finalize_cancelled_run(session, run)
+                session.commit()
+                return
             if should_recrawl_company(session, company, crawl_recrawl_hours):
                 if queue_company_for_run(session, run.id, company.id):
                     enqueue_crawl(run.id, company.id)
@@ -328,6 +344,12 @@ def execute_crawl(session: Session, run_id: int, company_id: int) -> None:
     company = session.get(Company, company_id)
     if run is None or company is None:
         return
+    session.refresh(run)
+    if run.cancel_requested:
+        mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.SKIPPED, "Cancelled before crawl start.")
+        finalize_cancelled_run(session, run, "Run stopped by request.")
+        session.commit()
+        return
 
     if not company.website_url:
         mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.SKIPPED, "No website available.")
@@ -345,5 +367,8 @@ def execute_crawl(session: Session, run_id: int, company_id: int) -> None:
         company.crawl_status = "failed"
         session.add(company)
         mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.FAILED, str(exc))
+    session.refresh(run)
+    if run.cancel_requested:
+        finalize_cancelled_run(session, run, "Run stopped by request.")
     maybe_complete_run(session, run_id)
     session.commit()

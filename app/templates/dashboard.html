@@ -131,20 +131,36 @@
                 <th>Discovered</th>
                 <th>Crawled</th>
                 <th>Note</th>
+                <th>Action</th>
               </tr>
             </thead>
             <tbody>
               {% for run in runs %}
               <tr>
                 <td>{{ run.id }}</td>
-                <td><span class="badge">{{ run.status.value }}</span></td>
+                <td>
+                  <span class="badge">{{ run.status.value }}</span>
+                  {% if run.cancel_requested and run.status.value in ["pending", "running"] %}
+                  <small class="subtle">stop requested</small>
+                  {% endif %}
+                </td>
                 <td>{{ run.overpass_queries_used }}</td>
                 <td>{{ run.discovered_count }}</td>
                 <td>{{ run.crawled_count }}</td>
                 <td><small class="subtle">{{ run.note or "-" }}</small></td>
+                <td>
+                  {% if run.status.value in ["pending", "running"] and not run.cancel_requested %}
+                  <form action="/runs/{{ run.id }}/cancel" method="post">
+                    <input type="hidden" name="country_code" value="{{ selected_country_code or '' }}" />
+                    <button type="submit" class="ghost-button small-button">Stop</button>
+                  </form>
+                  {% else %}
+                  <span class="subtle">-</span>
+                  {% endif %}
+                </td>
               </tr>
               {% else %}
-              <tr><td colspan="6">No runs yet.</td></tr>
+              <tr><td colspan="7">No runs yet.</td></tr>
               {% endfor %}
             </tbody>
           </table>

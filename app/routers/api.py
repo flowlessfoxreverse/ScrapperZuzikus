@@ -5,10 +5,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import Category, Email, Region, RunCategory, ScrapeRun, ValidationStatus
+from app.models import Category, Email, Region, RunCategory, RunStatus, ScrapeRun, ValidationStatus
 from app.schemas import CategoryCreate, CategoryOut, EmailStatusUpdate, RegionCreate, RegionOut, RunCreate, RunOut
 from app.services.overpass import fetch_status_payload
-from app.services.runs import find_active_run
+from app.services.runs import find_active_run, request_run_cancellation
 from app.tasks import run_scrape
 
 
@@ -82,6 +82,18 @@ def create_run(payload: RunCreate, db: Session = Depends(get_db)) -> ScrapeRun:
     db.refresh(run)
     run_scrape.send(run.id)
     return run
+
+
+@router.post("/runs/{run_id}/cancel", response_model=dict[str, str])
+def cancel_run(run_id: int, db: Session = Depends(get_db)) -> dict[str, str]:
+    run = db.get(ScrapeRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    if run.status not in {RunStatus.PENDING, RunStatus.RUNNING}:
+        raise HTTPException(status_code=409, detail=f"Run {run.id} is already {run.status.value}.")
+    request_run_cancellation(db, run_id, "Stopped by user request.")
+    db.commit()
+    return {"status": "ok", "run_status": "cancel_requested"}
 
 
 @router.patch("/emails/{email_id}", response_model=dict[str, str])

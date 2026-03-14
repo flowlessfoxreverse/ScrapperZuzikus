@@ -10,10 +10,10 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import Category, Company, Email, Region, RunCategory, ScrapeRun, ValidationStatus, Vertical
+from app.models import Category, Company, Email, Region, RunCategory, RunStatus, ScrapeRun, ValidationStatus, Vertical
 from app.schemas import EmailRow
 from app.services.overpass import fetch_status
-from app.services.runs import find_active_run
+from app.services.runs import find_active_run, request_run_cancellation
 from app.tasks import run_scrape, sync_region_catalog_task
 
 
@@ -331,6 +331,26 @@ def queue_run(
         url=f"/?country_code={country_code}&message={quote_plus(message)}",
         status_code=303,
     )
+
+
+@router.post("/runs/{run_id}/cancel", response_class=HTMLResponse)
+def cancel_run_html(
+    run_id: int,
+    country_code: str = Form(""),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    run = db.get(ScrapeRun, run_id)
+    if run is None:
+        message = quote_plus("Run not found.")
+        return RedirectResponse(url=f"/?country_code={country_code}&message={message}", status_code=303)
+    if run.status not in {RunStatus.PENDING, RunStatus.RUNNING}:
+        message = quote_plus(f"Run {run.id} is already {run.status.value}.")
+        return RedirectResponse(url=f"/?country_code={country_code}&message={message}", status_code=303)
+
+    request_run_cancellation(db, run_id, "Stopped by user request.")
+    db.commit()
+    message = quote_plus(f"Stop requested for run {run.id}.")
+    return RedirectResponse(url=f"/?country_code={country_code}&message={message}", status_code=303)
 
 
 @router.post("/emails/{email_id}/status", response_class=HTMLResponse)

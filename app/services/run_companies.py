@@ -151,13 +151,13 @@ def maybe_complete_run(session: Session, run_id: int) -> None:
 
     run.crawled_count = completed
     if total == 0 or terminal >= total:
-        run.status = RunStatus.COMPLETED
+        run.status = RunStatus.SKIPPED if run.cancel_requested else RunStatus.COMPLETED
         run.finished_at = utcnow()
         close_open_run_companies(
             session,
             run_id,
             RunCompanyStatus.SKIPPED,
-            "Closed automatically because the run completed.",
+            "Closed automatically because the run was stopped." if run.cancel_requested else "Closed automatically because the run completed.",
         )
     session.add(run)
     session.flush()
