@@ -32,6 +32,15 @@
             <span id="overpass-status-badge" class="badge {% if overpass_status.ok %}muted{% else %}warn{% endif %}">{{ overpass_status.summary }}</span>
             <span id="overpass-stage" class="subtle">Stage: {{ overpass_status.stage }}</span>
           </div>
+          <div id="overpass-progress-wrap" class="progress-wrap {% if overpass_status.progress_percent is none %}hidden{% endif %}">
+            <div class="progress-meta">
+              <span>Bootstrap Progress</span>
+              <span id="overpass-progress-label">{{ overpass_status.progress_label or "-" }}</span>
+            </div>
+            <div class="progress-track" aria-hidden="true">
+              <div id="overpass-progress-bar" class="progress-bar" style="width: {{ overpass_status.progress_percent or 0 }}%"></div>
+            </div>
+          </div>
           <small id="overpass-detail" class="subtle">
             {% if overpass_status.status_code %}
             HTTP {{ overpass_status.status_code }}:
@@ -514,6 +523,9 @@
       const overpassStatusBadge = document.getElementById("overpass-status-badge");
       const overpassStage = document.getElementById("overpass-stage");
       const overpassDetail = document.getElementById("overpass-detail");
+      const overpassProgressWrap = document.getElementById("overpass-progress-wrap");
+      const overpassProgressBar = document.getElementById("overpass-progress-bar");
+      const overpassProgressLabel = document.getElementById("overpass-progress-label");
       const runScrapeButton = document.getElementById("run-scrape-button");
       const forceRefreshButton = document.getElementById("force-refresh-button");
       const overpassStatusCard = document.getElementById("overpass-status-card");
@@ -542,6 +554,16 @@
         if (overpassDetail) {
           const prefix = payload.status_code ? `HTTP ${payload.status_code}: ` : "";
           overpassDetail.textContent = `${prefix}${payload.detail}`;
+        }
+        if (overpassProgressWrap) {
+          const hasProgress = payload.progress_percent !== null && payload.progress_percent !== undefined;
+          overpassProgressWrap.classList.toggle("hidden", !hasProgress);
+          if (hasProgress && overpassProgressBar) {
+            overpassProgressBar.style.width = `${payload.progress_percent}%`;
+          }
+          if (overpassProgressLabel) {
+            overpassProgressLabel.textContent = payload.progress_label || `${payload.progress_percent ?? 0}%`;
+          }
         }
         if (overpassStatusCard) {
           overpassStatusCard.dataset.overpassReady = payload.ready ? "true" : "false";

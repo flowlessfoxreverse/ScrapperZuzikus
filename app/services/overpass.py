@@ -29,6 +29,8 @@ class OverpassStatus:
     detail: str
     stage: str
     ready: bool
+    progress_percent: int | None
+    progress_label: str | None
     files: dict[str, int | bool | None]
 
 
@@ -65,13 +67,27 @@ def _inspect_bootstrap_files() -> dict[str, int | bool | None]:
     base = Path(settings.overpass_data_path)
     pbf = base / "planet.osm.pbf"
     bz2 = base / "planet.osm.bz2"
+    db_dir = base / "db"
     return {
         "data_path_exists": base.exists(),
         "pbf_exists": pbf.exists(),
         "pbf_size": pbf.stat().st_size if pbf.exists() else None,
         "bz2_exists": bz2.exists(),
         "bz2_size": bz2.stat().st_size if bz2.exists() else None,
+        "db_exists": db_dir.exists(),
+        "db_size": _directory_size(db_dir) if db_dir.exists() else None,
     }
+
+
+def _directory_size(path: Path) -> int:
+    total = 0
+    for child in path.rglob("*"):
+        if child.is_file():
+            try:
+                total += child.stat().st_size
+            except OSError:
+                continue
+    return total
 
 
 def _format_size(num_bytes: int | None) -> str:
@@ -96,9 +112,12 @@ def _bootstrap_status_from_files() -> OverpassStatus:
             detail="Overpass data volume is not mounted in the app container.",
             stage="unknown",
             ready=False,
+            progress_percent=None,
+            progress_label=None,
             files=files,
         )
     if files["pbf_exists"] and files["bz2_exists"]:
+        progress_percent, progress_label = _conversion_progress(files)
         return OverpassStatus(
             ok=False,
             status_code=None,
@@ -109,16 +128,25 @@ def _bootstrap_status_from_files() -> OverpassStatus:
             ),
             stage="converting",
             ready=False,
+            progress_percent=progress_percent,
+            progress_label=progress_label,
             files=files,
         )
     if files["bz2_exists"] and not files["pbf_exists"]:
+        progress_percent, progress_label = _import_progress(files)
         return OverpassStatus(
             ok=False,
             status_code=None,
             summary="bootstrapping",
-            detail=f"Importing converted data into Overpass. OSM.BZ2: {_format_size(files['bz2_size'])}.",
+            detail=(
+                "Importing converted data into Overpass. "
+                f"OSM.BZ2: {_format_size(files['bz2_size'])}. "
+                f"Indexed DB: {_format_size(files['db_size'])}."
+            ),
             stage="importing",
             ready=False,
+            progress_percent=progress_percent,
+            progress_label=progress_label,
             files=files,
         )
     return OverpassStatus(
@@ -128,8 +156,32 @@ def _bootstrap_status_from_files() -> OverpassStatus:
         detail="Downloading initial extract for Overpass.",
         stage="downloading",
         ready=False,
+        progress_percent=5,
+        progress_label="Waiting for initial extract",
         files=files,
     )
+
+
+def _conversion_progress(files: dict[str, int | bool | None]) -> tuple[int | None, str | None]:
+    pbf_size = files.get("pbf_size")
+    bz2_size = files.get("bz2_size")
+    if not isinstance(pbf_size, int) or pbf_size <= 0 or not isinstance(bz2_size, int):
+        return None, None
+    # Regional Overpass imports typically expand above the compressed PBF size.
+    estimated_final_bz2 = max(int(pbf_size * 2), pbf_size)
+    progress = min(95, max(1, round((bz2_size / estimated_final_bz2) * 100)))
+    return progress, f"Approx. {progress}% of conversion complete"
+
+
+def _import_progress(files: dict[str, int | bool | None]) -> tuple[int | None, str | None]:
+    bz2_size = files.get("bz2_size")
+    db_size = files.get("db_size")
+    if not isinstance(bz2_size, int) or bz2_size <= 0 or not isinstance(db_size, int):
+        return None, None
+    # Overpass indexes typically settle at several times the compressed input size.
+    estimated_db_size = max(int(bz2_size * 9), bz2_size)
+    progress = min(99, max(55, round((db_size / estimated_db_size) * 100)))
+    return progress, f"Approx. {progress}% of import complete"
 
 
 def fetch_status() -> OverpassStatus:
@@ -164,6 +216,8 @@ def fetch_status() -> OverpassStatus:
             detail=detail,
             stage="ready",
             ready=True,
+            progress_percent=100,
+            progress_label="Ready",
             files=files,
         )
     except Exception as exc:
@@ -178,6 +232,8 @@ def fetch_status() -> OverpassStatus:
             detail=str(exc)[:500],
             stage="unknown",
             ready=False,
+            progress_percent=None,
+            progress_label=None,
             files=files,
         )
 
@@ -197,6 +253,8 @@ def _probe_interpreter(headers: dict[str, str]) -> OverpassStatus | None:
                 detail="Status endpoint unavailable, but interpreter probe succeeded.",
                 stage="ready",
                 ready=True,
+                progress_percent=100,
+                progress_label="Ready",
                 files=_inspect_bootstrap_files(),
             )
     except Exception:

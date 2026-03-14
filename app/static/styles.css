@@ -99,6 +99,34 @@ legend {
   background: #fff;
 }
 
+.progress-wrap.hidden {
+  display: none;
+}
+
+.progress-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.progress-track {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #ece7df;
+  border: 1px solid var(--line);
+}
+
+.progress-bar {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #65a30d 0%, var(--accent) 100%);
+  transition: width 0.35s ease;
+}
+
 .country-summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
