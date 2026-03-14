@@ -38,6 +38,8 @@ class CountryOption:
     name: str
     region_id: int
     province_count: int
+    total_companies: int
+    total_emails: int
 
 
 @dataclass
@@ -134,6 +136,25 @@ def build_country_options(db: Session) -> list[CountryOption]:
         .where(Region.is_active.is_(True), Region.osm_admin_level == 2)
         .order_by(Region.name)
     ).all()
+    company_counts = {
+        country: total
+        for country, total in db.execute(
+            select(Region.country_code, func.count(Company.id))
+            .select_from(Company)
+            .join(Region, Company.region_id == Region.id)
+            .group_by(Region.country_code)
+        ).all()
+    }
+    email_counts = {
+        country: total
+        for country, total in db.execute(
+            select(Region.country_code, func.count(Email.id))
+            .select_from(Email)
+            .join(Company, Email.company_id == Company.id)
+            .join(Region, Company.region_id == Region.id)
+            .group_by(Region.country_code)
+        ).all()
+    }
     options: list[CountryOption] = []
     for country in countries:
         province_count = db.scalar(
@@ -151,6 +172,8 @@ def build_country_options(db: Session) -> list[CountryOption]:
                 name=country.name,
                 region_id=country.id,
                 province_count=province_count,
+                total_companies=company_counts.get(country.country_code, 0),
+                total_emails=email_counts.get(country.country_code, 0),
             )
         )
     return options
@@ -207,6 +230,7 @@ def dashboard(
     selected_country_code = country_code or (detail_region.country_code if detail_region else None)
     if not selected_country_code and countries:
         selected_country_code = countries[0].code
+    selected_country = next((country for country in countries if country.code == selected_country_code), None)
 
     country_region = db.scalar(
         select(Region).where(
@@ -247,6 +271,7 @@ def dashboard(
         name="dashboard.html",
         context={
             "countries": countries,
+            "selected_country": selected_country,
             "categories": categories,
             "selected_country_code": selected_country_code,
             "country_region": country_region,

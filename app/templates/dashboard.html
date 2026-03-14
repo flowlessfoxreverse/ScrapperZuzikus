@@ -90,6 +90,27 @@
           </div>
         </form>
 
+        {% if selected_country %}
+        <div class="country-summary">
+          <div class="stat-card">
+            <span class="subtle">Selected Country</span>
+            <strong>{{ selected_country.name }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Provinces</span>
+            <strong>{{ selected_country.province_count }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Scraped Companies</span>
+            <strong>{{ selected_country.total_companies }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Scraped Emails</span>
+            <strong>{{ selected_country.total_emails }}</strong>
+          </div>
+        </div>
+        {% endif %}
+
         <dialog id="province-modal" class="modal">
           <div class="modal-card">
             <div class="section-heading">
@@ -303,6 +324,37 @@
           </div>
           {% endif %}
         </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Country Totals</h2>
+          <span>{{ countries|length }} countries</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Country</th>
+              <th>Provinces</th>
+              <th>Companies</th>
+              <th>Emails</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for country in countries %}
+            <tr>
+              <td>
+                <a href="/?country_code={{ country.code }}">{{ country.name }}</a>
+              </td>
+              <td>{{ country.province_count }}</td>
+              <td>{{ country.total_companies }}</td>
+              <td>{{ country.total_emails }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4">No countries available.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </section>
 
       {% if not detail_region %}
