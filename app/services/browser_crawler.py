@@ -76,10 +76,11 @@ def _perform_humanish_actions(page) -> None:
     page.wait_for_timeout(300)
 
 
-def _build_playwright_proxy() -> dict[str, str] | None:
-    if not settings.browser_proxy_url:
+def _build_playwright_proxy(proxy_url: str | None = None) -> dict[str, str] | None:
+    target_proxy_url = proxy_url or settings.browser_proxy_url
+    if not target_proxy_url:
         return None
-    parsed = urlparse(settings.browser_proxy_url)
+    parsed = urlparse(target_proxy_url)
     if not parsed.scheme or not parsed.hostname:
         return None
     server = f"{parsed.scheme}://{parsed.hostname}"
@@ -122,7 +123,7 @@ def _apply_stealth(page) -> None:
         return
 
 
-def browser_crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
+def browser_crawl_site(website_url: str, on_request=None, proxy_url: str | None = None) -> CrawlSiteResult:
     from playwright.sync_api import sync_playwright
 
     website_url = normalize_url(website_url)
@@ -137,7 +138,7 @@ def browser_crawl_site(website_url: str, on_request=None) -> CrawlSiteResult:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
             headless=True,
-            proxy=_build_playwright_proxy(),
+            proxy=_build_playwright_proxy(proxy_url),
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",

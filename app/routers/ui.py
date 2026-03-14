@@ -11,9 +11,10 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import Category, Company, Email, Phone, Region, RunCategory, RunStatus, ScrapeRun, ValidationStatus, Vertical
+from app.models import Category, Company, Email, Phone, ProxyEndpoint, ProxyKind, Region, RunCategory, RunStatus, ScrapeRun, ValidationStatus, Vertical
 from app.schemas import EmailRow
 from app.services.overpass import fetch_status
+from app.services.proxy_pool import active_proxy_count, list_proxies, upsert_proxy
 from app.services.region_catalog import country_catalog, upsert_country_with_subdivisions
 from app.services.runs import find_active_run, request_run_cancellation
 from app.tasks import run_scrape, sync_region_catalog_task
@@ -58,6 +59,18 @@ class CompanyAuditRow:
     latest_email: str | None
     phone_count: int
     latest_phone: str | None
+
+
+@dataclass
+class ProxyRow:
+    id: int
+    label: str
+    proxy_url: str
+    kind: str
+    is_active: bool
+    leased_by: str | None
+    failure_count: int
+    notes: str | None
 
 
 def summarize_run_note(note: str | None) -> str:
@@ -374,6 +387,7 @@ def dashboard(
             "summarize_run_note": summarize_run_note,
             "region_stats": region_stats,
             "overpass_status": overpass_status,
+            "browser_proxy_slots": active_proxy_count(db, ProxyKind.BROWSER),
             "message": message,
             "validation_statuses": list(ValidationStatus),
         },
@@ -528,6 +542,70 @@ def region_editor(request: Request, db: Session = Depends(get_db)) -> HTMLRespon
             "country_catalog": country_catalog(),
         },
     )
+
+
+@router.get("/proxies", response_class=HTMLResponse)
+def proxy_editor(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+    proxies = [
+        ProxyRow(
+            id=proxy.id,
+            label=proxy.label,
+            proxy_url=proxy.proxy_url,
+            kind=proxy.kind.value,
+            is_active=proxy.is_active,
+            leased_by=proxy.leased_by,
+            failure_count=proxy.failure_count,
+            notes=proxy.notes,
+        )
+        for proxy in list_proxies(db)
+    ]
+    return templates.TemplateResponse(
+        request=request,
+        name="proxies.html",
+        context={
+            "proxies": proxies,
+            "proxy_kinds": list(ProxyKind),
+            "browser_proxy_slots": active_proxy_count(db, ProxyKind.BROWSER),
+        },
+    )
+
+
+@router.post("/proxies", response_class=HTMLResponse)
+def create_proxy_html(
+    label: str = Form(...),
+    proxy_url: str = Form(...),
+    kind: str = Form("browser"),
+    is_active: str | None = Form(None),
+    notes: str | None = Form(None),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    upsert_proxy(
+        db,
+        label=label.strip(),
+        proxy_url=proxy_url.strip(),
+        kind=ProxyKind(kind),
+        is_active=is_active == "1",
+        notes=(notes or "").strip() or None,
+    )
+    db.commit()
+    return RedirectResponse(url="/proxies", status_code=303)
+
+
+@router.post("/proxies/{proxy_id}/toggle", response_class=HTMLResponse)
+def toggle_proxy_html(
+    proxy_id: int,
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    proxy = db.get(ProxyEndpoint, proxy_id)
+    if proxy is not None:
+        proxy.is_active = not proxy.is_active
+        if not proxy.is_active:
+            proxy.leased_by = None
+            proxy.leased_at = None
+            proxy.lease_expires_at = None
+        db.add(proxy)
+        db.commit()
+    return RedirectResponse(url="/proxies", status_code=303)
 
 
 @router.post("/regions/sync", response_class=HTMLResponse)

@@ -57,6 +57,11 @@ class RunCompanyStatus(str, Enum):
     SKIPPED = "skipped"
 
 
+class ProxyKind(str, Enum):
+    BROWSER = "browser"
+    CRAWLER = "crawler"
+
+
 class Region(Base):
     __tablename__ = "regions"
 
@@ -71,6 +76,23 @@ class Region(Base):
     companies: Mapped[list["Company"]] = relationship(back_populates="region")
     runs: Mapped[list["ScrapeRun"]] = relationship(back_populates="region")
     category_states: Mapped[list["RegionCategoryState"]] = relationship(back_populates="region")
+
+
+class ProxyEndpoint(Base):
+    __tablename__ = "proxy_endpoints"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    label: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    proxy_url: Mapped[str] = mapped_column(String(500), unique=True)
+    kind: Mapped[ProxyKind] = mapped_column(SqlEnum(ProxyKind), default=ProxyKind.BROWSER, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    leased_by: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    leased_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failure_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class Category(Base):

@@ -5,13 +5,14 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Category, Company, CompanyCategory, Email, Form, Page, Phone, Region, RunCategory, RunCompanyStatus, RunStatus, ScrapeRun
+from app.models import Category, Company, CompanyCategory, Email, Form, Page, Phone, ProxyKind, Region, RunCategory, RunCompanyStatus, RunStatus, ScrapeRun
 from app.services.company_dedupe import find_company_by_website_key, should_replace_name
 from app.services.discovery_state import ensure_utc, get_or_create_region_category_state, should_refresh_discovery
 from app.services.browser_crawler import browser_crawl_site
 from app.services.crawler import crawl_site, normalize_phone_number, should_browser_escalate
 from app.services.metrics import record_request_metric
 from app.services.overpass import fetch_places
+from app.services.proxy_pool import acquire_proxy, active_proxy_count, release_proxy
 from app.services.runs import finalize_cancelled_run
 from app.services.run_companies import (
     close_open_run_companies,
@@ -93,6 +94,7 @@ def persist_crawl(
     *,
     crawler=crawl_site,
     request_provider: str = "website",
+    crawler_kwargs: dict | None = None,
 ) -> object:
     if not company.website_url:
         company.crawl_status = "no_website"
@@ -109,7 +111,7 @@ def persist_crawl(
             **metric,
         )
 
-    result = crawler(company.website_url, on_request=on_request)
+    result = crawler(company.website_url, on_request=on_request, **(crawler_kwargs or {}))
     company.crawl_status = result.crawl_status
     company.has_contact_form = any(page.has_contact_form for page in result.pages)
     session.add(company)
@@ -451,19 +453,34 @@ def execute_browser_crawl(session: Session, run_id: int, company_id: int) -> Non
     mark_run_company_running(session, run_id, company_id)
     session.commit()
 
+    proxy = None
     try:
+        owner = f"run-{run_id}-company-{company_id}"
+        if active_proxy_count(session, ProxyKind.BROWSER) > 0:
+            proxy = acquire_proxy(session, owner=owner, kind=ProxyKind.BROWSER)
+            if proxy is None:
+                requeue_run_company(session, run_id, company_id, "Waiting for proxy worker slot.")
+                session.commit()
+                from app.tasks import browser_crawl_company
+                browser_crawl_company.send_with_options(args=(run_id, company_id), delay=5_000)
+                return
+            session.commit()
         persist_crawl(
             session=session,
             company=company,
             run_id=run_id,
             crawler=browser_crawl_site,
             request_provider="browser",
+            crawler_kwargs={"proxy_url": proxy.proxy_url if proxy else None},
         )
         mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.COMPLETED)
     except Exception as exc:
         company.crawl_status = "failed"
         session.add(company)
         mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.FAILED, str(exc))
+        release_proxy(session, proxy.id if proxy else None, failed=True)
+    else:
+        release_proxy(session, proxy.id if proxy else None, failed=False)
 
     session.refresh(run)
     if run.cancel_requested:

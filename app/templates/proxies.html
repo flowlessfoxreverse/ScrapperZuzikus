@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Proxy Editor</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Configuration</p>
+          <h1>Proxy Editor</h1>
+          <p class="subtle">Each active browser proxy becomes one browser worker slot. Keep browser worker thread capacity at or above the number of active browser proxies.</p>
+        </div>
+        <div class="hero-actions">
+          <a class="ghost-button" href="/">Back</a>
+        </div>
+      </section>
+
+      <section class="country-summary">
+        <div class="stat-card">
+          <span class="subtle">Active Browser Slots</span>
+          <strong>{{ browser_proxy_slots }}</strong>
+        </div>
+      </section>
+
+      <section class="grid category-grid">
+        <div class="panel">
+          <h2>Configured Proxies</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Label</th>
+                <th>Kind</th>
+                <th>Proxy URL</th>
+                <th>Status</th>
+                <th>Lease</th>
+                <th>Failures</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for proxy in proxies %}
+              <tr>
+                <td>{{ proxy.label }}</td>
+                <td>{{ proxy.kind }}</td>
+                <td>{{ proxy.proxy_url }}</td>
+                <td>
+                  {% if proxy.is_active %}
+                  <span class="badge muted">active</span>
+                  {% else %}
+                  <span class="badge warn">disabled</span>
+                  {% endif %}
+                </td>
+                <td>{{ proxy.leased_by or "-" }}</td>
+                <td>{{ proxy.failure_count }}</td>
+                <td>
+                  <form action="/proxies/{{ proxy.id }}/toggle" method="post">
+                    <button type="submit" class="ghost-button small-button">
+                      {% if proxy.is_active %}Disable{% else %}Enable{% endif %}
+                    </button>
+                  </form>
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="7">No proxies configured yet.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="panel">
+          <h2>Add Proxy</h2>
+          <form action="/proxies" method="post" class="stack">
+            <label>
+              <span>Label</span>
+              <input type="text" name="label" placeholder="TH Browser Proxy 1" required />
+            </label>
+            <label>
+              <span>Kind</span>
+              <select name="kind">
+                {% for kind in proxy_kinds %}
+                <option value="{{ kind.value }}">{{ kind.value }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>
+              <span>Proxy URL</span>
+              <input type="text" name="proxy_url" placeholder="http://user:pass@proxy-host:port" required />
+            </label>
+            <label>
+              <span>Notes</span>
+              <textarea name="notes" rows="4" placeholder="Optional admin note"></textarea>
+            </label>
+            <label class="checkbox-card">
+              <input type="checkbox" name="is_active" value="1" checked />
+              <span>Active immediately</span>
+              <small>Active browser proxies add browser worker slots.</small>
+            </label>
+            <button type="submit">Save Proxy</button>
+          </form>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

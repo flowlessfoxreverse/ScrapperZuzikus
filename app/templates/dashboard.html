@@ -18,6 +18,7 @@
         <div class="hero-actions">
           <a class="ghost-button" href="/regions">Edit Regions</a>
           <a class="ghost-button" href="/categories">Edit Categories</a>
+          <a class="ghost-button" href="/proxies">Edit Proxies</a>
         </div>
       </section>
 
@@ -107,6 +108,10 @@
           <div class="stat-card">
             <span class="subtle">Scraped Emails</span>
             <strong>{{ selected_country.total_emails }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Browser Proxy Slots</span>
+            <strong>{{ browser_proxy_slots }}</strong>
           </div>
         </div>
         {% endif %}
