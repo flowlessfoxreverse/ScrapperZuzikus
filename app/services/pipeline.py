@@ -54,6 +54,23 @@ def _is_proxy_transport_error(exc: Exception, proxy_url: str | None) -> bool:
     return any(indicator in message for indicator in indicators)
 
 
+def _is_dead_host_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    indicators = (
+        "no host connection",
+        "temporary failure in name resolution",
+        "name or service not known",
+        "nodename nor servname provided",
+        "getaddrinfo failed",
+        "failed to resolve",
+        "no address associated with hostname",
+        "hostname nor servname provided",
+        "server misbehaving",
+        "dns",
+    )
+    return any(indicator in message for indicator in indicators)
+
+
 def _retry_delay_ms(attempt: int) -> int:
     base_delay = max(1, settings.crawl_retry_delay_seconds)
     return int(base_delay * min(attempt, 4) * 1000)
@@ -795,6 +812,16 @@ def execute_crawl(session: Session, run_id: int, company_id: int) -> None:
             failed=proxy_failed,
             record_result=proxy_failed,
         )
+        if _is_dead_host_error(exc):
+            company.crawl_status = "failed"
+            session.add(company)
+            mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.FAILED, f"Dead host: {str(exc)[:500]}")
+            session.refresh(run)
+            if run.cancel_requested:
+                finalize_cancelled_run(session, run, "Run stopped by request.")
+            maybe_complete_run(session, run_id)
+            session.commit()
+            return
         if _schedule_retry(
             session,
             run_id=run_id,
@@ -878,6 +905,16 @@ def execute_browser_crawl(session: Session, run_id: int, company_id: int) -> Non
             failed=proxy_failed,
             record_result=proxy_failed,
         )
+        if _is_dead_host_error(exc):
+            company.crawl_status = "failed"
+            session.add(company)
+            mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.FAILED, f"Dead host: {str(exc)[:500]}")
+            session.refresh(run)
+            if run.cancel_requested:
+                finalize_cancelled_run(session, run, "Run stopped by request.")
+            maybe_complete_run(session, run_id)
+            session.commit()
+            return
         if _schedule_retry(
             session,
             run_id=run_id,
