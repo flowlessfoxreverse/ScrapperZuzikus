@@ -13,6 +13,11 @@ TERMINAL_RUN_COMPANY_STATUSES = (
     RunCompanyStatus.FAILED,
     RunCompanyStatus.SKIPPED,
 )
+TERMINAL_RUN_STATUSES = (
+    RunStatus.COMPLETED,
+    RunStatus.FAILED,
+    RunStatus.SKIPPED,
+)
 
 
 def utcnow() -> datetime:
@@ -81,9 +86,53 @@ def mark_run_company_finished(
     session.flush()
 
 
+def close_open_run_companies(
+    session: Session,
+    run_id: int,
+    status: RunCompanyStatus,
+    last_error: str | None = None,
+) -> int:
+    rows = session.scalars(
+        select(RunCompany).where(
+            RunCompany.run_id == run_id,
+            RunCompany.status.not_in(TERMINAL_RUN_COMPANY_STATUSES),
+        )
+    ).all()
+    closed_at = utcnow()
+    for row in rows:
+        row.status = status
+        row.finished_at = closed_at
+        row.last_error = last_error[:2000] if last_error else None
+        session.add(row)
+    session.flush()
+    return len(rows)
+
+
+def reconcile_terminal_runs(session: Session) -> int:
+    runs = session.scalars(
+        select(ScrapeRun).where(ScrapeRun.status.in_(TERMINAL_RUN_STATUSES))
+    ).all()
+    cleaned = 0
+    for run in runs:
+        if run.status == RunStatus.COMPLETED:
+            fallback_status = RunCompanyStatus.SKIPPED
+            fallback_error = "Closed automatically because the run was already completed."
+        else:
+            fallback_status = RunCompanyStatus.FAILED
+            fallback_error = run.note or "Closed automatically because the run was already terminal."
+        cleaned += close_open_run_companies(
+            session,
+            run.id,
+            fallback_status,
+            fallback_error,
+        )
+    session.flush()
+    return cleaned
+
+
 def maybe_complete_run(session: Session, run_id: int) -> None:
     run = session.get(ScrapeRun, run_id)
-    if run is None or run.status in {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.SKIPPED}:
+    if run is None or run.status in TERMINAL_RUN_STATUSES:
         return
 
     total = session.scalar(select(func.count()).select_from(RunCompany).where(RunCompany.run_id == run_id)) or 0
@@ -104,5 +153,11 @@ def maybe_complete_run(session: Session, run_id: int) -> None:
     if total == 0 or terminal >= total:
         run.status = RunStatus.COMPLETED
         run.finished_at = utcnow()
+        close_open_run_companies(
+            session,
+            run_id,
+            RunCompanyStatus.SKIPPED,
+            "Closed automatically because the run completed.",
+        )
     session.add(run)
     session.flush()

@@ -10,7 +10,13 @@ from app.services.discovery_state import ensure_utc, get_or_create_region_catego
 from app.services.crawler import crawl_site
 from app.services.metrics import record_request_metric
 from app.services.overpass import fetch_places
-from app.services.run_companies import mark_run_company_finished, mark_run_company_running, maybe_complete_run, queue_company_for_run
+from app.services.run_companies import (
+    close_open_run_companies,
+    mark_run_company_finished,
+    mark_run_company_running,
+    maybe_complete_run,
+    queue_company_for_run,
+)
 from app.services.usage import can_consume, consume_units
 
 
@@ -186,6 +192,7 @@ def execute_discovery(
         run.status = RunStatus.FAILED
         run.note = "Region not found."
         run.finished_at = datetime.now(timezone.utc)
+        close_open_run_companies(session, run.id, RunCompanyStatus.FAILED, run.note)
         session.commit()
         return
 
@@ -216,6 +223,7 @@ def execute_discovery(
                 run.status = RunStatus.SKIPPED
                 run.note = f"Daily Overpass cap reached ({usage.units_used}/{usage.cap})."
                 run.finished_at = datetime.now(timezone.utc)
+                close_open_run_companies(session, run.id, RunCompanyStatus.SKIPPED, run.note)
                 state.status = "rate_limited"
                 state.note = run.note
                 session.add(state)
@@ -286,6 +294,7 @@ def execute_discovery(
         run.status = RunStatus.FAILED
         run.finished_at = datetime.now(timezone.utc)
         run.note = " ; ".join(category_errors)[:2000]
+        close_open_run_companies(session, run.id, RunCompanyStatus.FAILED, run.note)
         session.add(run)
         session.commit()
         return

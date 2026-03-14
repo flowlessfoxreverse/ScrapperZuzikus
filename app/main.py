@@ -11,6 +11,7 @@ from app.routers.api import router as api_router
 from app.routers.ui import router as ui_router
 from app.seed import seed_defaults
 from app.services.region_catalog import sync_region_catalog
+from app.services.run_companies import reconcile_terminal_runs
 
 
 settings = get_settings()
@@ -22,6 +23,8 @@ async def lifespan(_app: FastAPI):
     with SessionLocal() as session:
         seed_defaults(session)
         sync_region_catalog(session)
+        reconcile_terminal_runs(session)
+        session.commit()
     yield
 
 
