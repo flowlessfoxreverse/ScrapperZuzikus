@@ -83,8 +83,7 @@ services:
     hostname: overpass
     entrypoint:
       - /bin/sh
-      - -c
-      - chmod og+rx /db && exec /docker-entrypoint.sh
+      - /usr/local/bin/overpass-entrypoint.sh
     environment:
       OVERPASS_META: "no"
       OVERPASS_MODE: ${OVERPASS_MODE:-init}
@@ -97,6 +96,7 @@ services:
       - "${OVERPASS_HOST_PORT:-12346}:80"
     volumes:
       - overpassdb:/db
+      - ./ops/overpass-entrypoint.sh:/usr/local/bin/overpass-entrypoint.sh:ro
     restart: unless-stopped
     networks:
       scrapper_net:
