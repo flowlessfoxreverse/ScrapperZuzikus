@@ -57,7 +57,7 @@ def ensure_proxy_pool_schema(engine: Engine) -> None:
             connection.execute(
                 text(
                     "UPDATE proxy_endpoints "
-                    "SET supports_http = CASE WHEN kind = 'crawler' THEN TRUE ELSE supports_http END, "
-                    "supports_browser = CASE WHEN kind = 'browser' THEN TRUE ELSE supports_browser END"
+                    "SET supports_http = CASE WHEN kind::text = 'CRAWLER' THEN TRUE ELSE supports_http END, "
+                    "supports_browser = CASE WHEN kind::text = 'BROWSER' THEN TRUE ELSE supports_browser END"
                 )
             )
