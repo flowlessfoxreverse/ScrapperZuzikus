@@ -11,7 +11,14 @@ from app.models import Category, Company, CompanyCategory, ContactChannel, Conta
 from app.services.company_dedupe import find_company_by_website_key, should_replace_name
 from app.services.discovery_state import ensure_utc, get_or_create_region_category_state, should_refresh_discovery
 from app.services.browser_crawler import browser_crawl_site
-from app.services.crawler import crawl_site, normalize_phone_number, normalize_telegram_value, should_browser_escalate
+from app.services.crawler import (
+    crawl_site,
+    is_social_or_chat_url,
+    normalize_phone_number,
+    normalize_telegram_value,
+    sanitize_company_website_url,
+    should_browser_escalate,
+)
 from app.services.metrics import record_request_metric
 from app.services.overpass import fetch_places
 from app.services.proxy_pool import acquire_proxy, active_proxy_count, release_proxy, render_proxy_url
@@ -148,7 +155,8 @@ def upsert_company_from_element(
     external_ref = f"{element.get('type', 'nwr')}:{element.get('id')}"
     tags = element.get("tags", {})
     incoming_name = tags.get("name") or external_ref
-    incoming_website = tags.get("website") or tags.get("contact:website")
+    raw_incoming_website = tags.get("website") or tags.get("contact:website")
+    incoming_website = sanitize_company_website_url(raw_incoming_website)
     company = (
         session.query(Company)
         .filter(Company.region_id == region.id, Company.source == "overpass", Company.external_ref == external_ref)
@@ -178,7 +186,8 @@ def upsert_company_from_element(
     else:
         if should_replace_name(company, incoming_name, external_ref):
             company.name = incoming_name
-        company.website_url = incoming_website or company.website_url
+        if incoming_website:
+            company.website_url = incoming_website
         company.city = tags.get("addr:city") or company.city
         company.source_query = company.source_query or query[:255]
         company.source_payload = company.source_payload or element
@@ -198,6 +207,31 @@ def upsert_company_from_element(
         session.add(CompanyCategory(company_id=company.id, category_id=category.id))
 
     persist_overpass_contacts(session, company, tags, region.country_code)
+    if raw_incoming_website and is_social_or_chat_url(raw_incoming_website):
+        normalized_telegram = normalize_telegram_value(raw_incoming_website)
+        if normalized_telegram:
+            persist_contact_channel(
+                session,
+                company,
+                channel_type=ContactChannelType.TELEGRAM,
+                channel_value=raw_incoming_website,
+                normalized_value=normalized_telegram,
+                source_type="overpass_tag",
+                source_page_url=None,
+                metadata={"tag": "website"},
+            )
+        normalized_whatsapp = normalize_phone_number(raw_incoming_website, default_region_code=region.country_code)
+        if normalized_whatsapp:
+            persist_contact_channel(
+                session,
+                company,
+                channel_type=ContactChannelType.WHATSAPP,
+                channel_value=raw_incoming_website,
+                normalized_value=normalized_whatsapp,
+                source_type="overpass_tag",
+                source_page_url=None,
+                metadata={"tag": "website"},
+            )
     return company
 
 

@@ -62,9 +62,9 @@ class Settings(BaseSettings):
     worker_processes: int = 1
     worker_threads: int = 1
     crawl_worker_processes: int = 1
-    crawl_worker_threads: int = 1
+    crawl_worker_threads: int = 6
     retry_worker_processes: int = 1
-    retry_worker_threads: int = 1
+    retry_worker_threads: int = 2
     browser_worker_processes: int = 1
     browser_worker_threads: int = 64
 

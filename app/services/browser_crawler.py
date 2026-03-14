@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.services.crawler import (
     BROWSER_FALLBACK_HEADERS,
     CONTACT_PATH_HINTS,
+    PRIMARY_CONTACT_PATH_HINTS,
     SOCIAL_HOSTS,
     CrawlPageResult,
     CrawlSiteResult,
@@ -20,6 +21,7 @@ from app.services.crawler import (
     extract_pdf_page_results,
     extract_phones,
     extract_structured_contacts,
+    sanitize_company_website_url,
     normalize_url,
     should_scan_assets,
 )
@@ -152,7 +154,9 @@ def browser_crawl_site(
 ) -> CrawlSiteResult:
     from playwright.sync_api import sync_playwright
 
-    website_url = normalize_url(website_url)
+    website_url = sanitize_company_website_url(website_url)
+    if not website_url:
+        return CrawlSiteResult(pages=[], crawl_status="no_website")
     if is_host_suppressed(website_url):
         if on_request:
             on_request(
@@ -167,10 +171,11 @@ def browser_crawl_site(
     base = urlparse(website_url)
     base_host = normalize_host_key(website_url)
     candidates = [website_url]
-    for path in CONTACT_PATH_HINTS:
+    for path in PRIMARY_CONTACT_PATH_HINTS:
         candidates.append(urljoin(website_url, f"/{path}"))
 
     seen: set[str] = set()
+    resolved_seen: set[str] = set()
     pages: list[CrawlPageResult] = []
 
     with sync_playwright() as playwright:
@@ -273,6 +278,11 @@ def browser_crawl_site(
                             duration_ms=duration_ms,
                             error=None,
                         )
+
+                    resolved_key = f"{normalize_host_key(final_url)}|{urlparse(final_url).path.rstrip('/') or '/'}"
+                    if resolved_key in resolved_seen:
+                        continue
+                    resolved_seen.add(resolved_key)
 
                     soup = BeautifulSoup(content, "html.parser")
                     title = title or (soup.title.text.strip() if soup.title and soup.title.text else None)

@@ -45,6 +45,13 @@ CONTACT_PATH_HINTS = (
     "联系我们",
     "聯絡我們",
 )
+PRIMARY_CONTACT_PATH_HINTS = (
+    "contact",
+    "contact-us",
+    "contactus",
+    "about",
+    "about-us",
+)
 SOCIAL_HOSTS = (
     "facebook.com",
     "instagram.com",
@@ -187,6 +194,23 @@ def normalize_url(url: str) -> str:
     if not parsed.scheme:
         return f"https://{url}"
     return url
+
+
+def is_social_or_chat_url(url: str | None) -> bool:
+    if not url:
+        return False
+    normalized = normalize_url(url)
+    host = urlparse(normalized).netloc.lower().removeprefix("www.")
+    return any(host == social_host or host.endswith(f".{social_host}") for social_host in SOCIAL_HOSTS)
+
+
+def sanitize_company_website_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    normalized = normalize_url(url)
+    if is_social_or_chat_url(normalized):
+        return None
+    return normalized
 
 
 def fetch_robots_allowed(base_url: str) -> bool:
@@ -791,7 +815,9 @@ def crawl_site(
     proxy_url: str | None = None,
     default_region_code: str | None = None,
 ) -> CrawlSiteResult:
-    website_url = normalize_url(website_url)
+    website_url = sanitize_company_website_url(website_url)
+    if not website_url:
+        return CrawlSiteResult(pages=[], crawl_status="no_website")
     if is_host_suppressed(website_url):
         if on_request:
             on_request(
@@ -809,10 +835,11 @@ def crawl_site(
 
     base = urlparse(website_url)
     candidates = [website_url]
-    for path in CONTACT_PATH_HINTS:
+    for path in PRIMARY_CONTACT_PATH_HINTS:
         candidates.append(urljoin(website_url, f"/{path}"))
 
     seen = set()
+    resolved_seen: set[str] = set()
     pages: list[CrawlPageResult] = []
     headers = {"User-Agent": settings.user_agent}
     useless_attempts = 0
@@ -853,6 +880,25 @@ def crawl_site(
                         )
                     )
                     continue
+
+                resolved_url = str(response.url)
+                resolved_key = f"{normalize_host_key(resolved_url)}|{urlparse(resolved_url).path.rstrip('/') or '/'}"
+                if resolved_key in resolved_seen:
+                    useless_attempts += 1
+                    if not useful_found and useless_attempts >= settings.crawler_early_stop_core_attempts:
+                        register_host_failure(website_url)
+                        if on_request:
+                            on_request(
+                                request_kind="early_stopped",
+                                method="EVENT",
+                                url=website_url,
+                                status_code=response.status_code,
+                                duration_ms=0,
+                                error=f"duplicate_final_url_after_{useless_attempts}",
+                            )
+                        break
+                    continue
+                resolved_seen.add(resolved_key)
 
                 soup = BeautifulSoup(response.text, "html.parser")
                 title = soup.title.text.strip() if soup.title and soup.title.text else None
