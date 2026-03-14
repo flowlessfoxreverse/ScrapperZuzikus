@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     browser_max_pages_per_site: int = 6
     browser_navigation_timeout_seconds: int = 30
     browser_wait_after_load_ms: int = 2500
+    browser_retry_attempts: int = 2
+    browser_stealth_scroll_steps: int = 3
     worker_processes: int = 1
     worker_threads: int = 1
     browser_worker_processes: int = 1
