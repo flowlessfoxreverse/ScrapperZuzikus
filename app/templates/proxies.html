@@ -67,6 +67,9 @@
                 <th>Status</th>
                 <th>Active Lease Owner</th>
                 <th>Lifetime Success / Fail</th>
+                <th>Proxied Requests</th>
+                <th>Avg ms</th>
+                <th>Last Seen</th>
                 <th>Consecutive</th>
                 <th>Action</th>
               </tr>
@@ -97,6 +100,9 @@
                 </td>
                 <td>{{ proxy.leased_by or "-" }}</td>
                 <td>{{ proxy.success_count }} / {{ proxy.failure_count }}</td>
+                <td>{{ proxy.proxied_request_count }} / {{ proxy.proxied_error_count }}</td>
+                <td>{{ proxy.avg_duration_ms or "-" }}</td>
+                <td>{{ proxy.last_seen_at or "-" }}</td>
                 <td>{{ proxy.consecutive_failures }}</td>
                 <td>
                   <form action="/proxies/{{ proxy.id }}/toggle" method="post">
@@ -107,7 +113,7 @@
                 </td>
               </tr>
               {% else %}
-              <tr><td colspan="11">No proxies configured yet.</td></tr>
+              <tr><td colspan="14">No proxies configured yet.</td></tr>
               {% endfor %}
             </tbody>
           </table>

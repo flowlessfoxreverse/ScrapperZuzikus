@@ -91,6 +91,10 @@ class ProxyRow:
     auto_disabled_at: datetime | None
     status_label: str
     notes: str | None
+    proxied_request_count: int
+    proxied_error_count: int
+    avg_duration_ms: int
+    last_seen_at: datetime | None
 
 
 @dataclass
@@ -120,6 +124,17 @@ class ErrorMetricRow:
     request_kind: str
     error: str
     request_count: int
+    last_seen_at: datetime
+
+
+@dataclass
+class ProxyMetricRow:
+    proxy_label: str
+    provider: str
+    request_count: int
+    error_count: int
+    avg_duration_ms: int
+    max_duration_ms: int
     last_seen_at: datetime
 
 
@@ -421,7 +436,11 @@ def build_recent_runs_page(db: Session, *, offset: int = 0, limit: int = RECENT_
     return rows[:limit], has_more
 
 
-def build_request_metric_views(db: Session, *, limit: int = 2000) -> tuple[list[MetricSummaryRow], list[HostMetricRow], list[ErrorMetricRow]]:
+def build_request_metric_views(
+    db: Session,
+    *,
+    limit: int = 2000,
+) -> tuple[list[MetricSummaryRow], list[HostMetricRow], list[ErrorMetricRow], list[ProxyMetricRow]]:
     metrics = db.scalars(
         select(RequestMetric)
         .order_by(RequestMetric.created_at.desc())
@@ -431,6 +450,7 @@ def build_request_metric_views(db: Session, *, limit: int = 2000) -> tuple[list[
     summary_buckets: dict[tuple[str, str, str], dict[str, int]] = {}
     host_buckets: dict[tuple[str, str], dict[str, int]] = {}
     error_buckets: dict[tuple[str, str, str], dict[str, object]] = {}
+    proxy_buckets: dict[tuple[str, str], dict[str, object]] = {}
 
     for metric in metrics:
         transport = "proxy" if metric.used_proxy else "direct"
@@ -466,6 +486,27 @@ def build_request_metric_views(db: Session, *, limit: int = 2000) -> tuple[list[
             error_bucket["count"] += 1
             if metric.created_at > error_bucket["last_seen_at"]:
                 error_bucket["last_seen_at"] = metric.created_at
+
+        if metric.used_proxy:
+            proxy_label = metric.proxy_label or (f"proxy-{metric.proxy_id}" if metric.proxy_id else "unknown-proxy")
+            proxy_key = (proxy_label, metric.provider)
+            proxy_bucket = proxy_buckets.setdefault(
+                proxy_key,
+                {
+                    "count": 0,
+                    "error_count": 0,
+                    "duration_total": 0,
+                    "max_duration": 0,
+                    "last_seen_at": metric.created_at,
+                },
+            )
+            proxy_bucket["count"] += 1
+            proxy_bucket["duration_total"] += metric.duration_ms
+            proxy_bucket["max_duration"] = max(proxy_bucket["max_duration"], metric.duration_ms)
+            if metric.error:
+                proxy_bucket["error_count"] += 1
+            if metric.created_at > proxy_bucket["last_seen_at"]:
+                proxy_bucket["last_seen_at"] = metric.created_at
 
     summaries = [
         MetricSummaryRow(
@@ -505,7 +546,44 @@ def build_request_metric_views(db: Session, *, limit: int = 2000) -> tuple[list[
         for (provider, request_kind, error), values in error_buckets.items()
     ]
     errors.sort(key=lambda row: (-row.request_count, row.provider, row.request_kind))
-    return summaries, hosts[:20], errors[:20]
+    proxies = [
+        ProxyMetricRow(
+            proxy_label=proxy_label,
+            provider=provider,
+            request_count=values["count"],
+            error_count=values["error_count"],
+            avg_duration_ms=round(values["duration_total"] / values["count"]),
+            max_duration_ms=values["max_duration"],
+            last_seen_at=values["last_seen_at"],
+        )
+        for (proxy_label, provider), values in proxy_buckets.items()
+    ]
+    proxies.sort(key=lambda row: (-row.request_count, row.proxy_label, row.provider))
+    return summaries, hosts[:20], errors[:20], proxies[:20]
+
+
+def build_proxy_usage_map(db: Session, *, limit: int = 5000) -> dict[int, dict[str, object]]:
+    metrics = db.scalars(
+        select(RequestMetric)
+        .where(RequestMetric.used_proxy.is_(True), RequestMetric.proxy_id.is_not(None))
+        .order_by(RequestMetric.created_at.desc())
+        .limit(limit)
+    ).all()
+    usage: dict[int, dict[str, object]] = {}
+    for metric in metrics:
+        if metric.proxy_id is None:
+            continue
+        bucket = usage.setdefault(
+            metric.proxy_id,
+            {"count": 0, "error_count": 0, "duration_total": 0, "last_seen_at": None},
+        )
+        bucket["count"] += 1
+        bucket["duration_total"] += metric.duration_ms
+        if metric.error:
+            bucket["error_count"] += 1
+        if bucket["last_seen_at"] is None or metric.created_at > bucket["last_seen_at"]:
+            bucket["last_seen_at"] = metric.created_at
+    return usage
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -755,6 +833,7 @@ def proxy_editor(request: Request, db: Session = Depends(get_db)) -> HTMLRespons
     browser_thread_capacity = settings.browser_worker_processes * settings.browser_worker_threads
     crawler_thread_capacity = settings.crawl_worker_processes * settings.crawl_worker_threads
     current_leases = lease_counts(db)
+    usage = build_proxy_usage_map(db)
     proxies = [
         ProxyRow(
             id=proxy.id,
@@ -777,6 +856,14 @@ def proxy_editor(request: Request, db: Session = Depends(get_db)) -> HTMLRespons
             auto_disabled_at=proxy.auto_disabled_at,
             status_label=proxy_status_label(proxy),
             notes=proxy.notes,
+            proxied_request_count=int(usage.get(proxy.id, {}).get("count", 0)),
+            proxied_error_count=int(usage.get(proxy.id, {}).get("error_count", 0)),
+            avg_duration_ms=(
+                round(usage[proxy.id]["duration_total"] / usage[proxy.id]["count"])
+                if proxy.id in usage and usage[proxy.id]["count"]
+                else 0
+            ),
+            last_seen_at=usage.get(proxy.id, {}).get("last_seen_at"),
         )
         for proxy in list_proxies(db)
     ]
@@ -797,7 +884,7 @@ def proxy_editor(request: Request, db: Session = Depends(get_db)) -> HTMLRespons
 
 @router.get("/metrics", response_class=HTMLResponse)
 def request_metrics_view(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
-    summaries, slow_hosts, recent_errors = build_request_metric_views(db)
+    summaries, slow_hosts, recent_errors, proxy_usage = build_request_metric_views(db)
     return templates.TemplateResponse(
         request=request,
         name="metrics.html",
@@ -805,6 +892,7 @@ def request_metrics_view(request: Request, db: Session = Depends(get_db)) -> HTM
             "summaries": summaries,
             "slow_hosts": slow_hosts,
             "recent_errors": recent_errors,
+            "proxy_usage": proxy_usage,
         },
     )
 

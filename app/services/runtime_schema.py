@@ -191,11 +191,19 @@ def ensure_request_metric_schema(engine: Engine) -> None:
     except Exception:
         return
 
-    if "used_proxy" in columns:
+    default_false = "FALSE" if engine.dialect.name == "postgresql" else "0"
+    statements: list[str] = []
+    if "used_proxy" not in columns:
+        statements.append(
+            f"ALTER TABLE request_metrics ADD COLUMN used_proxy BOOLEAN NOT NULL DEFAULT {default_false}"
+        )
+    if "proxy_id" not in columns:
+        statements.append("ALTER TABLE request_metrics ADD COLUMN proxy_id INTEGER NULL")
+    if "proxy_label" not in columns:
+        statements.append("ALTER TABLE request_metrics ADD COLUMN proxy_label VARCHAR(128) NULL")
+    if not statements:
         return
 
-    default_false = "FALSE" if engine.dialect.name == "postgresql" else "0"
     with engine.begin() as connection:
-        connection.execute(
-            text(f"ALTER TABLE request_metrics ADD COLUMN used_proxy BOOLEAN NOT NULL DEFAULT {default_false}")
-        )
+        for statement in statements:
+            connection.execute(text(statement))

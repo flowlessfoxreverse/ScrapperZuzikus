@@ -56,6 +56,41 @@
 
       <section class="panel">
         <div class="section-heading">
+          <h2>Proxy Template Usage</h2>
+          <span>Top 20 proxied groups</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Proxy</th>
+              <th>Provider</th>
+              <th>Requests</th>
+              <th>Errors</th>
+              <th>Avg ms</th>
+              <th>Max ms</th>
+              <th>Last Seen</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in proxy_usage %}
+            <tr>
+              <td>{{ item.proxy_label }}</td>
+              <td>{{ item.provider }}</td>
+              <td>{{ item.request_count }}</td>
+              <td>{{ item.error_count }}</td>
+              <td>{{ item.avg_duration_ms }}</td>
+              <td>{{ item.max_duration_ms }}</td>
+              <td>{{ item.last_seen_at }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7">No proxied request metrics yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
           <h2>Slow Hosts</h2>
           <span>Top 20 by average latency</span>
         </div>

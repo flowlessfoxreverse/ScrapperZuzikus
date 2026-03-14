@@ -14,6 +14,8 @@ def record_request_metric(
     url: str,
     duration_ms: int,
     used_proxy: bool = False,
+    proxy_id: int | None = None,
+    proxy_label: str | None = None,
     status_code: int | None = None,
     error: str | None = None,
     run_id: int | None = None,
@@ -23,6 +25,8 @@ def record_request_metric(
         RequestMetric(
             run_id=run_id,
             company_id=company_id,
+            proxy_id=proxy_id,
+            proxy_label=proxy_label[:128] if proxy_label else None,
             provider=provider,
             request_kind=request_kind,
             method=method,

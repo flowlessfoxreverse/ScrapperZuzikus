@@ -391,6 +391,8 @@ class RequestMetric(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     run_id: Mapped[int | None] = mapped_column(ForeignKey("scrape_runs.id"), nullable=True, index=True)
     company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id"), nullable=True, index=True)
+    proxy_id: Mapped[int | None] = mapped_column(ForeignKey("proxy_endpoints.id"), nullable=True, index=True)
+    proxy_label: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     provider: Mapped[str] = mapped_column(String(32), index=True)
     request_kind: Mapped[str] = mapped_column(String(32), index=True)
     method: Mapped[str] = mapped_column(String(8))

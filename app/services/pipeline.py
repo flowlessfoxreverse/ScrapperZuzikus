@@ -466,6 +466,8 @@ def persist_crawl(
     crawler=crawl_site,
     request_provider: str = "website",
     crawler_kwargs: dict | None = None,
+    proxy_id: int | None = None,
+    proxy_label: str | None = None,
     ) -> object:
     if not company.website_url:
         company.crawl_status = "no_website"
@@ -481,6 +483,8 @@ def persist_crawl(
             run_id=run_id,
             company_id=company.id,
             used_proxy=bool(effective_crawler_kwargs.get("proxy_url")),
+            proxy_id=proxy_id,
+            proxy_label=proxy_label,
             **metric,
         )
 
@@ -794,6 +798,8 @@ def execute_crawl(session: Session, run_id: int, company_id: int) -> None:
             company=company,
             run_id=run_id,
             crawler_kwargs={"proxy_url": proxy_url},
+            proxy_id=proxy.id if proxy else None,
+            proxy_label=proxy.label if proxy else None,
         )
         if settings.browser_fallback_enabled and result is not None and should_browser_escalate(result):
             release_proxy(session, proxy.id if proxy else None, owner=owner, workload=ProxyKind.CRAWLER, failed=False)
@@ -894,6 +900,8 @@ def execute_browser_crawl(session: Session, run_id: int, company_id: int) -> Non
             crawler=browser_crawl_site,
             request_provider="browser",
             crawler_kwargs={"proxy_url": proxy_url},
+            proxy_id=proxy.id if proxy else None,
+            proxy_label=proxy.label if proxy else None,
         )
         mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.COMPLETED)
     except Exception as exc:
