@@ -219,7 +219,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
     if "taxonomy_verticals" not in tables:
         if dialect == "postgresql":
             statements.append(
-                "CREATE TABLE taxonomy_verticals ("
+                "CREATE TABLE IF NOT EXISTS taxonomy_verticals ("
                 "id SERIAL PRIMARY KEY, "
                 "slug VARCHAR(64) NOT NULL UNIQUE, "
                 "label VARCHAR(128) NOT NULL, "
@@ -231,7 +231,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
             )
         else:
             statements.append(
-                "CREATE TABLE taxonomy_verticals ("
+                "CREATE TABLE IF NOT EXISTS taxonomy_verticals ("
                 "id INTEGER PRIMARY KEY, "
                 "slug VARCHAR(64) NOT NULL UNIQUE, "
                 "label VARCHAR(128) NOT NULL, "
@@ -241,12 +241,12 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 "created_at TIMESTAMP NOT NULL"
                 ")"
             )
-        statements.append("CREATE INDEX ix_taxonomy_verticals_slug ON taxonomy_verticals(slug)")
+        statements.append("CREATE INDEX IF NOT EXISTS ix_taxonomy_verticals_slug ON taxonomy_verticals(slug)")
 
     if "niche_clusters" not in tables:
         if dialect == "postgresql":
             statements.append(
-                "CREATE TABLE niche_clusters ("
+                "CREATE TABLE IF NOT EXISTS niche_clusters ("
                 "id SERIAL PRIMARY KEY, "
                 "slug VARCHAR(64) NOT NULL UNIQUE, "
                 "vertical_slug VARCHAR(64) NOT NULL REFERENCES taxonomy_verticals(slug), "
@@ -259,7 +259,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
             )
         else:
             statements.append(
-                "CREATE TABLE niche_clusters ("
+                "CREATE TABLE IF NOT EXISTS niche_clusters ("
                 "id INTEGER PRIMARY KEY, "
                 "slug VARCHAR(64) NOT NULL UNIQUE, "
                 "vertical_slug VARCHAR(64) NOT NULL REFERENCES taxonomy_verticals(slug), "
@@ -270,8 +270,8 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 "created_at TIMESTAMP NOT NULL"
                 ")"
             )
-        statements.append("CREATE INDEX ix_niche_clusters_slug ON niche_clusters(slug)")
-        statements.append("CREATE INDEX ix_niche_clusters_vertical_slug ON niche_clusters(vertical_slug)")
+        statements.append("CREATE INDEX IF NOT EXISTS ix_niche_clusters_slug ON niche_clusters(slug)")
+        statements.append("CREATE INDEX IF NOT EXISTS ix_niche_clusters_vertical_slug ON niche_clusters(vertical_slug)")
 
     try:
         category_columns = {column["name"] for column in inspector.get_columns("categories")}
@@ -286,7 +286,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
     if "query_recipes" not in tables:
         if dialect == "postgresql":
             statements.append(
-                "CREATE TABLE query_recipes ("
+                "CREATE TABLE IF NOT EXISTS query_recipes ("
                 "id SERIAL PRIMARY KEY, "
                 "slug VARCHAR(96) NOT NULL UNIQUE, "
                 "label VARCHAR(128) NOT NULL, "
@@ -301,7 +301,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
             )
         else:
             statements.append(
-                "CREATE TABLE query_recipes ("
+                "CREATE TABLE IF NOT EXISTS query_recipes ("
                 "id INTEGER PRIMARY KEY, "
                 "slug VARCHAR(96) NOT NULL UNIQUE, "
                 "label VARCHAR(128) NOT NULL, "
@@ -314,7 +314,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 "updated_at TIMESTAMP NOT NULL"
                 ")"
             )
-        statements.append("CREATE INDEX ix_query_recipes_slug ON query_recipes(slug)")
+        statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipes_slug ON query_recipes(slug)")
     else:
         try:
             recipe_columns = {column["name"]: column for column in inspector.get_columns("query_recipes")}
@@ -340,7 +340,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
     if "query_recipe_versions" not in tables:
         if dialect == "postgresql":
             statements.append(
-                "CREATE TABLE query_recipe_versions ("
+                "CREATE TABLE IF NOT EXISTS query_recipe_versions ("
                 "id SERIAL PRIMARY KEY, "
                 "recipe_id INTEGER NOT NULL REFERENCES query_recipes(id), "
                 "version_number INTEGER NOT NULL DEFAULT 1, "
@@ -357,7 +357,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
             )
         else:
             statements.append(
-                "CREATE TABLE query_recipe_versions ("
+                "CREATE TABLE IF NOT EXISTS query_recipe_versions ("
                 "id INTEGER PRIMARY KEY, "
                 "recipe_id INTEGER NOT NULL REFERENCES query_recipes(id), "
                 "version_number INTEGER NOT NULL DEFAULT 1, "
@@ -373,13 +373,13 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 ")"
             )
         statements.append(
-            "CREATE UNIQUE INDEX uq_recipe_version_number ON query_recipe_versions(recipe_id, version_number)"
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_recipe_version_number ON query_recipe_versions(recipe_id, version_number)"
         )
 
     if "query_recipe_validations" not in tables:
         if dialect == "postgresql":
             statements.append(
-                "CREATE TABLE query_recipe_validations ("
+                "CREATE TABLE IF NOT EXISTS query_recipe_validations ("
                 "id SERIAL PRIMARY KEY, "
                 "recipe_version_id INTEGER NOT NULL REFERENCES query_recipe_versions(id), "
                 "status VARCHAR(10) NOT NULL DEFAULT 'draft', "
@@ -394,7 +394,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
             )
         else:
             statements.append(
-                "CREATE TABLE query_recipe_validations ("
+                "CREATE TABLE IF NOT EXISTS query_recipe_validations ("
                 "id INTEGER PRIMARY KEY, "
                 "recipe_version_id INTEGER NOT NULL REFERENCES query_recipe_versions(id), "
                 "status VARCHAR(10) NOT NULL DEFAULT 'draft', "
