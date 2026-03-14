@@ -61,7 +61,7 @@ def render_proxy_url(
     if proxy is None:
         return None
     session_id = _proxy_session_id(proxy, owner, workload)
-    return (
+    rendered = (
         proxy.proxy_url
         .replace("{session_id}", session_id)
         .replace("{lease_id}", session_id)
@@ -69,6 +69,9 @@ def render_proxy_url(
         .replace("{workload}", workload.value)
         .replace("{proxy_id}", str(proxy.id))
     )
+    if "://" not in rendered:
+        return f"http://{rendered}"
+    return rendered
 
 
 def expire_old_leases(session: Session) -> None:
