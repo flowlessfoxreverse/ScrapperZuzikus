@@ -194,6 +194,40 @@
             <button type="submit">Generate Draft</button>
           </div>
         </form>
+        {% if planner_info %}
+        <div class="country-summary">
+          <div class="stat-card">
+            <span class="subtle">Requested Provider</span>
+            <strong>{{ planner_info.requested_provider }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Used Provider</span>
+            <strong>{{ planner_info.provider }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Model</span>
+            <strong>{{ planner_info.model_name }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Planner Version</span>
+            <strong>{{ planner_info.planner_version }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Cache</span>
+            <strong>{{ "hit" if planner_info.cache_hit else "miss" }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Plan Record</span>
+            <strong>{{ planner_info.plan_id or "-" }}</strong>
+          </div>
+        </div>
+        {% if planner_info.cache_expires_at %}
+        <p class="subtle">Planner cache expires at {{ planner_info.cache_expires_at.strftime("%Y-%m-%d %H:%M") }}.</p>
+        {% endif %}
+        {% if planner_info.used_fallback and planner_info.fallback_reason %}
+        <p class="subtle">Fallback used: {{ planner_info.fallback_reason }}</p>
+        {% endif %}
+        {% endif %}
       </section>
 
       {% if draft_variants %}

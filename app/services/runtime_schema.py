@@ -478,6 +478,53 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 ")"
             )
 
+    if "query_recipe_plans" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_recipe_plans ("
+                "id SERIAL PRIMARY KEY, "
+                "prompt_text TEXT NOT NULL, "
+                "prompt_fingerprint VARCHAR(64) NOT NULL, "
+                "requested_provider VARCHAR(32) NOT NULL, "
+                "provider VARCHAR(32) NOT NULL, "
+                "model_name VARCHAR(64) NOT NULL, "
+                "planner_version VARCHAR(32) NOT NULL DEFAULT 'v1', "
+                "status VARCHAR(16) NOT NULL DEFAULT 'success', "
+                "cache_key VARCHAR(96) NOT NULL, "
+                "raw_response TEXT NULL, "
+                "parsed_output JSONB NOT NULL DEFAULT '{}'::jsonb, "
+                "used_fallback BOOLEAN NOT NULL DEFAULT FALSE, "
+                "fallback_reason TEXT NULL, "
+                "error_text TEXT NULL, "
+                "expires_at TIMESTAMP WITH TIME ZONE NULL, "
+                "created_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_recipe_plans ("
+                "id INTEGER PRIMARY KEY, "
+                "prompt_text TEXT NOT NULL, "
+                "prompt_fingerprint VARCHAR(64) NOT NULL, "
+                "requested_provider VARCHAR(32) NOT NULL, "
+                "provider VARCHAR(32) NOT NULL, "
+                "model_name VARCHAR(64) NOT NULL, "
+                "planner_version VARCHAR(32) NOT NULL DEFAULT 'v1', "
+                "status VARCHAR(16) NOT NULL DEFAULT 'success', "
+                "cache_key VARCHAR(96) NOT NULL, "
+                "raw_response TEXT NULL, "
+                "parsed_output JSON NOT NULL DEFAULT '{}', "
+                "used_fallback BOOLEAN NOT NULL DEFAULT 0, "
+                "fallback_reason TEXT NULL, "
+                "error_text TEXT NULL, "
+                "expires_at TIMESTAMP NULL, "
+                "created_at TIMESTAMP NOT NULL"
+                ")"
+            )
+        statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_plans_cache_key ON query_recipe_plans(cache_key)")
+        statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_plans_prompt_fingerprint ON query_recipe_plans(prompt_fingerprint)")
+        statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_plans_created_at ON query_recipe_plans(created_at)")
+
     if "query_recipe_variants" not in tables:
         if dialect == "postgresql":
             statements.append(

@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     recipe_validation_cache_hours: int = 24
     recipe_validation_daily_cap: int = 250
     recipe_validation_sample_regions: int = 3
+    recipe_planner_provider: str = "heuristic"
+    recipe_planner_model: str = "heuristic-v1"
+    recipe_planner_cache_hours: int = 24
+    recipe_planner_daily_cap: int = 0
+    recipe_planner_timeout_seconds: int = 20
     recipe_activation_min_validation_score: int = 55
     recipe_activation_min_validation_runs: int = 1
     recipe_activation_min_production_score: int = 0

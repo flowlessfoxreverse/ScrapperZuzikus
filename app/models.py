@@ -298,6 +298,27 @@ class QueryRecipeValidation(Base):
     recipe_version: Mapped["QueryRecipeVersion"] = relationship(back_populates="validations")
 
 
+class QueryRecipePlan(Base):
+    __tablename__ = "query_recipe_plans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    prompt_text: Mapped[str] = mapped_column(Text)
+    prompt_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    requested_provider: Mapped[str] = mapped_column(String(32), index=True)
+    provider: Mapped[str] = mapped_column(String(32), index=True)
+    model_name: Mapped[str] = mapped_column(String(64))
+    planner_version: Mapped[str] = mapped_column(String(32), default="v1", index=True)
+    status: Mapped[str] = mapped_column(String(16), default="success", index=True)
+    cache_key: Mapped[str] = mapped_column(String(96), index=True)
+    raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parsed_output: Mapped[dict] = mapped_column(JSON, default=dict)
+    used_fallback: Mapped[bool] = mapped_column(Boolean, default=False)
+    fallback_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
 class QueryRecipeVariant(Base):
     __tablename__ = "query_recipe_variants"
     __table_args__ = (

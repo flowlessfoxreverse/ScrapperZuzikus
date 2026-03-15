@@ -1,0 +1,403 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+import hashlib
+import json
+
+from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.config import get_settings
+from app.models import DailyUsage, QueryRecipePlan, RecipeAdapter, RecipeSourceStrategy
+from app.services.recipe_clusters import apply_cluster_decision_history
+from app.services.recipe_drafts import (
+    ClusterCandidate,
+    DraftProposal,
+    analyze_prompt_clusters,
+    build_draft_variants_from_prompt,
+)
+from app.services.recipe_prompt_variants import apply_prompt_variant_history
+from app.services.recipe_variants import apply_variant_history, prompt_fingerprint
+
+
+settings = get_settings()
+PLANNER_VERSION = "v1"
+
+
+class PlannedClusterCandidate(BaseModel):
+    vertical: str
+    cluster_slug: str
+    score: int
+    matched_aliases: list[str] = Field(default_factory=list)
+    rationale: list[str] = Field(default_factory=list)
+
+
+class PlannedVariant(BaseModel):
+    prompt: str
+    slug: str
+    label: str
+    description: str
+    vertical: str
+    cluster_slug: str | None = None
+    adapter: RecipeAdapter
+    source_strategy: RecipeSourceStrategy
+    template_key: str
+    sub_intent: str
+    osm_tags: list[dict[str, str]] = Field(default_factory=list)
+    exclude_tags: list[dict[str, str]] = Field(default_factory=list)
+    search_terms: list[str] = Field(default_factory=list)
+    website_keywords: list[str] = Field(default_factory=list)
+    language_hints: list[str] = Field(default_factory=list)
+    rationale: list[str] = Field(default_factory=list)
+    variant_key: str
+    template_score: int
+    prompt_match_score: int
+    fit_score: int
+    fit_reasons: list[str] = Field(default_factory=list)
+    observed_validation_score: int = 0
+    historical_validation_count: int = 0
+    cluster_validation_score: int = 0
+    cluster_validation_count: int = 0
+    variant_adoption_count: int = 0
+    cluster_adoption_count: int = 0
+    prompt_selection_count: int = 0
+    prompt_draft_count: int = 0
+    prompt_activation_count: int = 0
+    production_score: int = 0
+    production_run_count: int = 0
+
+
+class PlannedPromptPayload(BaseModel):
+    prompt: str
+    provider: str
+    model_name: str
+    planner_version: str
+    cluster_choice: PlannedClusterCandidate
+    alternate_clusters: list[PlannedClusterCandidate] = Field(default_factory=list)
+    variants: list[PlannedVariant] = Field(default_factory=list)
+    default_variant_key: str | None = None
+
+
+@dataclass(frozen=True)
+class RecipePromptPlanResult:
+    prompt: str
+    requested_provider: str
+    provider: str
+    model_name: str
+    planner_version: str
+    cache_hit: bool
+    cache_expires_at: datetime | None
+    used_fallback: bool
+    fallback_reason: str | None
+    plan_id: int | None
+    cluster_choice: ClusterCandidate
+    alternate_clusters: list[ClusterCandidate]
+    draft_variants: list[DraftProposal]
+    draft_proposal: DraftProposal
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _provider_name() -> str:
+    return settings.recipe_planner_provider.strip().lower() or "heuristic"
+
+
+def _planner_cache_key(prompt: str, requested_provider: str) -> str:
+    payload = {
+        "prompt_fingerprint": prompt_fingerprint(prompt),
+        "requested_provider": requested_provider,
+        "planner_version": PLANNER_VERSION,
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _get_cached_plan(session: Session, cache_key: str) -> QueryRecipePlan | None:
+    now = _utcnow()
+    stmt = (
+        select(QueryRecipePlan)
+        .where(
+            QueryRecipePlan.cache_key == cache_key,
+            QueryRecipePlan.status == "success",
+            QueryRecipePlan.expires_at.is_not(None),
+            QueryRecipePlan.expires_at > now,
+        )
+        .order_by(QueryRecipePlan.created_at.desc())
+        .limit(1)
+    )
+    return session.scalar(stmt)
+
+
+def _get_usage_row(session: Session, provider: str) -> DailyUsage:
+    today = _utcnow().date()
+    usage = session.scalar(
+        select(DailyUsage).where(
+            DailyUsage.usage_date == today,
+            DailyUsage.provider == f"recipe_planner_{provider}",
+        )
+    )
+    if usage is None:
+        usage = DailyUsage(
+            usage_date=today,
+            provider=f"recipe_planner_{provider}",
+            units_used=0,
+            cap=settings.recipe_planner_daily_cap,
+            metadata_json={},
+        )
+        session.add(usage)
+        session.flush()
+    return usage
+
+
+def _check_quota(session: Session, provider: str) -> None:
+    if settings.recipe_planner_daily_cap <= 0:
+        return
+    usage = _get_usage_row(session, provider)
+    if usage.units_used >= usage.cap:
+        raise RuntimeError("Recipe planner daily quota reached.")
+
+
+def _increment_quota(session: Session, provider: str) -> None:
+    if settings.recipe_planner_daily_cap <= 0:
+        return
+    usage = _get_usage_row(session, provider)
+    usage.units_used += 1
+    session.add(usage)
+
+
+def _cluster_to_model(candidate: ClusterCandidate) -> PlannedClusterCandidate:
+    return PlannedClusterCandidate(
+        vertical=candidate.vertical,
+        cluster_slug=candidate.cluster_slug,
+        score=candidate.score,
+        matched_aliases=list(candidate.matched_aliases),
+        rationale=list(candidate.rationale),
+    )
+
+
+def _variant_to_model(proposal: DraftProposal) -> PlannedVariant:
+    return PlannedVariant(**proposal.__dict__)
+
+
+def _model_to_cluster(candidate: PlannedClusterCandidate) -> ClusterCandidate:
+    return ClusterCandidate(
+        vertical=candidate.vertical,
+        cluster_slug=candidate.cluster_slug,
+        score=candidate.score,
+        matched_aliases=tuple(candidate.matched_aliases),
+        rationale=list(candidate.rationale),
+    )
+
+
+def _model_to_variant(variant: PlannedVariant) -> DraftProposal:
+    return DraftProposal(
+        prompt=variant.prompt,
+        slug=variant.slug,
+        label=variant.label,
+        description=variant.description,
+        vertical=variant.vertical,
+        cluster_slug=variant.cluster_slug,
+        adapter=variant.adapter,
+        source_strategy=variant.source_strategy,
+        template_key=variant.template_key,
+        sub_intent=variant.sub_intent,
+        osm_tags=variant.osm_tags,
+        exclude_tags=variant.exclude_tags,
+        search_terms=variant.search_terms,
+        website_keywords=variant.website_keywords,
+        language_hints=variant.language_hints,
+        rationale=variant.rationale,
+        variant_key=variant.variant_key,
+        template_score=variant.template_score,
+        prompt_match_score=variant.prompt_match_score,
+        fit_score=variant.fit_score,
+        fit_reasons=variant.fit_reasons,
+        observed_validation_score=variant.observed_validation_score,
+        historical_validation_count=variant.historical_validation_count,
+        cluster_validation_score=variant.cluster_validation_score,
+        cluster_validation_count=variant.cluster_validation_count,
+        variant_adoption_count=variant.variant_adoption_count,
+        cluster_adoption_count=variant.cluster_adoption_count,
+        prompt_selection_count=variant.prompt_selection_count,
+        prompt_draft_count=variant.prompt_draft_count,
+        prompt_activation_count=variant.prompt_activation_count,
+        production_score=variant.production_score,
+        production_run_count=variant.production_run_count,
+    )
+
+
+def _run_heuristic_provider(session: Session, prompt: str) -> PlannedPromptPayload:
+    cluster_choice, alternate_clusters = analyze_prompt_clusters(prompt)
+    variants = build_draft_variants_from_prompt(prompt, session=session)
+    return PlannedPromptPayload(
+        prompt=prompt,
+        provider="heuristic",
+        model_name=settings.recipe_planner_model,
+        planner_version=PLANNER_VERSION,
+        cluster_choice=_cluster_to_model(cluster_choice),
+        alternate_clusters=[_cluster_to_model(candidate) for candidate in alternate_clusters],
+        variants=[_variant_to_model(proposal) for proposal in variants],
+        default_variant_key=variants[0].variant_key if variants else None,
+    )
+
+
+def _run_provider(session: Session, prompt: str, requested_provider: str) -> tuple[PlannedPromptPayload, str, str, bool, str | None]:
+    if requested_provider == "heuristic":
+        payload = _run_heuristic_provider(session, prompt)
+        return payload, "heuristic", settings.recipe_planner_model, False, None
+
+    fallback_reason = f"Planner provider '{requested_provider}' is not configured yet; used heuristic fallback."
+    payload = _run_heuristic_provider(session, prompt)
+    payload.provider = "heuristic"
+    return payload, "heuristic", settings.recipe_planner_model, True, fallback_reason
+
+
+def _persist_plan(
+    session: Session,
+    *,
+    prompt: str,
+    cache_key: str,
+    requested_provider: str,
+    payload: PlannedPromptPayload,
+    actual_provider: str,
+    model_name: str,
+    used_fallback: bool,
+    fallback_reason: str | None,
+) -> QueryRecipePlan:
+    plan = QueryRecipePlan(
+        prompt_text=prompt,
+        prompt_fingerprint=prompt_fingerprint(prompt),
+        requested_provider=requested_provider,
+        provider=actual_provider,
+        model_name=model_name,
+        planner_version=PLANNER_VERSION,
+        status="success",
+        cache_key=cache_key,
+        raw_response=json.dumps(payload.model_dump(mode="json"), sort_keys=True),
+        parsed_output=payload.model_dump(mode="json"),
+        used_fallback=used_fallback,
+        fallback_reason=fallback_reason,
+        expires_at=_utcnow() + timedelta(hours=settings.recipe_planner_cache_hours),
+    )
+    session.add(plan)
+    session.flush()
+    return plan
+
+
+def _persist_plan_error(
+    session: Session,
+    *,
+    prompt: str,
+    cache_key: str,
+    requested_provider: str,
+    error_text: str,
+) -> QueryRecipePlan:
+    plan = QueryRecipePlan(
+        prompt_text=prompt,
+        prompt_fingerprint=prompt_fingerprint(prompt),
+        requested_provider=requested_provider,
+        provider=requested_provider,
+        model_name=settings.recipe_planner_model,
+        planner_version=PLANNER_VERSION,
+        status="error",
+        cache_key=cache_key,
+        raw_response=None,
+        parsed_output={},
+        error_text=error_text,
+        expires_at=None,
+    )
+    session.add(plan)
+    session.flush()
+    return plan
+
+
+def plan_recipe_prompt(
+    session: Session,
+    prompt: str,
+    *,
+    selected_variant_slug: str | None = None,
+) -> RecipePromptPlanResult:
+    prompt_text = prompt.strip()
+    if not prompt_text:
+        raise ValueError("Prompt is required.")
+
+    requested_provider = _provider_name()
+    cache_key = _planner_cache_key(prompt_text, requested_provider)
+    cached = _get_cached_plan(session, cache_key)
+    if cached is not None:
+        payload = PlannedPromptPayload.model_validate(cached.parsed_output)
+        cache_hit = True
+        plan_id = cached.id
+        cache_expires_at = cached.expires_at
+        used_fallback = cached.used_fallback
+        fallback_reason = cached.fallback_reason
+        actual_provider = cached.provider
+        model_name = cached.model_name
+    else:
+        try:
+            _check_quota(session, requested_provider)
+            payload, actual_provider, model_name, used_fallback, fallback_reason = _run_provider(
+                session, prompt_text, requested_provider
+            )
+            _increment_quota(session, requested_provider)
+            persisted = _persist_plan(
+                session,
+                prompt=prompt_text,
+                cache_key=cache_key,
+                requested_provider=requested_provider,
+                payload=payload,
+                actual_provider=actual_provider,
+                model_name=model_name,
+                used_fallback=used_fallback,
+                fallback_reason=fallback_reason,
+            )
+        except Exception as exc:
+            _persist_plan_error(
+                session,
+                prompt=prompt_text,
+                cache_key=cache_key,
+                requested_provider=requested_provider,
+                error_text=str(exc),
+            )
+            raise
+        cache_hit = False
+        plan_id = persisted.id
+        cache_expires_at = persisted.expires_at
+
+    cluster_choice = _model_to_cluster(payload.cluster_choice)
+    alternate_clusters = [_model_to_cluster(candidate) for candidate in payload.alternate_clusters]
+    cluster_choice, alternate_clusters = apply_cluster_decision_history(
+        session, prompt_text, cluster_choice, alternate_clusters
+    )
+
+    draft_variants = [_model_to_variant(variant) for variant in payload.variants]
+    draft_variants = apply_variant_history(session, draft_variants)
+    draft_variants = apply_prompt_variant_history(session, prompt_text, draft_variants)
+    if not draft_variants:
+        raise ValueError("No recipe variants were generated for this prompt.")
+
+    selected_key = selected_variant_slug or payload.default_variant_key or draft_variants[0].variant_key
+    draft_proposal = next(
+        (proposal for proposal in draft_variants if proposal.variant_key == selected_key),
+        draft_variants[0],
+    )
+    return RecipePromptPlanResult(
+        prompt=prompt_text,
+        requested_provider=requested_provider,
+        provider=actual_provider,
+        model_name=model_name,
+        planner_version=PLANNER_VERSION,
+        cache_hit=cache_hit,
+        cache_expires_at=cache_expires_at,
+        used_fallback=used_fallback,
+        fallback_reason=fallback_reason,
+        plan_id=plan_id,
+        cluster_choice=cluster_choice,
+        alternate_clusters=alternate_clusters,
+        draft_variants=draft_variants,
+        draft_proposal=draft_proposal,
+    )

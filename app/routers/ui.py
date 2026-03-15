@@ -20,13 +20,14 @@ from app.services.category_recipes import latest_recipe_version, sync_recipe_to_
 from app.services.host_suppression import normalize_host_key
 from app.services.overpass import fetch_status
 from app.services.proxy_pool import active_proxy_count, effective_proxy_capacity, lease_counts, list_proxies, release_proxy, upsert_proxy
-from app.services.recipe_clusters import apply_cluster_decision_history, record_cluster_decision
-from app.services.recipe_drafts import ClusterCandidate, DraftProposal, analyze_prompt_clusters, build_draft_variants_from_prompt, select_draft_variant
+from app.services.recipe_clusters import record_cluster_decision
+from app.services.recipe_drafts import ClusterCandidate, DraftProposal
 from app.services.recipe_lint import RecipeLintResult, lint_recipe_content, parse_tag_block
-from app.services.recipe_prompt_variants import apply_prompt_variant_history, record_prompt_variant_activation, record_prompt_variant_decisions
+from app.services.recipe_planner import plan_recipe_prompt
+from app.services.recipe_prompt_variants import record_prompt_variant_activation, record_prompt_variant_decisions
 from app.services.taxonomy import list_active_clusters, list_active_verticals
 from app.services.recipe_validation import get_validation_quota_snapshot, validate_recipe_version
-from app.services.recipe_variants import apply_variant_history, prompt_variant_recipe_map, upsert_prompt_variants
+from app.services.recipe_variants import prompt_variant_recipe_map, upsert_prompt_variants
 from app.services.region_catalog import country_catalog, upsert_country_with_subdivisions
 from app.services.runs import find_active_run, request_run_cancellation
 from app.tasks import run_scrape, sync_region_catalog_task
@@ -1274,20 +1275,28 @@ def recipe_editor(
     draft_lint = None
     cluster_choice: ClusterCandidate | None = None
     alternate_clusters: list[ClusterCandidate] = []
+    planner_info: dict[str, object] | None = None
     verticals, clusters = taxonomy_context(db)
     strategy_rows, cluster_rows, top_variants = build_recipe_analytics(db)
     strategy_threshold_rows = build_strategy_threshold_rows()
     if draft_prompt:
         try:
-            cluster_choice, alternate_clusters = analyze_prompt_clusters(draft_prompt)
-            cluster_choice, alternate_clusters = apply_cluster_decision_history(db, draft_prompt, cluster_choice, alternate_clusters)
-            draft_variants, draft_proposal = select_draft_variant(draft_prompt, draft_variant_slug, session=db)
-            draft_variants = apply_variant_history(db, draft_variants)
-            draft_variants = apply_prompt_variant_history(db, draft_prompt, draft_variants)
-            draft_proposal = next(
-                (proposal for proposal in draft_variants if proposal.variant_key == draft_proposal.variant_key),
-                draft_variants[0],
-            )
+            plan = plan_recipe_prompt(db, draft_prompt, selected_variant_slug=draft_variant_slug)
+            cluster_choice = plan.cluster_choice
+            alternate_clusters = plan.alternate_clusters
+            draft_variants = plan.draft_variants
+            draft_proposal = plan.draft_proposal
+            planner_info = {
+                "requested_provider": plan.requested_provider,
+                "provider": plan.provider,
+                "model_name": plan.model_name,
+                "planner_version": plan.planner_version,
+                "cache_hit": plan.cache_hit,
+                "cache_expires_at": plan.cache_expires_at,
+                "used_fallback": plan.used_fallback,
+                "fallback_reason": plan.fallback_reason,
+                "plan_id": plan.plan_id,
+            }
             upsert_prompt_variants(db, draft_prompt, draft_variants)
             db.commit()
             draft_lint = lint_recipe_content(
@@ -1296,7 +1305,7 @@ def recipe_editor(
                 search_terms=draft_proposal.search_terms,
                 website_keywords=draft_proposal.website_keywords,
             )
-        except ValueError as exc:
+        except (ValueError, RuntimeError) as exc:
             error = str(exc)
     return templates.TemplateResponse(
         request=request,
@@ -1314,6 +1323,7 @@ def recipe_editor(
             "variant_recipe_map": prompt_variant_recipe_map(db, draft_prompt or "") if draft_prompt else {},
             "draft_lint": draft_lint,
             "draft_prompt": draft_prompt or "",
+            "planner_info": planner_info,
             "cluster_choice": cluster_choice,
             "alternate_clusters": alternate_clusters,
             "strategy_rows": strategy_rows,
@@ -1467,9 +1477,9 @@ def create_recipe_variants_html(
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
     try:
-        proposals = apply_variant_history(db, build_draft_variants_from_prompt(prompt, session=db))
-        proposals = apply_prompt_variant_history(db, prompt, proposals)
-    except ValueError as exc:
+        plan = plan_recipe_prompt(db, prompt)
+        proposals = plan.draft_variants
+    except (ValueError, RuntimeError) as exc:
         return RedirectResponse(url=f"/recipes?error={quote_plus(str(exc)[:200])}", status_code=303)
     saved_variants = upsert_prompt_variants(db, prompt, proposals)
 
@@ -1553,19 +1563,27 @@ def generate_recipe_draft_html(
     draft_lint = None
     cluster_choice: ClusterCandidate | None = None
     alternate_clusters: list[ClusterCandidate] = []
+    planner_info: dict[str, object] | None = None
     verticals, clusters = taxonomy_context(db)
     strategy_rows, cluster_rows, top_variants = build_recipe_analytics(db)
     strategy_threshold_rows = build_strategy_threshold_rows()
     try:
-        cluster_choice, alternate_clusters = analyze_prompt_clusters(prompt)
-        cluster_choice, alternate_clusters = apply_cluster_decision_history(db, prompt, cluster_choice, alternate_clusters)
-        draft_variants, draft_proposal = select_draft_variant(prompt, selected_variant_slug or None, session=db)
-        draft_variants = apply_variant_history(db, draft_variants)
-        draft_variants = apply_prompt_variant_history(db, prompt, draft_variants)
-        draft_proposal = next(
-            (proposal for proposal in draft_variants if proposal.variant_key == draft_proposal.variant_key),
-            draft_variants[0],
-        )
+        plan = plan_recipe_prompt(db, prompt, selected_variant_slug=selected_variant_slug or None)
+        cluster_choice = plan.cluster_choice
+        alternate_clusters = plan.alternate_clusters
+        draft_variants = plan.draft_variants
+        draft_proposal = plan.draft_proposal
+        planner_info = {
+            "requested_provider": plan.requested_provider,
+            "provider": plan.provider,
+            "model_name": plan.model_name,
+            "planner_version": plan.planner_version,
+            "cache_hit": plan.cache_hit,
+            "cache_expires_at": plan.cache_expires_at,
+            "used_fallback": plan.used_fallback,
+            "fallback_reason": plan.fallback_reason,
+            "plan_id": plan.plan_id,
+        }
         saved_variants = upsert_prompt_variants(db, prompt, draft_variants)
         record_cluster_decision(db, prompt, cluster_choice, alternate_clusters)
         if selected_variant_slug:
@@ -1582,7 +1600,7 @@ def generate_recipe_draft_html(
             search_terms=draft_proposal.search_terms,
             website_keywords=draft_proposal.website_keywords,
         )
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         error = str(exc)
     return templates.TemplateResponse(
         request=request,
@@ -1601,6 +1619,7 @@ def generate_recipe_draft_html(
             "variant_recipe_map": prompt_variant_recipe_map(db, prompt),
             "draft_lint": draft_lint,
             "draft_prompt": prompt,
+            "planner_info": planner_info,
             "cluster_choice": cluster_choice,
             "alternate_clusters": alternate_clusters,
             "strategy_rows": strategy_rows,
