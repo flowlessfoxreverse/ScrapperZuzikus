@@ -202,6 +202,7 @@
             <tr>
               <th>Changed</th>
               <th>Policy</th>
+              <th>Type</th>
               <th>Summary</th>
               <th>Thresholds</th>
               <th>Snapshot At Change</th>
@@ -220,6 +221,12 @@
                 <strong>{{ row.policy_label }}</strong><br />
                 <span class="subtle">{{ row.policy_key }}</span>
               </td>
+              <td>
+                <strong>{{ row.change_kind }}</strong>
+                {% if row.experiment_note %}
+                <br /><span class="subtle">{{ row.experiment_note }}</span>
+                {% endif %}
+              </td>
               <td>{{ row.change_summary }}</td>
               <td>
                 <div class="subtle">Before: <code>{{ row.before_json }}</code></div>
@@ -233,7 +240,7 @@
               <td>{{ row.window_delta_parts|join(", ") }}</td>
             </tr>
             {% else %}
-            <tr><td colspan="10">No policy changes recorded yet.</td></tr>
+            <tr><td colspan="11">No policy changes recorded yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -246,6 +253,7 @@
               <th>Simulated State Mix</th>
               <th>Projected Delta</th>
               <th>Recommendation</th>
+              <th>Apply</th>
             </tr>
           </thead>
           <tbody>
@@ -260,9 +268,22 @@
               <td><code>{{ row.simulated_state_mix }}</code></td>
               <td>{{ row.impact_parts|join(", ") }}</td>
               <td>{{ row.summary }}</td>
+              <td>
+                {% if row.form_values %}
+                <form action="/recipes/recommendation-policies/{{ row.policy_key }}/apply-suggestion" method="post">
+                  {% for key, value in row.form_values.items() %}
+                  <input type="hidden" name="{{ key }}" value="{{ value }}" />
+                  {% endfor %}
+                  <input type="hidden" name="experiment_note" value="{{ row.summary }}" />
+                  <button type="submit">Apply Suggestion</button>
+                </form>
+                {% else %}
+                <span class="subtle">-</span>
+                {% endif %}
+              </td>
             </tr>
             {% else %}
-            <tr><td colspan="6">No policy simulations available yet.</td></tr>
+            <tr><td colspan="7">No policy simulations available yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>

@@ -313,6 +313,7 @@ class RecommendationPolicySimulationRow:
     current_state_mix: dict[str, int]
     simulated_state_mix: dict[str, int]
     suggested_thresholds: dict[str, int]
+    form_values: dict[str, object]
     impact_parts: list[str]
     summary: str
 
@@ -321,7 +322,9 @@ class RecommendationPolicySimulationRow:
 class RecommendationPolicyAuditRow:
     policy_key: str
     policy_label: str
+    change_kind: str
     change_summary: str
+    experiment_note: str | None
     changed_at: datetime
     before_json: dict[str, object]
     after_json: dict[str, object]
@@ -1115,6 +1118,7 @@ def build_recommendation_policy_simulation_rows(db: Session) -> list[Recommendat
                     current_state_mix={"trusted": 0, "recommended": 0, "experimental": 0, "suppressed": 0},
                     simulated_state_mix={"trusted": 0, "recommended": 0, "experimental": 0, "suppressed": 0},
                     suggested_thresholds={},
+                    form_values={},
                     impact_parts=["No variants yet"],
                     summary="No recipe variants exist for this policy scope yet.",
                 )
@@ -1214,6 +1218,24 @@ def build_recommendation_policy_simulation_rows(db: Session) -> list[Recommendat
                     "suppression_validation_score_max": suggested_suppression_validation,
                     "suppression_production_score_max": suggested_suppression_production,
                 },
+                form_values={
+                    "label": policy.label,
+                    "is_active": "true" if policy.is_active else "false",
+                    "recommended_validation_score": suggested_recommended_validation,
+                    "recommended_validation_runs": policy.recommended_validation_runs,
+                    "recommended_production_score": suggested_recommended_production,
+                    "recommended_production_runs": policy.recommended_production_runs,
+                    "recommended_activation_count": suggested_recommended_activations,
+                    "trusted_validation_score": suggested_trusted_validation,
+                    "trusted_validation_runs": policy.trusted_validation_runs,
+                    "trusted_production_score": suggested_trusted_production,
+                    "trusted_production_runs": policy.trusted_production_runs,
+                    "trusted_activation_count": suggested_trusted_activations,
+                    "suppression_validation_score_max": suggested_suppression_validation,
+                    "suppression_validation_runs_min": policy.suppression_validation_runs_min,
+                    "suppression_production_score_max": suggested_suppression_production,
+                    "suppression_production_runs_min": policy.suppression_production_runs_min,
+                },
                 impact_parts=impact_parts,
                 summary=summary,
             )
@@ -1304,7 +1326,9 @@ def build_recommendation_policy_audit_rows(db: Session, limit: int = 20) -> list
             RecommendationPolicyAuditRow(
                 policy_key=audit.policy_key,
                 policy_label=audit.policy_label,
+                change_kind=getattr(audit, "change_kind", "manual"),
                 change_summary=audit.change_summary,
+                experiment_note=getattr(audit, "experiment_note", None),
                 changed_at=audit.changed_at,
                 before_json=audit.before_json or {},
                 after_json=audit.after_json or {},
@@ -1323,6 +1347,31 @@ def build_recommendation_policy_audit_rows(db: Session, limit: int = 20) -> list
             )
         )
     return rows
+
+
+def create_recommendation_policy_audit(
+    db: Session,
+    *,
+    policy: QueryRecipeRecommendationPolicy,
+    before_state: dict[str, object],
+    after_state: dict[str, object],
+    change_summary: str,
+    change_kind: str,
+    experiment_note: str | None = None,
+) -> None:
+    snapshot = recommendation_policy_performance_snapshot(db, policy)
+    db.add(
+        QueryRecipeRecommendationPolicyAudit(
+            policy_key=policy.policy_key,
+            policy_label=policy.label,
+            change_kind=change_kind,
+            change_summary=change_summary,
+            experiment_note=experiment_note,
+            before_json=before_state,
+            after_json=after_state,
+            performance_snapshot_json=snapshot,
+        )
+    )
 
 
 def build_category_rows(db: Session) -> list[CategoryRow]:
@@ -2685,20 +2734,113 @@ def update_recommendation_policy_html(
     }
     changed_fields = [key for key, value in after_state.items() if before_state.get(key) != value]
     if changed_fields:
-        snapshot = recommendation_policy_performance_snapshot(db, policy)
-        db.add(
-            QueryRecipeRecommendationPolicyAudit(
-                policy_key=policy.policy_key,
-                policy_label=policy.label,
-                change_summary="Updated " + ", ".join(changed_fields[:5]) + ("..." if len(changed_fields) > 5 else ""),
-                before_json=before_state,
-                after_json=after_state,
-                performance_snapshot_json=snapshot,
-            )
+        create_recommendation_policy_audit(
+            db,
+            policy=policy,
+            before_state=before_state,
+            after_state=after_state,
+            change_summary="Updated " + ", ".join(changed_fields[:5]) + ("..." if len(changed_fields) > 5 else ""),
+            change_kind="manual",
         )
     db.commit()
     return RedirectResponse(
         url=f"/recipes?message={quote_plus(f'Updated recommendation policy {policy.label}.')}",
+        status_code=303,
+    )
+
+
+@router.post("/recipes/recommendation-policies/{policy_key}/apply-suggestion", response_class=HTMLResponse)
+def apply_recommendation_policy_suggestion_html(
+    policy_key: str,
+    label: str = Form(...),
+    recommended_validation_score: int = Form(...),
+    recommended_validation_runs: int = Form(...),
+    recommended_production_score: int = Form(...),
+    recommended_production_runs: int = Form(...),
+    recommended_activation_count: int = Form(...),
+    trusted_validation_score: int = Form(...),
+    trusted_validation_runs: int = Form(...),
+    trusted_production_score: int = Form(...),
+    trusted_production_runs: int = Form(...),
+    trusted_activation_count: int = Form(...),
+    suppression_validation_score_max: int = Form(...),
+    suppression_validation_runs_min: int = Form(...),
+    suppression_production_score_max: int = Form(...),
+    suppression_production_runs_min: int = Form(...),
+    is_active: str = Form("true"),
+    experiment_note: str = Form("Accepted suggested policy experiment."),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    policy = recommendation_policy_map(db).get(policy_key)
+    if policy is None:
+        return RedirectResponse(url="/recipes?error=Recommendation%20policy%20not%20found.", status_code=303)
+
+    before_state = {
+        "is_active": policy.is_active,
+        "recommended_validation_score": policy.recommended_validation_score,
+        "recommended_validation_runs": policy.recommended_validation_runs,
+        "recommended_production_score": policy.recommended_production_score,
+        "recommended_production_runs": policy.recommended_production_runs,
+        "recommended_activation_count": policy.recommended_activation_count,
+        "trusted_validation_score": policy.trusted_validation_score,
+        "trusted_validation_runs": policy.trusted_validation_runs,
+        "trusted_production_score": policy.trusted_production_score,
+        "trusted_production_runs": policy.trusted_production_runs,
+        "trusted_activation_count": policy.trusted_activation_count,
+        "suppression_validation_score_max": policy.suppression_validation_score_max,
+        "suppression_validation_runs_min": policy.suppression_validation_runs_min,
+        "suppression_production_score_max": policy.suppression_production_score_max,
+        "suppression_production_runs_min": policy.suppression_production_runs_min,
+    }
+
+    policy.label = label.strip() or policy.label
+    policy.recommended_validation_score = max(0, min(100, recommended_validation_score))
+    policy.recommended_validation_runs = max(0, recommended_validation_runs)
+    policy.recommended_production_score = max(0, min(100, recommended_production_score))
+    policy.recommended_production_runs = max(0, recommended_production_runs)
+    policy.recommended_activation_count = max(0, recommended_activation_count)
+    policy.trusted_validation_score = max(0, min(100, trusted_validation_score))
+    policy.trusted_validation_runs = max(0, trusted_validation_runs)
+    policy.trusted_production_score = max(0, min(100, trusted_production_score))
+    policy.trusted_production_runs = max(0, trusted_production_runs)
+    policy.trusted_activation_count = max(0, trusted_activation_count)
+    policy.suppression_validation_score_max = max(0, min(100, suppression_validation_score_max))
+    policy.suppression_validation_runs_min = max(0, suppression_validation_runs_min)
+    policy.suppression_production_score_max = max(0, min(100, suppression_production_score_max))
+    policy.suppression_production_runs_min = max(0, suppression_production_runs_min)
+    policy.is_active = is_active.strip().lower() == "true"
+
+    after_state = {
+        "is_active": policy.is_active,
+        "recommended_validation_score": policy.recommended_validation_score,
+        "recommended_validation_runs": policy.recommended_validation_runs,
+        "recommended_production_score": policy.recommended_production_score,
+        "recommended_production_runs": policy.recommended_production_runs,
+        "recommended_activation_count": policy.recommended_activation_count,
+        "trusted_validation_score": policy.trusted_validation_score,
+        "trusted_validation_runs": policy.trusted_validation_runs,
+        "trusted_production_score": policy.trusted_production_score,
+        "trusted_production_runs": policy.trusted_production_runs,
+        "trusted_activation_count": policy.trusted_activation_count,
+        "suppression_validation_score_max": policy.suppression_validation_score_max,
+        "suppression_validation_runs_min": policy.suppression_validation_runs_min,
+        "suppression_production_score_max": policy.suppression_production_score_max,
+        "suppression_production_runs_min": policy.suppression_production_runs_min,
+    }
+    changed_fields = [key for key, value in after_state.items() if before_state.get(key) != value]
+    if changed_fields:
+        create_recommendation_policy_audit(
+            db,
+            policy=policy,
+            before_state=before_state,
+            after_state=after_state,
+            change_summary="Accepted suggested experiment: " + ", ".join(changed_fields[:5]) + ("..." if len(changed_fields) > 5 else ""),
+            change_kind="suggested_accept",
+            experiment_note=(experiment_note or "").strip()[:255] or None,
+        )
+    db.commit()
+    return RedirectResponse(
+        url=f"/recipes?message={quote_plus(f'Applied suggested policy update for {policy.label}.')}",
         status_code=303,
     )
 
