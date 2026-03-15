@@ -243,3 +243,7 @@ def maybe_complete_run(session: Session, run_id: int) -> None:
         )
     session.add(run)
     session.flush()
+    if run.status == RunStatus.COMPLETED:
+        from app.services.recipe_performance import sync_variant_production_performance
+
+        sync_variant_production_performance(session, run_id)

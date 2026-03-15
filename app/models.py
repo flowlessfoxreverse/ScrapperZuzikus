@@ -275,11 +275,20 @@ class QueryRecipeVariant(Base):
     rank_score: Mapped[int] = mapped_column(Integer, default=0)
     validation_count: Mapped[int] = mapped_column(Integer, default=0)
     observed_validation_score: Mapped[int] = mapped_column(Integer, default=0)
+    production_run_count: Mapped[int] = mapped_column(Integer, default=0)
+    production_discovered_total: Mapped[int] = mapped_column(Integer, default=0)
+    production_crawled_total: Mapped[int] = mapped_column(Integer, default=0)
+    production_website_company_total: Mapped[int] = mapped_column(Integer, default=0)
+    production_contact_company_total: Mapped[int] = mapped_column(Integer, default=0)
+    production_email_company_total: Mapped[int] = mapped_column(Integer, default=0)
+    production_phone_company_total: Mapped[int] = mapped_column(Integer, default=0)
+    observed_production_score: Mapped[int] = mapped_column(Integer, default=0)
     latest_validation_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latest_validation_status: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     latest_total_results: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latest_website_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
     last_validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_production_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     fit_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
     rationale: Mapped[list[str]] = mapped_column(JSON, default=list)
     osm_tags: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
@@ -343,6 +352,33 @@ class QueryPromptVariantDecision(Base):
     vertical_ref: Mapped["TaxonomyVertical | None"] = relationship(foreign_keys=[vertical])
     cluster_ref: Mapped["NicheCluster | None"] = relationship(foreign_keys=[cluster_slug])
     source_variant: Mapped["QueryRecipeVariant | None"] = relationship(foreign_keys=[source_variant_id])
+
+
+class QueryRecipeVariantRunStat(Base):
+    __tablename__ = "query_recipe_variant_run_stats"
+    __table_args__ = (
+        UniqueConstraint("variant_id", "run_id", "category_id", name="uq_recipe_variant_run_stat"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    variant_id: Mapped[int] = mapped_column(ForeignKey("query_recipe_variants.id"), index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("scrape_runs.id"), index=True)
+    category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"), index=True)
+    region_id: Mapped[int] = mapped_column(ForeignKey("regions.id"), index=True)
+    discovered_count: Mapped[int] = mapped_column(Integer, default=0)
+    crawled_count: Mapped[int] = mapped_column(Integer, default=0)
+    website_company_count: Mapped[int] = mapped_column(Integer, default=0)
+    contact_company_count: Mapped[int] = mapped_column(Integer, default=0)
+    email_company_count: Mapped[int] = mapped_column(Integer, default=0)
+    phone_company_count: Mapped[int] = mapped_column(Integer, default=0)
+    score: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    variant: Mapped["QueryRecipeVariant"] = relationship(foreign_keys=[variant_id])
+    run: Mapped["ScrapeRun"] = relationship(foreign_keys=[run_id])
+    category: Mapped["Category"] = relationship(foreign_keys=[category_id])
+    region: Mapped["Region"] = relationship(foreign_keys=[region_id])
 
 
 class Company(Base):

@@ -169,9 +169,16 @@ class RecipeRow:
     validation_count: int
     latest_score: int | None
     latest_validation_status: str | None
+    production_run_count: int
+    production_score: int
+    production_discovered_total: int
+    production_crawled_total: int
+    production_email_company_total: int
+    production_phone_company_total: int
     latest_total_results: int | None
     latest_website_rate: float | None
     last_validated_at: datetime | None
+    last_production_at: datetime | None
     cache_expires_at: datetime | None
     sampled_regions: list[str]
     lint_passed: bool
@@ -713,6 +720,12 @@ def build_recipe_rows(db: Session) -> list[RecipeRow]:
                 validation_count=len(version.validations) if version else 0,
                 latest_score=latest_validation.score if latest_validation else None,
                 latest_validation_status=version.status.value if version else None,
+                production_run_count=recipe.source_variant.production_run_count if recipe.source_variant else 0,
+                production_score=recipe.source_variant.observed_production_score if recipe.source_variant else 0,
+                production_discovered_total=recipe.source_variant.production_discovered_total if recipe.source_variant else 0,
+                production_crawled_total=recipe.source_variant.production_crawled_total if recipe.source_variant else 0,
+                production_email_company_total=recipe.source_variant.production_email_company_total if recipe.source_variant else 0,
+                production_phone_company_total=recipe.source_variant.production_phone_company_total if recipe.source_variant else 0,
                 latest_total_results=(
                     latest_validation.metrics_json.get("total_results")
                     if latest_validation and latest_validation.metrics_json
@@ -724,6 +737,7 @@ def build_recipe_rows(db: Session) -> list[RecipeRow]:
                     else None
                 ),
                 last_validated_at=latest_validation.created_at if latest_validation else None,
+                last_production_at=recipe.source_variant.last_production_at if recipe.source_variant else None,
                 cache_expires_at=latest_validation.expires_at if latest_validation else None,
                 sampled_regions=latest_validation.sample_regions if latest_validation else [],
                 lint_passed=lint_result.passed,

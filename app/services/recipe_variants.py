@@ -73,6 +73,13 @@ def _adoption_bonus(adoption_count: int, cluster_adoption_count: int) -> int:
     return variant_bonus + cluster_bonus
 
 
+def _production_bonus(score: int, run_count: int) -> int:
+    if score <= 0 or run_count <= 0:
+        return 0
+    confidence_factor = min(run_count, 5) / 5
+    return round(score * 0.3 * confidence_factor)
+
+
 def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> list[DraftProposal]:
     if not proposals:
         return proposals
@@ -140,6 +147,12 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
         adoption_count = sum(adoption_by_variant.get(row.id, 0) for row in history_rows)
         cluster_adoption_count = cluster_adoption_counts.get(proposal.cluster_slug or "", 0)
         adoption_bonus = _adoption_bonus(adoption_count, cluster_adoption_count)
+        production_score = round(
+            sum(max(row.production_run_count, 0) * max(row.observed_production_score, 0) for row in history_rows)
+            / sum(max(row.production_run_count, 0) for row in history_rows)
+        ) if any(max(row.production_run_count, 0) for row in history_rows) else 0
+        production_runs = sum(max(row.production_run_count, 0) for row in history_rows)
+        production_bonus = _production_bonus(production_score, production_runs)
         fit_reasons = list(proposal.fit_reasons)
         if total_runs:
             fit_reasons.append(
@@ -157,6 +170,10 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
             fit_reasons.append(
                 f"Cluster already reused in {cluster_adoption_count} recipe draft(s)."
             )
+        if production_runs:
+            fit_reasons.append(
+                f"Production yield score {production_score}/100 across {production_runs} completed production run(s)."
+            )
         adjusted.append(
             replace(
                 proposal,
@@ -166,7 +183,9 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
                 cluster_validation_count=cluster_runs,
                 variant_adoption_count=adoption_count,
                 cluster_adoption_count=cluster_adoption_count,
-                fit_score=proposal.template_score + proposal.prompt_match_score + validation_bonus + cluster_bonus + adoption_bonus,
+                production_score=production_score,
+                production_run_count=production_runs,
+                fit_score=proposal.template_score + proposal.prompt_match_score + validation_bonus + cluster_bonus + adoption_bonus + production_bonus,
                 fit_reasons=fit_reasons,
             )
         )
@@ -174,6 +193,7 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
     adjusted.sort(
         key=lambda item: (
             -item.fit_score,
+            -item.production_score,
             -item.observed_validation_score,
             -item.cluster_validation_score,
             item.label,

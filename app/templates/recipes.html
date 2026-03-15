@@ -159,6 +159,8 @@
               <th>Prompt Match</th>
               <th>Observed Validation</th>
               <th>Validation Runs</th>
+              <th>Production Yield</th>
+              <th>Production Runs</th>
               <th>Cluster Baseline</th>
               <th>Prompt Selection</th>
               <th>Prompt Activation</th>
@@ -182,6 +184,8 @@
               <td>{{ variant.prompt_match_score }}</td>
               <td>{{ variant.observed_validation_score or "-" }}</td>
               <td>{{ variant.historical_validation_count or "-" }}</td>
+              <td>{{ variant.production_score or "-" }}</td>
+              <td>{{ variant.production_run_count or "-" }}</td>
               <td>
                 {% if variant.cluster_validation_count %}
                 {{ variant.cluster_validation_score }}/{{ variant.cluster_validation_count }}
@@ -275,6 +279,14 @@
           <div class="stat-card">
             <span class="subtle">Validation Runs</span>
             <strong>{{ draft_proposal.historical_validation_count or "-" }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Production Yield</span>
+            <strong>{{ draft_proposal.production_score or "-" }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Production Runs</span>
+            <strong>{{ draft_proposal.production_run_count or "-" }}</strong>
           </div>
           <div class="stat-card">
             <span class="subtle">Cluster Baseline</span>
@@ -429,6 +441,12 @@
               <th>Latest Score</th>
               <th>Validation Status</th>
               <th>Lint</th>
+              <th>Production Yield</th>
+              <th>Production Runs</th>
+              <th>Production Discovery</th>
+              <th>Production Crawls</th>
+              <th>Email Yield</th>
+              <th>Phone Yield</th>
               <th>Sample Results</th>
               <th>Website Rate</th>
               <th>Sample Regions</th>
@@ -456,6 +474,12 @@
                   {% if recipe.lint_passed %}pass{% else %}fail{% endif %}
                 </span>
               </td>
+              <td>{{ recipe.production_score or "-" }}</td>
+              <td>{{ recipe.production_run_count or "-" }}</td>
+              <td>{{ recipe.production_discovered_total or "-" }}</td>
+              <td>{{ recipe.production_crawled_total or "-" }}</td>
+              <td>{{ recipe.production_email_company_total or "-" }}</td>
+              <td>{{ recipe.production_phone_company_total or "-" }}</td>
               <td>{{ recipe.latest_total_results if recipe.latest_total_results is not none else "-" }}</td>
               <td>
                 {% if recipe.latest_website_rate is not none %}
@@ -516,7 +540,7 @@
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="18">No recipes yet.</td></tr>
+            <tr><td colspan="24">No recipes yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>

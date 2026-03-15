@@ -35,6 +35,8 @@ class DraftProposal:
     prompt_selection_count: int = 0
     prompt_draft_count: int = 0
     prompt_activation_count: int = 0
+    production_score: int = 0
+    production_run_count: int = 0
 
 
 @dataclass(frozen=True)

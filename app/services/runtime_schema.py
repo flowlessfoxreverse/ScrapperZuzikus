@@ -495,11 +495,20 @@ def ensure_recipe_schema(engine: Engine) -> None:
         variant_additions = {
             "validation_count": "INTEGER NOT NULL DEFAULT 0",
             "observed_validation_score": "INTEGER NOT NULL DEFAULT 0",
+            "production_run_count": "INTEGER NOT NULL DEFAULT 0",
+            "production_discovered_total": "INTEGER NOT NULL DEFAULT 0",
+            "production_crawled_total": "INTEGER NOT NULL DEFAULT 0",
+            "production_website_company_total": "INTEGER NOT NULL DEFAULT 0",
+            "production_contact_company_total": "INTEGER NOT NULL DEFAULT 0",
+            "production_email_company_total": "INTEGER NOT NULL DEFAULT 0",
+            "production_phone_company_total": "INTEGER NOT NULL DEFAULT 0",
+            "observed_production_score": "INTEGER NOT NULL DEFAULT 0",
             "latest_validation_score": "INTEGER NULL",
             "latest_validation_status": "VARCHAR(32) NULL",
             "latest_total_results": "INTEGER NULL",
             "latest_website_rate": "DOUBLE PRECISION NULL" if dialect == "postgresql" else "FLOAT NULL",
             "last_validated_at": "TIMESTAMP WITH TIME ZONE NULL" if dialect == "postgresql" else "TIMESTAMP NULL",
+            "last_production_at": "TIMESTAMP WITH TIME ZONE NULL" if dialect == "postgresql" else "TIMESTAMP NULL",
         }
         for column_name, column_def in variant_additions.items():
             if column_name not in variant_columns:
@@ -608,6 +617,58 @@ def ensure_recipe_schema(engine: Engine) -> None:
         statements.append(
             "CREATE INDEX IF NOT EXISTS ix_query_prompt_variant_decisions_variant_key "
             "ON query_prompt_variant_decisions(variant_key)"
+        )
+
+    if "query_recipe_variant_run_stats" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_recipe_variant_run_stats ("
+                "id SERIAL PRIMARY KEY, "
+                "variant_id INTEGER NOT NULL, "
+                "run_id INTEGER NOT NULL, "
+                "category_id INTEGER NOT NULL, "
+                "region_id INTEGER NOT NULL, "
+                "discovered_count INTEGER NOT NULL DEFAULT 0, "
+                "crawled_count INTEGER NOT NULL DEFAULT 0, "
+                "website_company_count INTEGER NOT NULL DEFAULT 0, "
+                "contact_company_count INTEGER NOT NULL DEFAULT 0, "
+                "email_company_count INTEGER NOT NULL DEFAULT 0, "
+                "phone_company_count INTEGER NOT NULL DEFAULT 0, "
+                "score INTEGER NOT NULL DEFAULT 0, "
+                "created_at TIMESTAMP WITH TIME ZONE NOT NULL, "
+                "updated_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_recipe_variant_run_stats ("
+                "id INTEGER PRIMARY KEY, "
+                "variant_id INTEGER NOT NULL, "
+                "run_id INTEGER NOT NULL, "
+                "category_id INTEGER NOT NULL, "
+                "region_id INTEGER NOT NULL, "
+                "discovered_count INTEGER NOT NULL DEFAULT 0, "
+                "crawled_count INTEGER NOT NULL DEFAULT 0, "
+                "website_company_count INTEGER NOT NULL DEFAULT 0, "
+                "contact_company_count INTEGER NOT NULL DEFAULT 0, "
+                "email_company_count INTEGER NOT NULL DEFAULT 0, "
+                "phone_company_count INTEGER NOT NULL DEFAULT 0, "
+                "score INTEGER NOT NULL DEFAULT 0, "
+                "created_at TIMESTAMP NOT NULL, "
+                "updated_at TIMESTAMP NOT NULL"
+                ")"
+            )
+        statements.append(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_recipe_variant_run_stat "
+            "ON query_recipe_variant_run_stats(variant_id, run_id, category_id)"
+        )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_recipe_variant_run_stats_variant_id "
+            "ON query_recipe_variant_run_stats(variant_id)"
+        )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_recipe_variant_run_stats_run_id "
+            "ON query_recipe_variant_run_stats(run_id)"
         )
     else:
         prompt_variant_columns = columns_by_table.get("query_prompt_variant_decisions", set())
