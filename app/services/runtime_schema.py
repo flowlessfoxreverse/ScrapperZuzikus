@@ -33,6 +33,9 @@ def ensure_scrape_run_control_columns(engine: Engine) -> None:
         return
 
     with engine.begin() as connection:
+        if dialect == "postgresql":
+            # Serialize recipe-schema DDL across app and worker startups.
+            connection.execute(text("SELECT pg_advisory_xact_lock(2147483601)"))
         for statement in statements:
             connection.execute(text(statement))
 
