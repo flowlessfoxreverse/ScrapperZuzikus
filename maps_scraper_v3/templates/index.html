@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Maps Scraper Pro</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0d0d14; --surface: #14141e; --surface2: #1e1e2c;
+    --border: #2c2c40; --accent: #4f8aff; --green: #00e5a0;
+    --coral: #ff6b6b; --amber: #ffb627; --text: #e8e8f0; --muted: #6b6b85;
+  }
+  body { background: var(--bg); color: var(--text); font-family: 'DM Mono', monospace; min-height: 100vh; }
+  body::before {
+    content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background: radial-gradient(ellipse 50% 35% at 15% 10%, rgba(79,138,255,0.07) 0%, transparent 60%),
+                radial-gradient(ellipse 40% 25% at 85% 85%, rgba(0,229,160,0.05) 0%, transparent 50%);
+  }
+  .container { position: relative; z-index: 1; max-width: 1140px; margin: 0 auto; padding: 36px 24px; }
+
+  header { margin-bottom: 36px; }
+  .hrow { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
+  .icon { width: 46px; height: 46px; background: linear-gradient(135deg, var(--accent), var(--green)); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 19px; flex-shrink: 0; }
+  h1 { font-family: 'Syne', sans-serif; font-size: 1.85rem; font-weight: 800; letter-spacing: -0.03em; }
+  h1 em { font-style: normal; color: var(--accent); }
+  .sub { font-size: 0.7rem; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; margin-left: 60px; }
+
+  .layout { display: grid; grid-template-columns: 340px 1fr; gap: 20px; align-items: start; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 22px 24px; }
+  .clabel { font-size: 0.63rem; letter-spacing: 0.15em; text-transform: uppercase; color: var(--muted); margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
+  .clabel::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+  .fg { display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; }
+  label { font-size: 0.67rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  textarea, input, select {
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 14px; color: var(--text); font-family: 'DM Mono', monospace; font-size: 0.83rem;
+    outline: none; width: 100%; transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  textarea:focus, input:focus, select:focus {
+    border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,138,255,0.12);
+  }
+  textarea { resize: vertical; min-height: 110px; }
+  input::placeholder, textarea::placeholder { color: var(--muted); }
+
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .hint { font-size: 0.66rem; color: var(--muted); margin-top: 3px; }
+
+  .workers-row { display: flex; gap: 8px; margin-top: 4px; }
+  .wbtn {
+    flex: 1; padding: 8px 4px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface2); color: var(--muted); font-family: 'Syne', sans-serif;
+    font-weight: 700; font-size: 0.78rem; cursor: pointer; transition: all 0.15s; text-align: center;
+  }
+  .wbtn.active { background: rgba(79,138,255,0.15); color: var(--accent); border-color: var(--accent); }
+  .wbtn:hover:not(.active) { border-color: var(--muted); color: var(--text); }
+
+  .btn {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    width: 100%; padding: 12px; border-radius: 10px; border: none; cursor: pointer;
+    font-family: 'Syne', sans-serif; font-weight: 700; font-size: 0.88rem;
+    letter-spacing: 0.04em; transition: all 0.2s; margin-top: 8px;
+  }
+  .btn-start { background: var(--accent); color: #fff; }
+  .btn-start:hover:not(:disabled) { background: #6fa0ff; transform: translateY(-1px); box-shadow: 0 8px 24px rgba(79,138,255,0.3); }
+  .btn-start:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+  /* Right panel */
+  .right-panel { display: flex; flex-direction: column; gap: 16px; }
+
+  /* Progress */
+  .prog-card { padding: 18px 22px; }
+  .prog-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .prog-title { font-family: 'Syne', sans-serif; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+  .prog-status { font-size: 0.72rem; padding: 3px 10px; border-radius: 999px; }
+  .prog-status.idle { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
+  .prog-status.running { background: rgba(79,138,255,0.1); color: var(--accent); border: 1px solid rgba(79,138,255,0.3); }
+  .prog-status.done { background: rgba(0,229,160,0.1); color: var(--green); border: 1px solid rgba(0,229,160,0.3); }
+
+  .worker-lanes { display: flex; gap: 8px; margin-bottom: 14px; }
+  .lane {
+    flex: 1; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 12px; min-height: 56px;
+    transition: border-color 0.3s, background 0.3s;
+  }
+  .lane.active { border-color: rgba(79,138,255,0.4); background: rgba(79,138,255,0.06); }
+  .lane.done { border-color: rgba(0,229,160,0.4); background: rgba(0,229,160,0.05); }
+  .lane-label { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-bottom: 4px; }
+  .lane-kw { font-size: 0.73rem; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lane-count { font-size: 0.68rem; color: var(--green); margin-top: 2px; }
+
+  .prog-bar-bg { background: var(--surface2); border-radius: 999px; height: 5px; overflow: hidden; margin-bottom: 10px; }
+  .prog-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--green)); border-radius: 999px; transition: width 0.5s ease; width: 0%; }
+
+  .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .stat { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .sv { font-family: 'Syne', sans-serif; font-size: 1.5rem; font-weight: 800; color: var(--accent); }
+  .sl { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-top: 2px; }
+
+  /* Table */
+  .tcard { padding: 0; overflow: hidden; }
+  .thead-row { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+  .ttitle { font-size: 0.63rem; letter-spacing: 0.15em; text-transform: uppercase; color: var(--muted); }
+  .btn-export {
+    display: flex; align-items: center; gap: 6px; padding: 7px 16px;
+    background: var(--surface2); color: var(--green); border: 1px solid var(--green);
+    border-radius: 8px; font-family: 'Syne', sans-serif; font-weight: 700; font-size: 0.75rem;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .btn-export:hover { background: rgba(0,229,160,0.08); }
+  .btn-export:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .twrap { overflow-x: auto; max-height: 420px; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.76rem; }
+  thead tr { background: var(--surface2); position: sticky; top: 0; z-index: 2; }
+  th { padding: 9px 13px; text-align: left; font-size: 0.6rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); white-space: nowrap; border-bottom: 1px solid var(--border); }
+  tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: var(--surface2); }
+  td { padding: 10px 13px; vertical-align: middle; max-width: 180px; }
+  .nc { font-family: 'Syne', sans-serif; font-weight: 600; font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ac { color: var(--muted); font-size: 0.7rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tag { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 999px; font-size: 0.67rem; white-space: nowrap; }
+  .tg-b { background: rgba(79,138,255,0.1); color: var(--accent); border: 1px solid rgba(79,138,255,0.2); }
+  .tg-y { background: rgba(255,182,39,0.1); color: var(--amber); border: 1px solid rgba(255,182,39,0.2); }
+  .tg-gr { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
+  a.lnk { color: var(--accent); text-decoration: none; font-size: 0.7rem; }
+  a.lnk:hover { text-decoration: underline; }
+
+  .empty { text-align: center; padding: 48px 20px; color: var(--muted); font-size: 0.8rem; }
+
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: 1fr; }
+    .stats-row { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="hrow">
+      <div class="icon">🗺</div>
+      <h1>Maps Scraper <em>Pro</em></h1>
+    </div>
+    <div class="sub">Parallel workers · Real-time results · Deduplication</div>
+  </header>
+
+  <div class="layout">
+    <!-- LEFT: Config -->
+    <div class="card">
+      <div class="clabel">Keywords</div>
+      <div class="fg">
+        <label>Search keywords (one per line)</label>
+        <textarea id="keywords" placeholder="motorbike rental Phuket&#10;scooter hire Phuket&#10;bike rental Patong&#10;moto rental Karon"></textarea>
+        <div class="hint">Each line = one parallel scrape job</div>
+      </div>
+
+      <div class="row2">
+        <div class="fg">
+          <label>Results per keyword</label>
+          <select id="max-results">
+            <option value="10">10</option>
+            <option value="20" selected>20</option>
+            <option value="40">40</option>
+            <option value="60">60</option>
+          </select>
+        </div>
+        <div class="fg">
+          <label>Workers</label>
+          <div class="workers-row" id="workers-btns">
+            <div class="wbtn" onclick="setWorkers(1)">1</div>
+            <div class="wbtn" onclick="setWorkers(2)">2</div>
+            <div class="wbtn active" onclick="setWorkers(3)">3</div>
+            <div class="wbtn" onclick="setWorkers(4)">4</div>
+            <div class="wbtn" onclick="setWorkers(5)">5</div>
+          </div>
+          <div class="hint">Parallel Chromium instances</div>
+        </div>
+      </div>
+
+      <div class="fg">
+        <label>Proxy (optional)</label>
+        <input type="text" id="proxy" placeholder="http://user:pass@host:port">
+        <div class="hint">Leave empty for direct connection</div>
+      </div>
+
+      <button class="btn btn-start" id="start-btn" onclick="startScrape()">▶ Start Scraping</button>
+    </div>
+
+    <!-- RIGHT: Results -->
+    <div class="right-panel">
+      <!-- Progress -->
+      <div class="card prog-card">
+        <div class="prog-header">
+          <div class="prog-title">Progress</div>
+          <div class="prog-status idle" id="prog-status">Idle</div>
+        </div>
+
+        <div class="worker-lanes" id="worker-lanes">
+          <div class="lane"><div class="lane-label">Worker 1</div><div class="lane-kw" style="color:var(--muted)">—</div></div>
+          <div class="lane"><div class="lane-label">Worker 2</div><div class="lane-kw" style="color:var(--muted)">—</div></div>
+          <div class="lane"><div class="lane-label">Worker 3</div><div class="lane-kw" style="color:var(--muted)">—</div></div>
+        </div>
+
+        <div class="prog-bar-bg"><div class="prog-bar-fill" id="prog-fill"></div></div>
+
+        <div class="stats-row">
+          <div class="stat"><div class="sv" id="s-kw">0</div><div class="sl">Keywords done</div></div>
+          <div class="stat"><div class="sv" id="s-res">0</div><div class="sl">Total results</div></div>
+          <div class="stat"><div class="sv" id="s-ph">0</div><div class="sl">With phone</div></div>
+          <div class="stat"><div class="sv" id="s-web">0</div><div class="sl">With website</div></div>
+        </div>
+      </div>
+
+      <!-- Table -->
+      <div class="card tcard">
+        <div class="thead-row">
+          <div class="ttitle">Results <span id="tcount" style="color:var(--accent)"></span></div>
+          <button class="btn-export" id="export-btn" onclick="exportCSV()" disabled>⬇ Export CSV</button>
+        </div>
+        <div class="twrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th><th>Name</th><th>Keyword</th><th>Phone</th><th>Website</th><th>Rating</th><th>Address</th>
+              </tr>
+            </thead>
+            <tbody id="tbody">
+              <tr><td colspan="7" class="empty">Results will appear here as workers scrape...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let numWorkers = 3;
+  let currentJobId = null;
+  let allResults = [];
+  let eventSource = null;
+  let keywordList = [];
+
+  function setWorkers(n) {
+    numWorkers = n;
+    document.querySelectorAll('.wbtn').forEach((b, i) => b.classList.toggle('active', i + 1 === n));
+    updateLanes(n);
+  }
+
+  function updateLanes(n) {
+    const container = document.getElementById('worker-lanes');
+    container.innerHTML = '';
+    for (let i = 0; i < n; i++) {
+      const div = document.createElement('div');
+      div.className = 'lane';
+      div.id = `lane-${i}`;
+      div.innerHTML = `<div class="lane-label">Worker ${i+1}</div><div class="lane-kw" style="color:var(--muted)">—</div><div class="lane-count"></div>`;
+      container.appendChild(div);
+    }
+  }
+
+  async function startScrape() {
+    const kw = document.getElementById('keywords').value.trim();
+    if (!kw) { alert('Please enter at least one keyword.'); return; }
+
+    keywordList = kw.split('\n').map(s => s.trim()).filter(Boolean);
+    if (keywordList.length === 0) return;
+
+    allResults = [];
+    renderTable([]);
+
+    document.getElementById('start-btn').disabled = true;
+    document.getElementById('start-btn').textContent = '⏳ Running...';
+    document.getElementById('export-btn').disabled = true;
+    setProgStatus('running');
+    updateLanes(numWorkers);
+    assignKeywordsToLanes();
+
+    const body = {
+      keywords: kw,
+      max_results: parseInt(document.getElementById('max-results').value),
+      proxy: document.getElementById('proxy').value.trim(),
+      num_workers: numWorkers,
+    };
+
+    const resp = await fetch('/start', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const data = await resp.json();
+    if (data.error) { alert(data.error); resetBtn(); return; }
+
+    currentJobId = data.job_id;
+    startStream(currentJobId);
+  }
+
+  function assignKeywordsToLanes() {
+    for (let i = 0; i < numWorkers; i++) {
+      const lane = document.getElementById(`lane-${i}`);
+      if (!lane) continue;
+      const kws = keywordList.filter((_, idx) => idx % numWorkers === i);
+      if (kws.length) {
+        lane.classList.add('active');
+        lane.querySelector('.lane-kw').textContent = kws[0];
+        lane.querySelector('.lane-kw').style.color = '';
+      }
+    }
+  }
+
+  function startStream(jobId) {
+    if (eventSource) eventSource.close();
+    eventSource = new EventSource(`/stream/${jobId}`);
+
+    eventSource.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+      updateProgress(data);
+
+      if (data.status === 'done') {
+        eventSource.close();
+        fetchFinalResults(jobId);
+      }
+    };
+
+    // Poll for table updates every 3s
+    const pollInterval = setInterval(async () => {
+      if (!currentJobId) { clearInterval(pollInterval); return; }
+      const resp = await fetch(`/status/${currentJobId}`);
+      const data = await resp.json();
+      if (data.results && data.results.length > allResults.length) {
+        allResults = data.results;
+        renderTable(allResults);
+      }
+      if (data.status === 'done') clearInterval(pollInterval);
+    }, 3000);
+  }
+
+  function updateProgress(data) {
+    const total = data.total || 1;
+    const completed = data.completed_keywords || 0;
+    const pct = Math.round((completed / total) * 100);
+    document.getElementById('prog-fill').style.width = pct + '%';
+    document.getElementById('s-kw').textContent = `${completed}/${total}`;
+    document.getElementById('s-res').textContent = data.result_count || 0;
+  }
+
+  async function fetchFinalResults(jobId) {
+    const resp = await fetch(`/status/${jobId}`);
+    const data = await resp.json();
+    allResults = data.results || [];
+    renderTable(allResults);
+    setProgStatus('done');
+    resetBtn();
+    document.getElementById('export-btn').disabled = false;
+
+    // Mark lanes done
+    for (let i = 0; i < numWorkers; i++) {
+      const lane = document.getElementById(`lane-${i}`);
+      if (lane) { lane.classList.remove('active'); lane.classList.add('done'); }
+    }
+  }
+
+  function renderTable(results) {
+    const withPhone = results.filter(r => r.phone).length;
+    const withWeb = results.filter(r => r.website).length;
+    document.getElementById('s-ph').textContent = withPhone;
+    document.getElementById('s-web').textContent = withWeb;
+    document.getElementById('s-res').textContent = results.length;
+    document.getElementById('tcount').textContent = results.length ? `(${results.length})` : '';
+
+    if (!results.length) {
+      document.getElementById('tbody').innerHTML = '<tr><td colspan="7" class="empty">Results will appear here as workers scrape...</td></tr>';
+      return;
+    }
+
+    document.getElementById('tbody').innerHTML = results.map((r, i) => `
+      <tr>
+        <td style="color:var(--muted);font-size:0.66rem">${i+1}</td>
+        <td><div class="nc" title="${esc(r.name)}">${esc(r.name)||'—'}</div></td>
+        <td><span class="tag tg-y">${esc(r.keyword||'')}</span></td>
+        <td>${r.phone ? `<span class="tag tg-b">📞 ${esc(r.phone)}</span>` : `<span class="tag tg-gr">—</span>`}</td>
+        <td>${r.website ? `<a class="lnk" href="${esc(r.website)}" target="_blank">${trunc(r.website,26)}</a>` : '<span style="color:var(--muted)">—</span>'}</td>
+        <td>${r.rating ? `<span style="color:var(--amber)">★</span> ${esc(r.rating)}` : '—'}</td>
+        <td><div class="ac" title="${esc(r.address)}">${esc(r.address)||'—'}</div></td>
+      </tr>
+    `).join('');
+  }
+
+  function setProgStatus(s) {
+    const el = document.getElementById('prog-status');
+    el.className = 'prog-status ' + s;
+    el.textContent = s === 'idle' ? 'Idle' : s === 'running' ? 'Running' : 'Done';
+  }
+
+  function resetBtn() {
+    document.getElementById('start-btn').disabled = false;
+    document.getElementById('start-btn').textContent = '▶ Start Scraping';
+  }
+
+  function exportCSV() {
+    if (!currentJobId) return;
+    window.location.href = `/export/${currentJobId}`;
+  }
+
+  function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function trunc(s, n) { return s.length > n ? s.slice(0,n)+'…' : s; }
+</script>
+</body>
+</html>

@@ -1,0 +1,114 @@
+services:
+
+  # ── Postgres ───────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: waverifier
+      POSTGRES_USER: waverifier
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U waverifier"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ──────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Baileys WhatsApp service ───────────────────────────────────
+  baileys:
+    build:
+      context: ./baileys-service
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      PORT: 3001
+      LOG_LEVEL: warn
+      RATE_LIMIT_POINTS: 10
+      RATE_LIMIT_DURATION: 1
+      CHECK_DELAY_MS: 500
+      MAX_BULK_SIZE: 50
+      AUTH_STATE_PATH: /app/auth_state
+    volumes:
+      - baileys_auth:/app/auth_state   # Persist WhatsApp session
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ── Python FastAPI ─────────────────────────────────────────────
+  api:
+    build:
+      context: ./python-api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://waverifier:${POSTGRES_PASSWORD:-changeme}@postgres:5432/waverifier
+      REDIS_URL: redis://redis:6379/0
+      BAILEYS_URL: http://baileys:3001
+      BAILEYS_TIMEOUT: 30
+      BATCH_SIZE: 25
+      CHECK_DELAY_MS: 500
+      MAX_RETRIES: 3
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      baileys:
+        condition: service_started
+
+  # ── Worker (same image, different command) ─────────────────────
+  worker:
+    build:
+      context: ./python-api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: python -m app.workers.job_worker
+    environment:
+      DATABASE_URL: postgresql+asyncpg://waverifier:${POSTGRES_PASSWORD:-changeme}@postgres:5432/waverifier
+      REDIS_URL: redis://redis:6379/0
+      BAILEYS_URL: http://baileys:3001
+      WORKER_CONCURRENCY: 3
+      BATCH_SIZE: 25
+      CHECK_DELAY_MS: 500
+      MAX_RETRIES: 3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      baileys:
+        condition: service_started
+    # Scale workers: docker compose up --scale worker=3
+    deploy:
+      replicas: 1
+
+volumes:
+  postgres_data:
+  redis_data:
+  baileys_auth:   # IMPORTANT: back this up — it's your WA session

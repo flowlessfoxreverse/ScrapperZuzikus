@@ -1,0 +1,23 @@
+{
+  "name": "wa-verifier-baileys",
+  "version": "1.0.0",
+  "description": "WhatsApp number verification service using Baileys",
+  "main": "src/checker.js",
+  "scripts": {
+    "start": "node src/checker.js",
+    "dev": "nodemon src/checker.js"
+  },
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "^6.7.9",
+    "express": "^4.18.2",
+    "pino": "^8.17.1",
+    "rate-limiter-flexible": "^4.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
