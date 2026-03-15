@@ -357,6 +357,9 @@ def derive_recommendation_state(
     planner_selection_count: int,
     planner_draft_count: int,
     planner_activation_count: int,
+    market_planner_selection_count: int,
+    market_planner_draft_count: int,
+    market_planner_activation_count: int,
     prompt_selection_count: int,
     prompt_draft_count: int,
     prompt_activation_count: int,
@@ -412,9 +415,9 @@ def derive_recommendation_state(
             and production_score >= recommended_production_score
         )
     )
-    activation_signal = planner_activation_count + prompt_activation_count
-    draft_signal = planner_draft_count + prompt_draft_count
-    selection_signal = planner_selection_count + prompt_selection_count
+    activation_signal = planner_activation_count + market_planner_activation_count + prompt_activation_count
+    draft_signal = planner_draft_count + market_planner_draft_count + prompt_draft_count
+    selection_signal = planner_selection_count + market_planner_selection_count + prompt_selection_count
 
     if validation_ready:
         recommendation_score += 30
@@ -465,6 +468,13 @@ def derive_recommendation_state(
     if strategy_production_run_count:
         recommendation_score += min(strategy_production_score // 10, 8)
         reasons.append("Source-strategy performance supports this variant.")
+
+    if market_planner_activation_count or market_planner_draft_count or market_planner_selection_count:
+        recommendation_score += min(
+            (market_planner_activation_count * 4) + (market_planner_draft_count * 2) + market_planner_selection_count,
+            10,
+        )
+        reasons.append("Market-specific planner history supports this variant.")
 
     if activation_signal:
         recommendation_score += min(activation_signal * 6, 18)
