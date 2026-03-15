@@ -919,34 +919,92 @@ def build_recipe_analytics(
     return strategy_rows, cluster_rows[:8], top_variants
 
 
+def source_strategy_thresholds(source_strategy: RecipeSourceStrategy | None) -> dict[str, int]:
+    thresholds = {
+        "validation_score": settings.recipe_activation_min_validation_score,
+        "validation_runs": settings.recipe_activation_min_validation_runs,
+        "production_score": settings.recipe_activation_min_production_score,
+        "production_runs": settings.recipe_activation_min_production_runs,
+    }
+    if source_strategy is None:
+        return thresholds
+
+    overrides: dict[RecipeSourceStrategy, dict[str, int]] = {
+        RecipeSourceStrategy.OVERPASS_DISCOVERY_ENRICH: {
+            "validation_score": 55,
+            "validation_runs": 1,
+            "production_score": 0,
+            "production_runs": 0,
+        },
+        RecipeSourceStrategy.HYBRID_DISCOVERY: {
+            "validation_score": 58,
+            "validation_runs": 1,
+            "production_score": 5,
+            "production_runs": 1,
+        },
+        RecipeSourceStrategy.WEBSITE_FIRST: {
+            "validation_score": 52,
+            "validation_runs": 1,
+            "production_score": 10,
+            "production_runs": 1,
+        },
+        RecipeSourceStrategy.BROWSER_ASSISTED_DISCOVERY: {
+            "validation_score": 65,
+            "validation_runs": 1,
+            "production_score": 15,
+            "production_runs": 1,
+        },
+        RecipeSourceStrategy.DIRECTORY_EXPANSION: {
+            "validation_score": 60,
+            "validation_runs": 1,
+            "production_score": 10,
+            "production_runs": 1,
+        },
+    }
+    for key, value in overrides.get(source_strategy, {}).items():
+        thresholds[key] = max(thresholds[key], value)
+    return thresholds
+
+
+def build_strategy_threshold_rows() -> list[dict[str, object]]:
+    return [
+        {
+            "source_strategy": strategy.value,
+            **source_strategy_thresholds(strategy),
+        }
+        for strategy in RecipeSourceStrategy
+    ]
+
+
 def activation_gate_errors(recipe: QueryRecipe, version: QueryRecipeVersion) -> list[str]:
     errors: list[str] = []
+    thresholds = source_strategy_thresholds(version.source_strategy)
     latest_validation = version.validations[0] if version.validations else None
     if latest_validation is None:
         errors.append("No validation run exists yet.")
         return errors
     if latest_validation.status != RecipeStatus.VALIDATED:
         errors.append("Latest validation did not reach validated status.")
-    if (latest_validation.score or 0) < settings.recipe_activation_min_validation_score:
+    if (latest_validation.score or 0) < thresholds["validation_score"]:
         errors.append(
-            f"Validation score must be at least {settings.recipe_activation_min_validation_score}."
+            f"Validation score must be at least {thresholds['validation_score']} for {version.source_strategy.value}."
         )
-    if len(version.validations) < settings.recipe_activation_min_validation_runs:
+    if len(version.validations) < thresholds["validation_runs"]:
         errors.append(
-            f"At least {settings.recipe_activation_min_validation_runs} validation run(s) are required."
+            f"At least {thresholds['validation_runs']} validation run(s) are required for {version.source_strategy.value}."
         )
-    if settings.recipe_activation_min_production_runs > 0:
+    if thresholds["production_runs"] > 0:
         variant = recipe.source_variant
         if variant is None:
             errors.append("Recipe has no source variant to evaluate production readiness.")
         else:
-            if variant.production_run_count < settings.recipe_activation_min_production_runs:
+            if variant.production_run_count < thresholds["production_runs"]:
                 errors.append(
-                    f"At least {settings.recipe_activation_min_production_runs} production run(s) are required."
+                    f"At least {thresholds['production_runs']} production run(s) are required for {version.source_strategy.value}."
                 )
-            if variant.observed_production_score < settings.recipe_activation_min_production_score:
+            if variant.observed_production_score < thresholds["production_score"]:
                 errors.append(
-                    f"Production yield must be at least {settings.recipe_activation_min_production_score}."
+                    f"Production yield must be at least {thresholds['production_score']} for {version.source_strategy.value}."
                 )
     return errors
 
@@ -1218,6 +1276,7 @@ def recipe_editor(
     alternate_clusters: list[ClusterCandidate] = []
     verticals, clusters = taxonomy_context(db)
     strategy_rows, cluster_rows, top_variants = build_recipe_analytics(db)
+    strategy_threshold_rows = build_strategy_threshold_rows()
     if draft_prompt:
         try:
             cluster_choice, alternate_clusters = analyze_prompt_clusters(draft_prompt)
@@ -1261,6 +1320,7 @@ def recipe_editor(
             "cluster_rows": cluster_rows,
             "top_variants": top_variants,
             "recipe_source_strategies": list(RecipeSourceStrategy),
+            "strategy_activation_thresholds": strategy_threshold_rows,
             "activation_thresholds": {
                 "validation_score": settings.recipe_activation_min_validation_score,
                 "validation_runs": settings.recipe_activation_min_validation_runs,
@@ -1495,6 +1555,7 @@ def generate_recipe_draft_html(
     alternate_clusters: list[ClusterCandidate] = []
     verticals, clusters = taxonomy_context(db)
     strategy_rows, cluster_rows, top_variants = build_recipe_analytics(db)
+    strategy_threshold_rows = build_strategy_threshold_rows()
     try:
         cluster_choice, alternate_clusters = analyze_prompt_clusters(prompt)
         cluster_choice, alternate_clusters = apply_cluster_decision_history(db, prompt, cluster_choice, alternate_clusters)
@@ -1545,6 +1606,7 @@ def generate_recipe_draft_html(
             "strategy_rows": strategy_rows,
             "cluster_rows": cluster_rows,
             "top_variants": top_variants,
+            "strategy_activation_thresholds": strategy_threshold_rows,
             "activation_thresholds": {
                 "validation_score": settings.recipe_activation_min_validation_score,
                 "validation_runs": settings.recipe_activation_min_validation_runs,

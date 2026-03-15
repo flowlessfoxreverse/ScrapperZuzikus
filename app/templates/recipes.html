@@ -54,22 +54,46 @@
         </div>
         <div class="country-summary">
           <div class="stat-card">
-            <span class="subtle">Activation Validation Floor</span>
+            <span class="subtle">Global Validation Floor</span>
             <strong>{{ activation_thresholds.validation_score }}/100</strong>
           </div>
           <div class="stat-card">
-            <span class="subtle">Activation Validation Runs</span>
+            <span class="subtle">Global Validation Runs</span>
             <strong>{{ activation_thresholds.validation_runs }}</strong>
           </div>
           <div class="stat-card">
-            <span class="subtle">Activation Production Floor</span>
+            <span class="subtle">Global Production Floor</span>
             <strong>{{ activation_thresholds.production_score }}/100</strong>
           </div>
           <div class="stat-card">
-            <span class="subtle">Activation Production Runs</span>
+            <span class="subtle">Global Production Runs</span>
             <strong>{{ activation_thresholds.production_runs }}</strong>
           </div>
         </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Strategy Activation Rule</th>
+              <th>Validation Floor</th>
+              <th>Validation Runs</th>
+              <th>Production Floor</th>
+              <th>Production Runs</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in strategy_activation_thresholds %}
+            <tr>
+              <td>{{ row.source_strategy }}</td>
+              <td>{{ row.validation_score }}/100</td>
+              <td>{{ row.validation_runs }}</td>
+              <td>{{ row.production_score }}/100</td>
+              <td>{{ row.production_runs }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5">No strategy-specific activation rules configured.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
         <table>
           <thead>
             <tr>

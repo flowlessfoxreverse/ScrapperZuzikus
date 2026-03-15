@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import QueryRecipeVariantTemplate, RecipeAdapter, RecipeSourceStrategy
+from app.services.recipe_variants import normalize_prompt_text
 
 
 @dataclass(frozen=True)
@@ -131,30 +132,42 @@ GENERIC_CLUSTER_VARIANTS: dict[str, tuple[VariantTemplate, ...]] = {
     "food_service": (
         VariantTemplate("restaurant", "Restaurant", "food", "food_service", "restaurant", RecipeSourceStrategy.WEBSITE_FIRST, ("restaurant", "dining"), ({"amenity": "restaurant"},), (), ("restaurant", "dining"), ("menu", "reservation", "contact"), ("en",), (), 90),
         VariantTemplate("cafe", "Cafe", "food", "food_service", "cafe", RecipeSourceStrategy.WEBSITE_FIRST, ("cafe", "coffee"), ({"amenity": "cafe"},), (), ("cafe", "coffee shop"), ("coffee", "menu", "contact"), ("en",), (), 84),
+        VariantTemplate("bakery", "Bakery", "food", "food_service", "bakery", RecipeSourceStrategy.WEBSITE_FIRST, ("bakery", "pastry"), ({"shop": "bakery"},), (), ("bakery", "pastry shop"), ("bakery", "menu", "order"), ("en",), (), 82),
+        VariantTemplate("catering", "Catering Service", "food", "food_service", "catering", RecipeSourceStrategy.WEBSITE_FIRST, ("catering", "event food"), ({"craft": "caterer"}, {"office": "company"}), (), ("catering service", "event catering"), ("catering", "menu", "contact"), ("en",), (), 80),
     ),
     "fitness_studios": (
         VariantTemplate("gym", "Gym", "fitness", "fitness_studios", "gym", RecipeSourceStrategy.HYBRID_DISCOVERY, ("gym", "fitness"), ({"leisure": "fitness_centre"},), (), ("gym", "fitness center"), ("membership", "trainer", "class"), ("en",), (), 90),
         VariantTemplate("yoga-studio", "Yoga Studio", "fitness", "fitness_studios", "yoga", RecipeSourceStrategy.WEBSITE_FIRST, ("yoga", "yoga studio"), ({"sport": "yoga"}, {"leisure": "sports_centre"}), (), ("yoga studio", "yoga class"), ("yoga", "schedule", "class"), ("en",), (), 84),
+        VariantTemplate("pilates-studio", "Pilates Studio", "fitness", "fitness_studios", "pilates", RecipeSourceStrategy.WEBSITE_FIRST, ("pilates", "pilates studio"), ({"sport": "pilates"}, {"leisure": "sports_centre"}), (), ("pilates studio", "pilates class"), ("pilates", "class", "schedule"), ("en",), (), 82),
+        VariantTemplate("personal-training", "Personal Training", "fitness", "fitness_studios", "personal-training", RecipeSourceStrategy.WEBSITE_FIRST, ("personal training", "trainer"), ({"leisure": "fitness_centre"}, {"office": "company"}), (), ("personal trainer", "fitness coach"), ("trainer", "consultation", "booking"), ("en",), (), 78),
     ),
     "wellness_clinics": (
         VariantTemplate("general-clinic", "General Clinic", "health", "wellness_clinics", "general-clinic", RecipeSourceStrategy.HYBRID_DISCOVERY, ("clinic", "medical clinic"), ({"healthcare": "clinic"},), (), ("medical clinic", "health clinic"), ("clinic", "appointment", "contact"), ("en",), (), 90),
         VariantTemplate("dental-clinic", "Dental Clinic", "health", "wellness_clinics", "dental", RecipeSourceStrategy.HYBRID_DISCOVERY, ("dentist", "dental"), ({"healthcare": "dentist"}, {"healthcare": "clinic"}), (), ("dental clinic", "dentist"), ("dental", "appointment", "contact"), ("en",), (), 84),
+        VariantTemplate("physio-clinic", "Physiotherapy Clinic", "health", "wellness_clinics", "physio", RecipeSourceStrategy.HYBRID_DISCOVERY, ("physio", "physiotherapy", "rehab"), ({"healthcare": "physiotherapist"}, {"healthcare": "clinic"}), (), ("physiotherapy clinic", "rehab clinic"), ("physio", "rehab", "appointment"), ("en",), (), 82),
     ),
     "property_agencies": (
         VariantTemplate("real-estate-agency", "Real Estate Agency", "real_estate", "property_agencies", "real-estate", RecipeSourceStrategy.WEBSITE_FIRST, ("real estate", "property agency"), ({"office": "estate_agent"},), (), ("real estate agency", "estate agent"), ("property", "listing", "contact"), ("en",), (), 90),
+        VariantTemplate("property-management", "Property Management", "real_estate", "property_agencies", "property-management", RecipeSourceStrategy.WEBSITE_FIRST, ("property management", "rental management"), ({"office": "estate_agent"}, {"office": "company"}), (), ("property management", "rental management"), ("property", "management", "contact"), ("en",), (), 82),
     ),
     "training_centers": (
         VariantTemplate("training-center", "Training Center", "education", "training_centers", "training-center", RecipeSourceStrategy.WEBSITE_FIRST, ("training", "academy", "courses"), ({"office": "educational_institution"}, {"amenity": "school"}), (), ("training center", "academy"), ("course", "enroll", "contact"), ("en",), (), 88),
+        VariantTemplate("language-school", "Language School", "education", "training_centers", "language-school", RecipeSourceStrategy.WEBSITE_FIRST, ("language school", "english school"), ({"amenity": "school"}, {"office": "educational_institution"}), (), ("language school", "english school"), ("course", "language", "contact"), ("en",), (), 83),
     ),
     "law_firms": (
         VariantTemplate("law-firm", "Law Firm", "legal", "law_firms", "law-firm", RecipeSourceStrategy.WEBSITE_FIRST, ("law firm", "lawyer", "attorney"), ({"office": "lawyer"},), (), ("law firm", "lawyer"), ("legal", "consultation", "contact"), ("en",), (), 88),
+        VariantTemplate("immigration-law", "Immigration Law Firm", "legal", "law_firms", "immigration-law", RecipeSourceStrategy.WEBSITE_FIRST, ("immigration", "visa lawyer"), ({"office": "lawyer"},), (), ("immigration lawyer", "visa lawyer"), ("visa", "legal", "consultation"), ("en",), (), 82),
     ),
     "specialty_retail": (
         VariantTemplate("specialty-shop", "Specialty Shop", "retail", "specialty_retail", "specialty-shop", RecipeSourceStrategy.WEBSITE_FIRST, ("boutique", "specialty shop", "retail store"), ({"shop": "yes"},), (), ("boutique", "specialty shop"), ("shop", "catalog", "contact"), ("en",), ("Broad retail pattern; production validation should carry more weight than template score here.",), 82),
+        VariantTemplate("fashion-boutique", "Fashion Boutique", "retail", "specialty_retail", "fashion", RecipeSourceStrategy.WEBSITE_FIRST, ("fashion", "boutique"), ({"shop": "clothes"}, {"shop": "boutique"}), (), ("fashion boutique", "boutique"), ("catalog", "collection", "contact"), ("en",), (), 80),
+        VariantTemplate("gift-shop", "Gift Shop", "retail", "specialty_retail", "gift-shop", RecipeSourceStrategy.WEBSITE_FIRST, ("gift", "souvenir"), ({"shop": "gift"}, {"shop": "souvenir"}), (), ("gift shop", "souvenir shop"), ("gift", "catalog", "contact"), ("en",), (), 76),
     ),
     "property_services": (
         VariantTemplate("cleaning-service", "Cleaning Service", "home_services", "property_services", "cleaning", RecipeSourceStrategy.WEBSITE_FIRST, ("cleaning", "housekeeping"), ({"office": "company"}, {"craft": "cleaning"}), (), ("cleaning service", "housekeeping"), ("cleaning", "service", "quote"), ("en",), (), 86),
         VariantTemplate("repair-service", "Repair Service", "home_services", "property_services", "repair", RecipeSourceStrategy.WEBSITE_FIRST, ("repair", "maintenance"), ({"office": "company"}, {"craft": "electrician"}), (), ("repair service", "maintenance company"), ("repair", "maintenance", "contact"), ("en",), (), 82),
+        VariantTemplate("electrician-service", "Electrician Service", "home_services", "property_services", "electrician", RecipeSourceStrategy.WEBSITE_FIRST, ("electrician", "electrical"), ({"craft": "electrician"}, {"office": "company"}), (), ("electrician service", "electrical contractor"), ("electrician", "quote", "contact"), ("en",), (), 80),
+        VariantTemplate("plumber-service", "Plumbing Service", "home_services", "property_services", "plumber", RecipeSourceStrategy.WEBSITE_FIRST, ("plumber", "plumbing"), ({"craft": "plumber"}, {"office": "company"}), (), ("plumbing service", "plumber"), ("plumbing", "quote", "contact"), ("en",), (), 80),
     ),
 }
 
@@ -188,6 +201,20 @@ def _extract_location_hint(normalized: str) -> str | None:
     return None
 
 
+def _normalized_alias(alias: str) -> str:
+    return normalize_prompt_text(alias)
+
+
+def _alias_matches(alias: str, normalized_text: str, normalized_tokens: set[str]) -> bool:
+    normalized_alias = _normalized_alias(alias)
+    if not normalized_alias:
+        return False
+    if normalized_alias in normalized_text:
+        return True
+    alias_tokens = set(normalized_alias.split())
+    return bool(alias_tokens) and alias_tokens.issubset(normalized_tokens)
+
+
 def _language_hints_for_prompt(normalized: str, base_hints: tuple[str, ...] = ()) -> list[str]:
     if base_hints:
         return list(dict.fromkeys(base_hints))
@@ -202,8 +229,13 @@ def _language_hints_for_prompt(normalized: str, base_hints: tuple[str, ...] = ()
 
 def _rank_clusters(normalized: str) -> list[ClusterCandidate]:
     scored: list[ClusterCandidate] = []
+    normalized_tokens = set(normalized.split())
     for hint in PROMPT_CLUSTER_HINTS:
-        matched_aliases = tuple(phrase for phrase in hint["aliases"] if phrase in normalized)
+        matched_aliases = tuple(
+            phrase
+            for phrase in hint["aliases"]
+            if _alias_matches(str(phrase), normalized, normalized_tokens)
+        )
         if matched_aliases:
             score = (len(matched_aliases) * 100) + max(len(alias) for alias in matched_aliases)
             scored.append(
@@ -292,10 +324,11 @@ def _strategy_bonus(strategy: RecipeSourceStrategy, normalized: str) -> tuple[in
 
 def _variant_score(template: VariantTemplate, normalized: str, location_hint: str | None) -> tuple[int, int, int, list[str]]:
     reasons: list[str] = []
-    alias_hits = [alias for alias in template.aliases if alias in normalized]
+    normalized_tokens = set(normalized.split())
+    alias_hits = [alias for alias in template.aliases if _alias_matches(alias, normalized, normalized_tokens)]
     template_score = template.priority
     prompt_match_score = 10 * len(alias_hits)
-    if template.sub_intent.replace("-", " ") in normalized:
+    if _alias_matches(template.sub_intent.replace("-", " "), normalized, normalized_tokens):
         prompt_match_score += 6
         reasons.append(f"Prompt directly references the '{template.sub_intent}' sub-intent.")
     if alias_hits:
@@ -359,7 +392,7 @@ def _proposal_from_template(
 
 
 def build_draft_variants_from_prompt(prompt: str, session: Session | None = None) -> list[DraftProposal]:
-    normalized = " ".join(prompt.strip().lower().split())
+    normalized = normalize_prompt_text(prompt)
     if not normalized:
         raise ValueError("Prompt cannot be empty.")
     chosen = _rank_clusters(normalized)[0]
