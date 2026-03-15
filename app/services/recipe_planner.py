@@ -10,7 +10,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import DailyUsage, QueryRecipePlan, RecipeAdapter, RecipeSourceStrategy
+from app.models import (
+    DailyUsage,
+    NicheCluster,
+    QueryRecipePlan,
+    QueryRecipeVariantTemplate,
+    RecipeAdapter,
+    RecipeSourceStrategy,
+    TaxonomyVertical,
+)
 from app.services.recipe_clusters import apply_cluster_decision_history
 from app.services.recipe_drafts import (
     ClusterCandidate,
@@ -230,10 +238,10 @@ def _model_to_variant(variant: PlannedVariant) -> DraftProposal:
     )
 
 
-def _run_heuristic_provider(session: Session, prompt: str) -> PlannedPromptPayload:
+def _run_heuristic_provider(session: Session, prompt: str) -> tuple[PlannedPromptPayload, str]:
     cluster_choice, alternate_clusters = analyze_prompt_clusters(prompt)
     variants = build_draft_variants_from_prompt(prompt, session=session)
-    return PlannedPromptPayload(
+    payload = PlannedPromptPayload(
         prompt=prompt,
         provider="heuristic",
         model_name=settings.recipe_planner_model,
@@ -243,17 +251,148 @@ def _run_heuristic_provider(session: Session, prompt: str) -> PlannedPromptPaylo
         variants=[_variant_to_model(proposal) for proposal in variants],
         default_variant_key=variants[0].variant_key if variants else None,
     )
+    return payload, payload.model_dump_json()
 
 
-def _run_provider(session: Session, prompt: str, requested_provider: str) -> tuple[PlannedPromptPayload, str, str, bool, str | None]:
+def _taxonomy_context_text(session: Session) -> str:
+    verticals = session.scalars(
+        select(TaxonomyVertical).where(TaxonomyVertical.is_active.is_(True)).order_by(TaxonomyVertical.sort_order, TaxonomyVertical.label)
+    ).all()
+    clusters = session.scalars(
+        select(NicheCluster).where(NicheCluster.is_active.is_(True)).order_by(NicheCluster.vertical_slug, NicheCluster.sort_order, NicheCluster.label)
+    ).all()
+    templates = session.scalars(
+        select(QueryRecipeVariantTemplate)
+        .where(QueryRecipeVariantTemplate.is_active.is_(True))
+        .order_by(
+            QueryRecipeVariantTemplate.cluster_slug,
+            QueryRecipeVariantTemplate.sort_order.desc(),
+            QueryRecipeVariantTemplate.template_score.desc(),
+        )
+    ).all()
+
+    cluster_by_vertical: dict[str, list[NicheCluster]] = {}
+    for cluster in clusters:
+        cluster_by_vertical.setdefault(cluster.vertical_slug, []).append(cluster)
+
+    templates_by_cluster: dict[str, list[QueryRecipeVariantTemplate]] = {}
+    for template in templates:
+        if template.cluster_slug is None:
+            continue
+        bucket = templates_by_cluster.setdefault(template.cluster_slug, [])
+        if len(bucket) < 6:
+            bucket.append(template)
+
+    lines = ["Available taxonomy:"]
+    for vertical in verticals:
+        lines.append(f"- vertical={vertical.slug} label={vertical.label}")
+        for cluster in cluster_by_vertical.get(vertical.slug, []):
+            lines.append(f"  - cluster={cluster.slug} label={cluster.label}")
+            for template in templates_by_cluster.get(cluster.slug, []):
+                alias_text = ", ".join(template.aliases[:4]) if template.aliases else "-"
+                tag_text = ", ".join(
+                    f"{key}={value}"
+                    for tag in template.osm_tags[:3]
+                    for key, value in tag.items()
+                ) or "-"
+                lines.append(
+                    f"    - template={template.key} label={template.label} "
+                    f"strategy={template.source_strategy.value} aliases={alias_text} tags={tag_text}"
+                )
+    lines.append("Allowed source_strategy values:")
+    for strategy in RecipeSourceStrategy:
+        lines.append(f"- {strategy.value}")
+    lines.append("Allowed adapter values:")
+    for adapter in RecipeAdapter:
+        lines.append(f"- {adapter.value}")
+    return "\n".join(lines)
+
+
+def _openai_system_prompt(context_text: str) -> str:
+    return (
+        "You are a recipe planner for a lead-generation scraping platform.\n"
+        "Return only structured recipe planning output using the provided schema.\n"
+        "Choose exactly one primary cluster and up to three alternate clusters.\n"
+        "Generate 3 to 8 candidate variants.\n"
+        "Use only listed verticals, clusters, source strategies, and adapters.\n"
+        "Prefer existing template keys when they fit; otherwise create a short kebab-case template_key.\n"
+        "Keep OSM tags realistic and specific. Avoid invented high-confidence tags when uncertain.\n"
+        "Scores must be integers from 0 to 100.\n"
+        "Template score reflects intrinsic template quality; prompt match reflects fit to the user prompt; fit score is the combined ranking signal.\n"
+        "Rationales and fit reasons should be short, concrete sentences.\n\n"
+        f"{context_text}"
+    )
+
+
+def _run_openai_provider(session: Session, prompt: str) -> tuple[PlannedPromptPayload, str, str, bool, str | None, str]:
+    api_key = settings.recipe_planner_openai_api_key
+    if not api_key:
+        raise RuntimeError("OpenAI planner is configured but RECIPE_PLANNER_OPENAI_API_KEY is not set.")
+
+    try:
+        from openai import OpenAI
+    except ImportError as exc:  # pragma: no cover - dependency check
+        raise RuntimeError("OpenAI planner requires the 'openai' package to be installed.") from exc
+
+    client = OpenAI(api_key=api_key, timeout=settings.recipe_planner_timeout_seconds)
+    response = client.responses.parse(
+        model=settings.recipe_planner_openai_model,
+        input=[
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": _openai_system_prompt(_taxonomy_context_text(session)),
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": f"Build recipe variants for this prompt:\n{prompt}",
+                    }
+                ],
+            },
+        ],
+        text_format=PlannedPromptPayload,
+    )
+    parsed = response.output_parsed
+    if parsed is None:
+        raise RuntimeError("OpenAI planner returned no parsed output.")
+    parsed.prompt = prompt
+    parsed.provider = "openai"
+    parsed.model_name = settings.recipe_planner_openai_model
+    parsed.planner_version = PLANNER_VERSION
+    raw_response = response.model_dump_json() if hasattr(response, "model_dump_json") else json.dumps(parsed.model_dump(mode="json"), sort_keys=True)
+    return parsed, "openai", settings.recipe_planner_openai_model, False, None, raw_response
+
+
+def _run_provider(session: Session, prompt: str, requested_provider: str) -> tuple[PlannedPromptPayload, str, str, bool, str | None, str]:
     if requested_provider == "heuristic":
-        payload = _run_heuristic_provider(session, prompt)
-        return payload, "heuristic", settings.recipe_planner_model, False, None
+        payload, raw_response = _run_heuristic_provider(session, prompt)
+        return payload, "heuristic", settings.recipe_planner_model, False, None, raw_response
+    if requested_provider == "openai":
+        try:
+            return _run_openai_provider(session, prompt)
+        except Exception as exc:
+            payload, raw_response = _run_heuristic_provider(session, prompt)
+            payload.provider = "heuristic"
+            return (
+                payload,
+                "heuristic",
+                settings.recipe_planner_model,
+                True,
+                f"OpenAI planner fallback: {exc}",
+                raw_response,
+            )
 
     fallback_reason = f"Planner provider '{requested_provider}' is not configured yet; used heuristic fallback."
-    payload = _run_heuristic_provider(session, prompt)
+    payload, raw_response = _run_heuristic_provider(session, prompt)
     payload.provider = "heuristic"
-    return payload, "heuristic", settings.recipe_planner_model, True, fallback_reason
+    return payload, "heuristic", settings.recipe_planner_model, True, fallback_reason, raw_response
 
 
 def _persist_plan(
@@ -267,6 +406,7 @@ def _persist_plan(
     model_name: str,
     used_fallback: bool,
     fallback_reason: str | None,
+    raw_response: str,
 ) -> QueryRecipePlan:
     plan = QueryRecipePlan(
         prompt_text=prompt,
@@ -277,7 +417,7 @@ def _persist_plan(
         planner_version=PLANNER_VERSION,
         status="success",
         cache_key=cache_key,
-        raw_response=json.dumps(payload.model_dump(mode="json"), sort_keys=True),
+        raw_response=raw_response,
         parsed_output=payload.model_dump(mode="json"),
         used_fallback=used_fallback,
         fallback_reason=fallback_reason,
@@ -340,7 +480,7 @@ def plan_recipe_prompt(
     else:
         try:
             _check_quota(session, requested_provider)
-            payload, actual_provider, model_name, used_fallback, fallback_reason = _run_provider(
+            payload, actual_provider, model_name, used_fallback, fallback_reason, raw_response = _run_provider(
                 session, prompt_text, requested_provider
             )
             _increment_quota(session, requested_provider)
@@ -354,6 +494,7 @@ def plan_recipe_prompt(
                 model_name=model_name,
                 used_fallback=used_fallback,
                 fallback_reason=fallback_reason,
+                raw_response=raw_response,
             )
         except Exception as exc:
             _persist_plan_error(

@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     recipe_planner_cache_hours: int = 24
     recipe_planner_daily_cap: int = 0
     recipe_planner_timeout_seconds: int = 20
+    recipe_planner_openai_api_key: str | None = None
+    recipe_planner_openai_model: str = "gpt-4o-mini"
     recipe_activation_min_validation_score: int = 55
     recipe_activation_min_validation_runs: int = 1
     recipe_activation_min_production_score: int = 0
