@@ -317,6 +317,7 @@ class RecommendationPolicySimulationRow:
     impact_parts: list[str]
     summary: str
     learning_summary: str
+    learning_market: str | None
 
 
 @dataclass
@@ -1148,6 +1149,7 @@ def build_recommendation_policy_simulation_rows(db: Session) -> list[Recommendat
                     impact_parts=["No variants yet"],
                     summary="No recipe variants exist for this policy scope yet.",
                     learning_summary="No suggestion history available for this policy scope.",
+                    learning_market=None,
                 )
             )
             continue
@@ -1189,7 +1191,13 @@ def build_recommendation_policy_simulation_rows(db: Session) -> list[Recommendat
             min(5, _percentile_int(activation_counts, 0.75) if activation_counts else policy.trusted_activation_count),
         )
 
-        learning = recommendation_policy_experiment_learning(db, policy)
+        dominant_market = dominant_policy_market(db, policy)
+        learning = recommendation_policy_experiment_learning(db, policy, country_code=dominant_market)
+        if dominant_market and learning.insufficient_data_count and not learning.improved_count and not learning.degraded_count and not learning.neutral_count:
+            learning = recommendation_policy_experiment_learning(db, policy)
+            learning_market = None
+        else:
+            learning_market = dominant_market
 
         def blend_threshold(current_value: int, suggested_value: int) -> int:
             blended = current_value + round((suggested_value - current_value) * learning.adjustment_factor)
@@ -1298,7 +1306,12 @@ def build_recommendation_policy_simulation_rows(db: Session) -> list[Recommendat
                 },
                 impact_parts=impact_parts,
                 summary=summary,
-                learning_summary=learning.summary,
+                learning_summary=(
+                    f"{learning.summary} Market scope: {learning_market}."
+                    if learning_market
+                    else f"{learning.summary} Market scope: global."
+                ),
+                learning_market=learning_market,
             )
         )
     return rows
@@ -1309,8 +1322,9 @@ def recommendation_policy_window_snapshot(
     policy: QueryRecipeRecommendationPolicy,
     start_at: datetime,
     end_at: datetime,
+    country_code: str | None = None,
 ) -> dict[str, object]:
-    row = db.execute(
+    stmt = (
         select(
             func.count(QueryRecipeVariantRunStat.id),
             func.avg(QueryRecipeVariantRunStat.score),
@@ -1329,7 +1343,10 @@ def recommendation_policy_window_snapshot(
             if policy.source_strategy is not None
             else True
         )
-    ).one()
+    )
+    if country_code:
+        stmt = stmt.join(Region, Region.id == QueryRecipeVariantRunStat.region_id).where(Region.country_code == country_code)
+    row = db.execute(stmt).one()
     run_count = int(row[0] or 0)
     avg_score = round(row[1] or 0)
     discovered_total = int(row[2] or 0)
@@ -1350,6 +1367,27 @@ def recommendation_policy_window_snapshot(
         "email_rate": email_rate,
         "phone_rate": phone_rate,
     }
+
+
+def dominant_policy_market(db: Session, policy: QueryRecipeRecommendationPolicy) -> str | None:
+    row = db.execute(
+        select(
+            Region.country_code,
+            func.count(QueryRecipeVariantRunStat.id),
+        )
+        .select_from(QueryRecipeVariantRunStat)
+        .join(QueryRecipeVariant, QueryRecipeVariant.id == QueryRecipeVariantRunStat.variant_id)
+        .join(Region, Region.id == QueryRecipeVariantRunStat.region_id)
+        .where(
+            QueryRecipeVariant.source_strategy == policy.source_strategy
+            if policy.source_strategy is not None
+            else True
+        )
+        .group_by(Region.country_code)
+        .order_by(desc(func.count(QueryRecipeVariantRunStat.id)), Region.country_code)
+        .limit(1)
+    ).first()
+    return row[0] if row else None
 
 
 def classify_recommendation_policy_outcome(
@@ -1415,6 +1453,7 @@ def recommendation_policy_experiment_learning(
     policy: QueryRecipeRecommendationPolicy,
     *,
     limit: int = 12,
+    country_code: str | None = None,
 ) -> RecommendationPolicyExperimentLearning:
     audits = db.scalars(
         select(QueryRecipeRecommendationPolicyAudit)
@@ -1442,12 +1481,14 @@ def recommendation_policy_experiment_learning(
             policy,
             audit.changed_at - timedelta(days=7),
             audit.changed_at,
+            country_code=country_code,
         )
         after_window = recommendation_policy_window_snapshot(
             db,
             policy,
             audit.changed_at,
             min(audit.changed_at + timedelta(days=7), now),
+            country_code=country_code,
         )
         outcome, delta, _ = classify_recommendation_policy_outcome(before_window, after_window)
         outcomes.append((outcome, delta))

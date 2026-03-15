@@ -288,6 +288,7 @@
               <th>Suggested Thresholds</th>
               <th>Simulated State Mix</th>
               <th>Projected Delta</th>
+              <th>Market Scope</th>
               <th>Learning Bias</th>
               <th>Recommendation</th>
               <th>Apply</th>
@@ -304,6 +305,7 @@
               <td><code>{{ row.suggested_thresholds }}</code></td>
               <td><code>{{ row.simulated_state_mix }}</code></td>
               <td>{{ row.impact_parts|join(", ") }}</td>
+              <td>{% if row.learning_market %}{{ row.learning_market }}{% else %}<span class="subtle">global</span>{% endif %}</td>
               <td>{{ row.learning_summary }}</td>
               <td>{{ row.summary }}</td>
               <td>
@@ -321,7 +323,7 @@
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="8">No policy simulations available yet.</td></tr>
+            <tr><td colspan="9">No policy simulations available yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>
