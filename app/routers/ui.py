@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import Category, Company, ContactChannel, ContactChannelType, Email, NicheCluster, Phone, ProxyEndpoint, ProxyKind, QueryRecipe, QueryRecipeValidation, QueryRecipeVersion, RecipeAdapter, RecipeStatus, Region, RequestMetric, RunCategory, RunStatus, ScrapeRun, TaxonomyVertical, ValidationStatus
+from app.models import Category, Company, ContactChannel, ContactChannelType, Email, NicheCluster, Phone, ProxyEndpoint, ProxyKind, QueryRecipe, QueryRecipeValidation, QueryRecipeVariant, QueryRecipeVersion, RecipeAdapter, RecipeStatus, Region, RequestMetric, RunCategory, RunStatus, ScrapeRun, TaxonomyVertical, ValidationStatus
 from app.schemas import EmailRow
 from app.services.category_recipes import latest_recipe_version, sync_recipe_to_category, upsert_recipe_backed_category
 from app.services.host_suppression import normalize_host_key
@@ -24,6 +24,7 @@ from app.services.recipe_drafts import DraftProposal, build_draft_variants_from_
 from app.services.recipe_lint import RecipeLintResult, lint_recipe_content, parse_tag_block
 from app.services.taxonomy import list_active_clusters, list_active_verticals
 from app.services.recipe_validation import get_validation_quota_snapshot, validate_recipe_version
+from app.services.recipe_variants import prompt_variant_recipe_map, upsert_prompt_variants
 from app.services.region_catalog import country_catalog, upsert_country_with_subdivisions
 from app.services.runs import find_active_run, request_run_cancellation
 from app.tasks import run_scrape, sync_region_catalog_task
@@ -176,6 +177,8 @@ class RecipeRow:
     lint_warnings: list[str]
     linked_category_label: str | None
     linked_category_active: bool
+    source_variant_key: str | None
+    source_variant_prompt: str | None
     created_at: datetime
 
 
@@ -726,6 +729,8 @@ def build_recipe_rows(db: Session) -> list[RecipeRow]:
                 lint_warnings=lint_result.warnings,
                 linked_category_label=linked_category.label if linked_category else None,
                 linked_category_active=linked_category.is_active if linked_category else False,
+                source_variant_key=recipe.source_variant.variant_key if recipe.source_variant else None,
+                source_variant_prompt=recipe.source_variant.prompt_text if recipe.source_variant else None,
                 created_at=recipe.created_at,
             )
         )
@@ -1026,6 +1031,8 @@ def recipe_editor(
     if draft_prompt:
         try:
             draft_variants, draft_proposal = select_draft_variant(draft_prompt, draft_variant_slug)
+            upsert_prompt_variants(db, draft_prompt, draft_variants)
+            db.commit()
             draft_lint = lint_recipe_content(
                 osm_tags=draft_proposal.osm_tags,
                 exclude_tags=draft_proposal.exclude_tags,
@@ -1047,6 +1054,7 @@ def recipe_editor(
             "error": error,
             "draft_proposal": draft_proposal,
             "draft_variants": draft_variants,
+            "variant_recipe_map": prompt_variant_recipe_map(db, draft_prompt or "") if draft_prompt else {},
             "draft_lint": draft_lint,
             "draft_prompt": draft_prompt or "",
         },
@@ -1190,12 +1198,15 @@ def create_recipe_variants_html(
         proposals = build_draft_variants_from_prompt(prompt)
     except ValueError as exc:
         return RedirectResponse(url=f"/recipes?error={quote_plus(str(exc)[:200])}", status_code=303)
+    saved_variants = upsert_prompt_variants(db, prompt, proposals)
 
     if not selected_variant_keys:
+        db.commit()
         return RedirectResponse(url="/recipes?error=Select%20at%20least%20one%20variant.", status_code=303)
 
     selected = [proposal for proposal in proposals if proposal.variant_key in set(selected_variant_keys)]
     if not selected:
+        db.commit()
         return RedirectResponse(url="/recipes?error=Selected%20variants%20were%20not%20found.", status_code=303)
 
     created = 0
@@ -1211,6 +1222,7 @@ def create_recipe_variants_html(
             description=proposal.description or None,
             vertical=proposal.vertical,
             cluster_slug=proposal.cluster_slug,
+            source_variant_id=saved_variants[proposal.variant_key].id,
             status=RecipeStatus.DRAFT,
             is_platform_template=True,
         )
@@ -1258,6 +1270,8 @@ def generate_recipe_draft_html(
     verticals, clusters = taxonomy_context(db)
     try:
         draft_variants, draft_proposal = select_draft_variant(prompt, selected_variant_slug or None)
+        upsert_prompt_variants(db, prompt, draft_variants)
+        db.commit()
         draft_lint = lint_recipe_content(
             osm_tags=draft_proposal.osm_tags,
             exclude_tags=draft_proposal.exclude_tags,
@@ -1279,6 +1293,7 @@ def generate_recipe_draft_html(
             "error": error,
             "draft_proposal": draft_proposal,
             "draft_variants": draft_variants,
+            "variant_recipe_map": prompt_variant_recipe_map(db, prompt),
             "draft_lint": draft_lint,
             "draft_prompt": prompt,
         },

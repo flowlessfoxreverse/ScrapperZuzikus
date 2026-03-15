@@ -195,6 +195,7 @@ class QueryRecipe(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     vertical: Mapped[str] = mapped_column(String(64), ForeignKey("taxonomy_verticals.slug"), index=True)
     cluster_slug: Mapped[str | None] = mapped_column(String(64), ForeignKey("niche_clusters.slug"), nullable=True, index=True)
+    source_variant_id: Mapped[int | None] = mapped_column(ForeignKey("query_recipe_variants.id"), nullable=True, index=True)
     status: Mapped[RecipeStatus] = mapped_column(SqlEnum(RecipeStatus), default=RecipeStatus.DRAFT, index=True)
     is_platform_template: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -207,6 +208,7 @@ class QueryRecipe(Base):
     )
     vertical_ref: Mapped["TaxonomyVertical | None"] = relationship(foreign_keys=[vertical])
     cluster_ref: Mapped["NicheCluster | None"] = relationship(foreign_keys=[cluster_slug])
+    source_variant: Mapped["QueryRecipeVariant | None"] = relationship(foreign_keys=[source_variant_id])
 
 
 class QueryRecipeVersion(Base):
@@ -251,6 +253,38 @@ class QueryRecipeValidation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     recipe_version: Mapped["QueryRecipeVersion"] = relationship(back_populates="validations")
+
+
+class QueryRecipeVariant(Base):
+    __tablename__ = "query_recipe_variants"
+    __table_args__ = (
+        UniqueConstraint("prompt_fingerprint", "variant_key", name="uq_recipe_variant_prompt_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    prompt_text: Mapped[str] = mapped_column(Text)
+    prompt_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    variant_key: Mapped[str] = mapped_column(String(96), index=True)
+    slug: Mapped[str] = mapped_column(String(96), index=True)
+    label: Mapped[str] = mapped_column(String(128))
+    vertical: Mapped[str] = mapped_column(String(64), ForeignKey("taxonomy_verticals.slug"), index=True)
+    cluster_slug: Mapped[str | None] = mapped_column(String(64), ForeignKey("niche_clusters.slug"), nullable=True, index=True)
+    provenance: Mapped[str] = mapped_column(String(32), default="curated_prompt", index=True)
+    template_score: Mapped[int] = mapped_column(Integer, default=0)
+    prompt_match_score: Mapped[int] = mapped_column(Integer, default=0)
+    rank_score: Mapped[int] = mapped_column(Integer, default=0)
+    fit_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    rationale: Mapped[list[str]] = mapped_column(JSON, default=list)
+    osm_tags: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
+    exclude_tags: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
+    search_terms: Mapped[list[str]] = mapped_column(JSON, default=list)
+    website_keywords: Mapped[list[str]] = mapped_column(JSON, default=list)
+    language_hints: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    vertical_ref: Mapped["TaxonomyVertical | None"] = relationship(foreign_keys=[vertical])
+    cluster_ref: Mapped["NicheCluster | None"] = relationship(foreign_keys=[cluster_slug])
 
 
 class Company(Base):

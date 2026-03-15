@@ -293,6 +293,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 "description TEXT NULL, "
                 "vertical VARCHAR(64) NOT NULL, "
                 "cluster_slug VARCHAR(64) NULL, "
+                "source_variant_id INTEGER NULL, "
                 "status VARCHAR(10) NOT NULL DEFAULT 'draft', "
                 "is_platform_template BOOLEAN NOT NULL DEFAULT TRUE, "
                 "created_at TIMESTAMP WITH TIME ZONE NOT NULL, "
@@ -308,6 +309,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 "description TEXT NULL, "
                 "vertical VARCHAR(64) NOT NULL, "
                 "cluster_slug VARCHAR(64) NULL, "
+                "source_variant_id INTEGER NULL, "
                 "status VARCHAR(10) NOT NULL DEFAULT 'draft', "
                 "is_platform_template BOOLEAN NOT NULL DEFAULT 1, "
                 "created_at TIMESTAMP NOT NULL, "
@@ -322,6 +324,8 @@ def ensure_recipe_schema(engine: Engine) -> None:
             recipe_columns = {}
         if "cluster_slug" not in recipe_columns:
             statements.append("ALTER TABLE query_recipes ADD COLUMN cluster_slug VARCHAR(64) NULL")
+        if "source_variant_id" not in recipe_columns:
+            statements.append("ALTER TABLE query_recipes ADD COLUMN source_variant_id INTEGER NULL")
         recipe_vertical = recipe_columns.get("vertical")
         recipe_vertical_length = getattr(recipe_vertical.get("type"), "length", None) if recipe_vertical else None
         if dialect == "postgresql" and recipe_vertical_length is not None and recipe_vertical_length < 64:
@@ -407,6 +411,65 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 "created_at TIMESTAMP NOT NULL"
                 ")"
             )
+
+    if "query_recipe_variants" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_recipe_variants ("
+                "id SERIAL PRIMARY KEY, "
+                "prompt_text TEXT NOT NULL, "
+                "prompt_fingerprint VARCHAR(64) NOT NULL, "
+                "variant_key VARCHAR(96) NOT NULL, "
+                "slug VARCHAR(96) NOT NULL, "
+                "label VARCHAR(128) NOT NULL, "
+                "vertical VARCHAR(64) NOT NULL, "
+                "cluster_slug VARCHAR(64) NULL, "
+                "provenance VARCHAR(32) NOT NULL DEFAULT 'curated_prompt', "
+                "template_score INTEGER NOT NULL DEFAULT 0, "
+                "prompt_match_score INTEGER NOT NULL DEFAULT 0, "
+                "rank_score INTEGER NOT NULL DEFAULT 0, "
+                "fit_reasons JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "rationale JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "osm_tags JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "exclude_tags JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "search_terms JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "website_keywords JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "language_hints JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "created_at TIMESTAMP WITH TIME ZONE NOT NULL, "
+                "updated_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_recipe_variants ("
+                "id INTEGER PRIMARY KEY, "
+                "prompt_text TEXT NOT NULL, "
+                "prompt_fingerprint VARCHAR(64) NOT NULL, "
+                "variant_key VARCHAR(96) NOT NULL, "
+                "slug VARCHAR(96) NOT NULL, "
+                "label VARCHAR(128) NOT NULL, "
+                "vertical VARCHAR(64) NOT NULL, "
+                "cluster_slug VARCHAR(64) NULL, "
+                "provenance VARCHAR(32) NOT NULL DEFAULT 'curated_prompt', "
+                "template_score INTEGER NOT NULL DEFAULT 0, "
+                "prompt_match_score INTEGER NOT NULL DEFAULT 0, "
+                "rank_score INTEGER NOT NULL DEFAULT 0, "
+                "fit_reasons JSON NOT NULL DEFAULT '[]', "
+                "rationale JSON NOT NULL DEFAULT '[]', "
+                "osm_tags JSON NOT NULL DEFAULT '[]', "
+                "exclude_tags JSON NOT NULL DEFAULT '[]', "
+                "search_terms JSON NOT NULL DEFAULT '[]', "
+                "website_keywords JSON NOT NULL DEFAULT '[]', "
+                "language_hints JSON NOT NULL DEFAULT '[]', "
+                "created_at TIMESTAMP NOT NULL, "
+                "updated_at TIMESTAMP NOT NULL"
+                ")"
+            )
+        statements.append(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_recipe_variant_prompt_key ON query_recipe_variants(prompt_fingerprint, variant_key)"
+        )
+        statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_variants_prompt_fingerprint ON query_recipe_variants(prompt_fingerprint)")
+        statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_variants_slug ON query_recipe_variants(slug)")
 
     if not statements:
         return

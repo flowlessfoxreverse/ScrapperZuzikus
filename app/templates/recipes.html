@@ -130,6 +130,9 @@
                     {% if draft_proposal and draft_proposal.variant_key == variant.variant_key %}In Batch{% else %}Add to Batch{% endif %}
                   </button>
                 </div>
+                {% if variant_recipe_map.get(variant.variant_key) %}
+                <div class="subtle">Linked recipe: <code>{{ variant_recipe_map.get(variant.variant_key) }}</code></div>
+                {% endif %}
               </td>
             </tr>
             {% endfor %}
@@ -302,6 +305,7 @@
               <th>Sample Regions</th>
               <th>Cache Expires</th>
               <th>Linked Category</th>
+              <th>Source Variant</th>
               <th>Created</th>
               <th>Action</th>
             </tr>
@@ -348,6 +352,13 @@
                 -
                 {% endif %}
               </td>
+              <td title="{{ recipe.source_variant_prompt or '' }}">
+                {% if recipe.source_variant_key %}
+                <code>{{ recipe.source_variant_key }}</code>
+                {% else %}
+                -
+                {% endif %}
+              </td>
               <td>{{ recipe.created_at.strftime("%Y-%m-%d") }}</td>
               <td>
                 <div class="hero-actions">
@@ -376,7 +387,7 @@
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="17">No recipes yet.</td></tr>
+            <tr><td colspan="18">No recipes yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>
