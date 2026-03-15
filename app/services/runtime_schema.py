@@ -213,6 +213,12 @@ def ensure_recipe_schema(engine: Engine) -> None:
     tables = _table_names(engine)
     dialect = engine.dialect.name
     inspector = inspect(engine)
+    columns_by_table: dict[str, set[str]] = {}
+    for table_name in tables:
+        try:
+            columns_by_table[table_name] = {column["name"] for column in inspector.get_columns(table_name)}
+        except Exception:
+            columns_by_table[table_name] = set()
 
     statements: list[str] = []
 
