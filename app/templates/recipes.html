@@ -87,6 +87,20 @@
             <span class="subtle">Matched Terms</span>
             <strong>{{ cluster_choice.matched_aliases|join(", ") if cluster_choice.matched_aliases else "-" }}</strong>
           </div>
+          <div class="stat-card">
+            <span class="subtle">Historical Selection</span>
+            <strong>
+              {% if cluster_choice.historical_seen_count %}
+              {{ cluster_choice.historical_selected_count }}/{{ cluster_choice.historical_seen_count }}
+              {% else %}
+              -
+              {% endif %}
+            </strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Ambiguity Runs</span>
+            <strong>{{ cluster_choice.ambiguity_count or "-" }}</strong>
+          </div>
         </div>
         <p class="subtle">{{ cluster_choice.rationale|join(" ") }}</p>
         {% if alternate_clusters %}
@@ -97,6 +111,8 @@
               <th>Vertical</th>
               <th>Match Score</th>
               <th>Matched Terms</th>
+              <th>Historical Selection</th>
+              <th>Ambiguity Runs</th>
               <th>Why It Was Not Chosen</th>
             </tr>
           </thead>
@@ -107,6 +123,14 @@
               <td>{{ cluster.vertical }}</td>
               <td>{{ cluster.score }}</td>
               <td>{{ cluster.matched_aliases|join(", ") if cluster.matched_aliases else "-" }}</td>
+              <td>
+                {% if cluster.historical_seen_count %}
+                {{ cluster.historical_selected_count }}/{{ cluster.historical_seen_count }}
+                {% else %}
+                -
+                {% endif %}
+              </td>
+              <td>{{ cluster.ambiguity_count or "-" }}</td>
               <td>{{ cluster.rationale|join(" ") }}</td>
             </tr>
             {% endfor %}

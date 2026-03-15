@@ -41,6 +41,9 @@ class ClusterCandidate:
     score: int
     matched_aliases: tuple[str, ...]
     rationale: list[str]
+    historical_seen_count: int = 0
+    historical_selected_count: int = 0
+    ambiguity_count: int = 0
 
 
 @dataclass(frozen=True)

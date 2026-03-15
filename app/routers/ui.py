@@ -20,6 +20,7 @@ from app.services.category_recipes import latest_recipe_version, sync_recipe_to_
 from app.services.host_suppression import normalize_host_key
 from app.services.overpass import fetch_status
 from app.services.proxy_pool import active_proxy_count, effective_proxy_capacity, lease_counts, list_proxies, release_proxy, upsert_proxy
+from app.services.recipe_clusters import apply_cluster_decision_history, record_cluster_decision
 from app.services.recipe_drafts import ClusterCandidate, DraftProposal, analyze_prompt_clusters, build_draft_variants_from_prompt, select_draft_variant
 from app.services.recipe_lint import RecipeLintResult, lint_recipe_content, parse_tag_block
 from app.services.taxonomy import list_active_clusters, list_active_verticals
@@ -1033,6 +1034,7 @@ def recipe_editor(
     if draft_prompt:
         try:
             cluster_choice, alternate_clusters = analyze_prompt_clusters(draft_prompt)
+            cluster_choice, alternate_clusters = apply_cluster_decision_history(db, draft_prompt, cluster_choice, alternate_clusters)
             draft_variants, draft_proposal = select_draft_variant(draft_prompt, draft_variant_slug)
             draft_variants = apply_variant_history(db, draft_variants)
             draft_proposal = next(
@@ -1282,6 +1284,7 @@ def generate_recipe_draft_html(
     verticals, clusters = taxonomy_context(db)
     try:
         cluster_choice, alternate_clusters = analyze_prompt_clusters(prompt)
+        cluster_choice, alternate_clusters = apply_cluster_decision_history(db, prompt, cluster_choice, alternate_clusters)
         draft_variants, draft_proposal = select_draft_variant(prompt, selected_variant_slug or None)
         draft_variants = apply_variant_history(db, draft_variants)
         draft_proposal = next(
@@ -1289,6 +1292,7 @@ def generate_recipe_draft_html(
             draft_variants[0],
         )
         upsert_prompt_variants(db, prompt, draft_variants)
+        record_cluster_decision(db, prompt, cluster_choice, alternate_clusters)
         db.commit()
         draft_lint = lint_recipe_content(
             osm_tags=draft_proposal.osm_tags,

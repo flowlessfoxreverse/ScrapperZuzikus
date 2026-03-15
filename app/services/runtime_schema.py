@@ -506,6 +506,56 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 statements.append(f"ALTER TABLE query_recipe_variants ADD COLUMN {column_name} {column_def}")
         statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_variants_slug ON query_recipe_variants(slug)")
 
+    if "query_prompt_cluster_decisions" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_prompt_cluster_decisions ("
+                "id SERIAL PRIMARY KEY, "
+                "prompt_text TEXT NOT NULL, "
+                "prompt_fingerprint VARCHAR(64) NOT NULL, "
+                "vertical VARCHAR(64) NOT NULL, "
+                "cluster_slug VARCHAR(64) NOT NULL, "
+                "match_score INTEGER NOT NULL DEFAULT 0, "
+                "matched_aliases JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "rationale JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "times_seen INTEGER NOT NULL DEFAULT 0, "
+                "times_selected INTEGER NOT NULL DEFAULT 0, "
+                "ambiguity_count INTEGER NOT NULL DEFAULT 0, "
+                "last_seen_at TIMESTAMP WITH TIME ZONE NOT NULL, "
+                "created_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_prompt_cluster_decisions ("
+                "id INTEGER PRIMARY KEY, "
+                "prompt_text TEXT NOT NULL, "
+                "prompt_fingerprint VARCHAR(64) NOT NULL, "
+                "vertical VARCHAR(64) NOT NULL, "
+                "cluster_slug VARCHAR(64) NOT NULL, "
+                "match_score INTEGER NOT NULL DEFAULT 0, "
+                "matched_aliases JSON NOT NULL DEFAULT '[]', "
+                "rationale JSON NOT NULL DEFAULT '[]', "
+                "times_seen INTEGER NOT NULL DEFAULT 0, "
+                "times_selected INTEGER NOT NULL DEFAULT 0, "
+                "ambiguity_count INTEGER NOT NULL DEFAULT 0, "
+                "last_seen_at TIMESTAMP NOT NULL, "
+                "created_at TIMESTAMP NOT NULL"
+                ")"
+            )
+        statements.append(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_prompt_cluster_decision "
+            "ON query_prompt_cluster_decisions(prompt_fingerprint, cluster_slug)"
+        )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_prompt_cluster_decisions_prompt_fingerprint "
+            "ON query_prompt_cluster_decisions(prompt_fingerprint)"
+        )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_prompt_cluster_decisions_cluster_slug "
+            "ON query_prompt_cluster_decisions(cluster_slug)"
+        )
+
     if not statements:
         return
 

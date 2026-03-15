@@ -294,6 +294,30 @@ class QueryRecipeVariant(Base):
     cluster_ref: Mapped["NicheCluster | None"] = relationship(foreign_keys=[cluster_slug])
 
 
+class QueryPromptClusterDecision(Base):
+    __tablename__ = "query_prompt_cluster_decisions"
+    __table_args__ = (
+        UniqueConstraint("prompt_fingerprint", "cluster_slug", name="uq_prompt_cluster_decision"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    prompt_text: Mapped[str] = mapped_column(Text)
+    prompt_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    vertical: Mapped[str] = mapped_column(String(64), ForeignKey("taxonomy_verticals.slug"), index=True)
+    cluster_slug: Mapped[str] = mapped_column(String(64), ForeignKey("niche_clusters.slug"), index=True)
+    match_score: Mapped[int] = mapped_column(Integer, default=0)
+    matched_aliases: Mapped[list[str]] = mapped_column(JSON, default=list)
+    rationale: Mapped[list[str]] = mapped_column(JSON, default=list)
+    times_seen: Mapped[int] = mapped_column(Integer, default=0)
+    times_selected: Mapped[int] = mapped_column(Integer, default=0)
+    ambiguity_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    vertical_ref: Mapped["TaxonomyVertical | None"] = relationship(foreign_keys=[vertical])
+    cluster_ref: Mapped["NicheCluster | None"] = relationship(foreign_keys=[cluster_slug])
+
+
 class Company(Base):
     __tablename__ = "companies"
     __table_args__ = (
