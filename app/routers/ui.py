@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import Category, Company, ContactChannel, ContactChannelType, Email, NicheCluster, Phone, ProxyEndpoint, ProxyKind, QueryRecipe, QueryRecipeBenchmarkEval, QueryRecipeBenchmarkPrompt, QueryRecipePlanVariantOutcome, QueryRecipeRecommendationPolicy, QueryRecipeRecommendationPolicyAudit, QueryRecipeValidation, QueryRecipeVariant, QueryRecipeVariantRunStat, QueryRecipeVariantTemplate, QueryRecipeVersion, RecipeAdapter, RecipeSourceStrategy, RecipeStatus, Region, RequestMetric, RunCategory, RunStatus, ScrapeRun, TaxonomyVertical, ValidationStatus
+from app.models import Category, Company, ContactChannel, ContactChannelType, Email, NicheCluster, Phone, ProxyEndpoint, ProxyKind, QueryRecipe, QueryRecipeBenchmarkEval, QueryRecipeBenchmarkPrompt, QueryRecipePlanVariantOutcome, QueryRecipeRecommendationPolicy, QueryRecipeRecommendationPolicyAudit, QueryRecipeValidation, QueryRecipeVariant, QueryRecipeVariantRunStat, QueryRecipeVariantTemplate, QueryRecipeVersion, QueryTaxonomyDraftCluster, QueryTaxonomyDraftVariantTemplate, QueryTaxonomyDraftVertical, QueryTaxonomyGeneration, RecipeAdapter, RecipeSourceStrategy, RecipeStatus, Region, RequestMetric, RunCategory, RunStatus, ScrapeRun, TaxonomyVertical, ValidationStatus
 from app.schemas import EmailRow
 from app.services.category_recipes import latest_recipe_version, sync_recipe_to_category, upsert_recipe_backed_category
 from app.services.host_suppression import normalize_host_key
@@ -34,6 +34,7 @@ from app.services.recipe_prompt_variants import (
     sync_plan_variant_outcomes,
 )
 from app.services.taxonomy import list_active_clusters, list_active_verticals
+from app.services.taxonomy_generation import TAXONOMY_PROVIDER_OPTIONS, approve_taxonomy_generation, generate_taxonomy_drafts, reject_taxonomy_generation
 from app.services.recipe_validation import get_validation_quota_snapshot, validate_recipe_version
 from app.services.recipe_variants import (
     derive_recommendation_state,
@@ -453,6 +454,62 @@ class RecipeBenchmarkProviderSummaryRow:
     avg_variant_judgement: float | None
     avg_overall_judgement: float | None
     latest_eval_at: datetime | None
+
+
+@dataclass
+class TaxonomyGenerationRow:
+    id: int
+    prompt_text: str
+    requested_provider: str
+    provider: str
+    model_name: str
+    status: str
+    focus_vertical_slug: str | None
+    focus_cluster_slug: str | None
+    used_fallback: bool
+    fallback_reason: str | None
+    vertical_count: int
+    cluster_count: int
+    template_count: int
+    created_at: datetime
+
+
+@dataclass
+class TaxonomyDraftVerticalRow:
+    slug: str
+    label: str
+    description: str | None
+    rationale: list[str]
+    status: str
+    approved_vertical_slug: str | None
+
+
+@dataclass
+class TaxonomyDraftClusterRow:
+    slug: str
+    vertical_slug: str
+    label: str
+    description: str | None
+    rationale: list[str]
+    status: str
+    approved_cluster_slug: str | None
+
+
+@dataclass
+class TaxonomyDraftTemplateRow:
+    template_key: str
+    label: str
+    vertical_slug: str
+    cluster_slug: str | None
+    sub_intent: str
+    source_strategy: str
+    aliases: list[str]
+    search_terms: list[str]
+    website_keywords: list[str]
+    template_score: int
+    rationale: list[str]
+    status: str
+    approved_template_key: str | None
 
 
 def taxonomy_context(db: Session) -> tuple[list[TaxonomyVertical], list[NicheCluster]]:
@@ -2188,6 +2245,123 @@ def build_recipe_benchmark_provider_summary_rows(db: Session) -> list[RecipeBenc
     ]
 
 
+def build_taxonomy_generation_rows(db: Session, limit: int = 20) -> list[TaxonomyGenerationRow]:
+    generations = db.scalars(
+        select(QueryTaxonomyGeneration)
+        .order_by(QueryTaxonomyGeneration.created_at.desc())
+        .limit(limit)
+    ).all()
+    generation_ids = [row.id for row in generations]
+    vertical_counts = {
+        generation_id: int(count or 0)
+        for generation_id, count in db.execute(
+            select(QueryTaxonomyDraftVertical.generation_id, func.count(QueryTaxonomyDraftVertical.id))
+            .where(QueryTaxonomyDraftVertical.generation_id.in_(generation_ids))
+            .group_by(QueryTaxonomyDraftVertical.generation_id)
+        ).all()
+    } if generation_ids else {}
+    cluster_counts = {
+        generation_id: int(count or 0)
+        for generation_id, count in db.execute(
+            select(QueryTaxonomyDraftCluster.generation_id, func.count(QueryTaxonomyDraftCluster.id))
+            .where(QueryTaxonomyDraftCluster.generation_id.in_(generation_ids))
+            .group_by(QueryTaxonomyDraftCluster.generation_id)
+        ).all()
+    } if generation_ids else {}
+    template_counts = {
+        generation_id: int(count or 0)
+        for generation_id, count in db.execute(
+            select(QueryTaxonomyDraftVariantTemplate.generation_id, func.count(QueryTaxonomyDraftVariantTemplate.id))
+            .where(QueryTaxonomyDraftVariantTemplate.generation_id.in_(generation_ids))
+            .group_by(QueryTaxonomyDraftVariantTemplate.generation_id)
+        ).all()
+    } if generation_ids else {}
+    return [
+        TaxonomyGenerationRow(
+            id=row.id,
+            prompt_text=row.prompt_text,
+            requested_provider=row.requested_provider,
+            provider=row.provider,
+            model_name=row.model_name,
+            status=row.status,
+            focus_vertical_slug=row.focus_vertical_slug,
+            focus_cluster_slug=row.focus_cluster_slug,
+            used_fallback=row.used_fallback,
+            fallback_reason=row.fallback_reason,
+            vertical_count=vertical_counts.get(row.id, 0),
+            cluster_count=cluster_counts.get(row.id, 0),
+            template_count=template_counts.get(row.id, 0),
+            created_at=row.created_at,
+        )
+        for row in generations
+    ]
+
+
+def build_taxonomy_generation_detail(
+    db: Session,
+    generation_id: int | None,
+) -> tuple[QueryTaxonomyGeneration | None, list[TaxonomyDraftVerticalRow], list[TaxonomyDraftClusterRow], list[TaxonomyDraftTemplateRow]]:
+    if generation_id is None:
+        return None, [], [], []
+    generation = db.scalar(select(QueryTaxonomyGeneration).where(QueryTaxonomyGeneration.id == generation_id))
+    if generation is None:
+        return None, [], [], []
+    verticals = [
+        TaxonomyDraftVerticalRow(
+            slug=row.slug,
+            label=row.label,
+            description=row.description,
+            rationale=list(row.rationale or []),
+            status=row.status.value if hasattr(row.status, "value") else str(row.status),
+            approved_vertical_slug=row.approved_vertical_slug,
+        )
+        for row in db.scalars(
+            select(QueryTaxonomyDraftVertical)
+            .where(QueryTaxonomyDraftVertical.generation_id == generation_id)
+            .order_by(QueryTaxonomyDraftVertical.slug)
+        ).all()
+    ]
+    clusters = [
+        TaxonomyDraftClusterRow(
+            slug=row.slug,
+            vertical_slug=row.vertical_slug,
+            label=row.label,
+            description=row.description,
+            rationale=list(row.rationale or []),
+            status=row.status.value if hasattr(row.status, "value") else str(row.status),
+            approved_cluster_slug=row.approved_cluster_slug,
+        )
+        for row in db.scalars(
+            select(QueryTaxonomyDraftCluster)
+            .where(QueryTaxonomyDraftCluster.generation_id == generation_id)
+            .order_by(QueryTaxonomyDraftCluster.vertical_slug, QueryTaxonomyDraftCluster.slug)
+        ).all()
+    ]
+    templates = [
+        TaxonomyDraftTemplateRow(
+            template_key=row.template_key,
+            label=row.label,
+            vertical_slug=row.vertical_slug,
+            cluster_slug=row.cluster_slug,
+            sub_intent=row.sub_intent,
+            source_strategy=row.source_strategy.value if hasattr(row.source_strategy, "value") else str(row.source_strategy),
+            aliases=list(row.aliases or []),
+            search_terms=list(row.search_terms or []),
+            website_keywords=list(row.website_keywords or []),
+            template_score=row.template_score,
+            rationale=list(row.rationale or []),
+            status=row.status.value if hasattr(row.status, "value") else str(row.status),
+            approved_template_key=row.approved_template_key,
+        )
+        for row in db.scalars(
+            select(QueryTaxonomyDraftVariantTemplate)
+            .where(QueryTaxonomyDraftVariantTemplate.generation_id == generation_id)
+            .order_by(QueryTaxonomyDraftVariantTemplate.vertical_slug, QueryTaxonomyDraftVariantTemplate.cluster_slug, QueryTaxonomyDraftVariantTemplate.template_key)
+        ).all()
+    ]
+    return generation, verticals, clusters, templates
+
+
 def activation_gate_errors(recipe: QueryRecipe, version: QueryRecipeVersion) -> list[str]:
     errors: list[str] = []
     thresholds = source_strategy_thresholds(version.source_strategy)
@@ -2482,6 +2656,9 @@ def recipe_editor(
     planner_provider: str | None = None,
     planner_model: str | None = None,
     compare_with_heuristic: bool = False,
+    taxonomy_generation_id: int | None = None,
+    taxonomy_provider: str | None = None,
+    taxonomy_model: str | None = None,
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     draft_proposal = None
@@ -2501,6 +2678,11 @@ def recipe_editor(
     recommendation_policy_audit_rows = build_recommendation_policy_audit_rows(db)
     recommendation_policy_scoreboard_rows = build_recommendation_policy_experiment_scoreboard(
         recommendation_policy_audit_rows
+    )
+    taxonomy_generation_rows = build_taxonomy_generation_rows(db)
+    selected_taxonomy_generation, taxonomy_draft_verticals, taxonomy_draft_clusters, taxonomy_draft_templates = build_taxonomy_generation_detail(
+        db,
+        taxonomy_generation_id or (taxonomy_generation_rows[0].id if taxonomy_generation_rows else None),
     )
     if draft_prompt:
         try:
@@ -2593,6 +2775,14 @@ def recipe_editor(
             "recommendation_policy_simulation_rows": recommendation_policy_simulation_rows,
             "recommendation_policy_audit_rows": recommendation_policy_audit_rows,
             "recommendation_policy_scoreboard_rows": recommendation_policy_scoreboard_rows,
+            "taxonomy_provider": taxonomy_provider or settings.taxonomy_generator_provider,
+            "taxonomy_model": taxonomy_model or settings.taxonomy_generator_model,
+            "taxonomy_provider_options": TAXONOMY_PROVIDER_OPTIONS,
+            "taxonomy_generation_rows": taxonomy_generation_rows,
+            "selected_taxonomy_generation": selected_taxonomy_generation,
+            "taxonomy_draft_verticals": taxonomy_draft_verticals,
+            "taxonomy_draft_clusters": taxonomy_draft_clusters,
+            "taxonomy_draft_templates": taxonomy_draft_templates,
             "activation_thresholds": {
                 "validation_score": settings.recipe_activation_min_validation_score,
                 "validation_runs": settings.recipe_activation_min_validation_runs,
@@ -2754,6 +2944,74 @@ def score_recipe_benchmark_eval(
     db.commit()
     return RedirectResponse(
         url=f"/recipe-evals?message=Evaluation%20scored.&eval_id={eval_id}",
+        status_code=303,
+    )
+
+
+@router.post("/recipes/taxonomy/generate", response_class=HTMLResponse)
+def generate_taxonomy_generation_html(
+    prompt: str = Form(...),
+    taxonomy_provider: str | None = Form(None),
+    taxonomy_model: str | None = Form(None),
+    focus_vertical_slug: str = Form(""),
+    focus_cluster_slug: str = Form(""),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    try:
+        result = generate_taxonomy_drafts(
+            db,
+            prompt,
+            requested_provider=taxonomy_provider,
+            requested_model=taxonomy_model,
+            focus_vertical_slug=focus_vertical_slug.strip() or None,
+            focus_cluster_slug=focus_cluster_slug.strip() or None,
+        )
+        db.commit()
+    except (ValueError, RuntimeError) as exc:
+        db.rollback()
+        return RedirectResponse(url=f"/recipes?error={quote_plus(str(exc)[:200])}", status_code=303)
+    message = f"Generated taxonomy drafts: {result.payload.prompt[:80]}"
+    return RedirectResponse(
+        url=(
+            f"/recipes?message={quote_plus(message)}"
+            f"&taxonomy_generation_id={result.generation_id}"
+            f"&taxonomy_provider={quote_plus(result.requested_provider)}"
+            f"&taxonomy_model={quote_plus(taxonomy_model or result.model_name)}"
+        ),
+        status_code=303,
+    )
+
+
+@router.post("/recipes/taxonomy/{generation_id}/approve", response_class=HTMLResponse)
+def approve_taxonomy_generation_html(
+    generation_id: int,
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    try:
+        approve_taxonomy_generation(db, generation_id)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        return RedirectResponse(url=f"/recipes?error={quote_plus(str(exc)[:200])}", status_code=303)
+    return RedirectResponse(
+        url=f"/recipes?message={quote_plus('Taxonomy generation approved.')}&taxonomy_generation_id={generation_id}",
+        status_code=303,
+    )
+
+
+@router.post("/recipes/taxonomy/{generation_id}/reject", response_class=HTMLResponse)
+def reject_taxonomy_generation_html(
+    generation_id: int,
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    try:
+        reject_taxonomy_generation(db, generation_id)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        return RedirectResponse(url=f"/recipes?error={quote_plus(str(exc)[:200])}", status_code=303)
+    return RedirectResponse(
+        url=f"/recipes?message={quote_plus('Taxonomy generation rejected.')}&taxonomy_generation_id={generation_id}",
         status_code=303,
     )
 

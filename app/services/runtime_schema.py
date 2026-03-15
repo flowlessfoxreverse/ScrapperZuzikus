@@ -675,6 +675,174 @@ def ensure_recipe_schema(engine: Engine) -> None:
             statements.append("ALTER TABLE query_recipe_plans ADD COLUMN market_country_code VARCHAR(2) NULL")
         statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_plans_market_country_code ON query_recipe_plans(market_country_code)")
 
+    if "query_taxonomy_generations" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_taxonomy_generations ("
+                "id SERIAL PRIMARY KEY, "
+                "prompt_text TEXT NOT NULL, "
+                "requested_provider VARCHAR(32) NOT NULL, "
+                "provider VARCHAR(32) NOT NULL, "
+                "model_name VARCHAR(64) NOT NULL, "
+                "status VARCHAR(16) NOT NULL DEFAULT 'generated', "
+                "focus_vertical_slug VARCHAR(64) NULL REFERENCES taxonomy_verticals(slug), "
+                "focus_cluster_slug VARCHAR(64) NULL REFERENCES niche_clusters(slug), "
+                "raw_response TEXT NULL, "
+                "parsed_output JSONB NOT NULL DEFAULT '{}'::jsonb, "
+                "used_fallback BOOLEAN NOT NULL DEFAULT FALSE, "
+                "fallback_reason TEXT NULL, "
+                "error_text TEXT NULL, "
+                "created_at TIMESTAMP WITH TIME ZONE NOT NULL, "
+                "updated_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_taxonomy_generations ("
+                "id INTEGER PRIMARY KEY, "
+                "prompt_text TEXT NOT NULL, "
+                "requested_provider VARCHAR(32) NOT NULL, "
+                "provider VARCHAR(32) NOT NULL, "
+                "model_name VARCHAR(64) NOT NULL, "
+                "status VARCHAR(16) NOT NULL DEFAULT 'generated', "
+                "focus_vertical_slug VARCHAR(64) NULL REFERENCES taxonomy_verticals(slug), "
+                "focus_cluster_slug VARCHAR(64) NULL REFERENCES niche_clusters(slug), "
+                "raw_response TEXT NULL, "
+                "parsed_output JSON NOT NULL DEFAULT '{}', "
+                "used_fallback BOOLEAN NOT NULL DEFAULT 0, "
+                "fallback_reason TEXT NULL, "
+                "error_text TEXT NULL, "
+                "created_at TIMESTAMP NOT NULL, "
+                "updated_at TIMESTAMP NOT NULL"
+                ")"
+            )
+        statements.append("CREATE INDEX IF NOT EXISTS ix_query_taxonomy_generations_created_at ON query_taxonomy_generations(created_at)")
+        statements.append("CREATE INDEX IF NOT EXISTS ix_query_taxonomy_generations_status ON query_taxonomy_generations(status)")
+
+    if "query_taxonomy_draft_verticals" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_taxonomy_draft_verticals ("
+                "id SERIAL PRIMARY KEY, "
+                "generation_id INTEGER NOT NULL REFERENCES query_taxonomy_generations(id), "
+                "slug VARCHAR(64) NOT NULL, "
+                "label VARCHAR(128) NOT NULL, "
+                "description TEXT NULL, "
+                "rationale JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "status VARCHAR(16) NOT NULL DEFAULT 'draft', "
+                "approved_vertical_slug VARCHAR(64) NULL REFERENCES taxonomy_verticals(slug), "
+                "created_at TIMESTAMP WITH TIME ZONE NOT NULL, "
+                "updated_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_taxonomy_draft_verticals ("
+                "id INTEGER PRIMARY KEY, "
+                "generation_id INTEGER NOT NULL REFERENCES query_taxonomy_generations(id), "
+                "slug VARCHAR(64) NOT NULL, "
+                "label VARCHAR(128) NOT NULL, "
+                "description TEXT NULL, "
+                "rationale JSON NOT NULL DEFAULT '[]', "
+                "status VARCHAR(16) NOT NULL DEFAULT 'draft', "
+                "approved_vertical_slug VARCHAR(64) NULL REFERENCES taxonomy_verticals(slug), "
+                "created_at TIMESTAMP NOT NULL, "
+                "updated_at TIMESTAMP NOT NULL"
+                ")"
+            )
+        statements.append("CREATE UNIQUE INDEX IF NOT EXISTS uq_taxonomy_draft_vertical_generation_slug ON query_taxonomy_draft_verticals(generation_id, slug)")
+        statements.append("CREATE INDEX IF NOT EXISTS ix_query_taxonomy_draft_verticals_status ON query_taxonomy_draft_verticals(status)")
+
+    if "query_taxonomy_draft_clusters" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_taxonomy_draft_clusters ("
+                "id SERIAL PRIMARY KEY, "
+                "generation_id INTEGER NOT NULL REFERENCES query_taxonomy_generations(id), "
+                "vertical_slug VARCHAR(64) NOT NULL, "
+                "slug VARCHAR(64) NOT NULL, "
+                "label VARCHAR(128) NOT NULL, "
+                "description TEXT NULL, "
+                "rationale JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "status VARCHAR(16) NOT NULL DEFAULT 'draft', "
+                "approved_cluster_slug VARCHAR(64) NULL REFERENCES niche_clusters(slug), "
+                "created_at TIMESTAMP WITH TIME ZONE NOT NULL, "
+                "updated_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_taxonomy_draft_clusters ("
+                "id INTEGER PRIMARY KEY, "
+                "generation_id INTEGER NOT NULL REFERENCES query_taxonomy_generations(id), "
+                "vertical_slug VARCHAR(64) NOT NULL, "
+                "slug VARCHAR(64) NOT NULL, "
+                "label VARCHAR(128) NOT NULL, "
+                "description TEXT NULL, "
+                "rationale JSON NOT NULL DEFAULT '[]', "
+                "status VARCHAR(16) NOT NULL DEFAULT 'draft', "
+                "approved_cluster_slug VARCHAR(64) NULL REFERENCES niche_clusters(slug), "
+                "created_at TIMESTAMP NOT NULL, "
+                "updated_at TIMESTAMP NOT NULL"
+                ")"
+            )
+        statements.append("CREATE UNIQUE INDEX IF NOT EXISTS uq_taxonomy_draft_cluster_generation_slug ON query_taxonomy_draft_clusters(generation_id, slug)")
+        statements.append("CREATE INDEX IF NOT EXISTS ix_query_taxonomy_draft_clusters_status ON query_taxonomy_draft_clusters(status)")
+
+    if "query_taxonomy_draft_variant_templates" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_taxonomy_draft_variant_templates ("
+                "id SERIAL PRIMARY KEY, "
+                "generation_id INTEGER NOT NULL REFERENCES query_taxonomy_generations(id), "
+                "template_key VARCHAR(96) NOT NULL, "
+                "label VARCHAR(128) NOT NULL, "
+                "vertical_slug VARCHAR(64) NOT NULL, "
+                "cluster_slug VARCHAR(64) NULL, "
+                "sub_intent VARCHAR(96) NOT NULL, "
+                "source_strategy VARCHAR(32) NOT NULL DEFAULT 'overpass_discovery_enrich', "
+                "aliases JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "osm_tags JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "exclude_tags JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "search_terms JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "website_keywords JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "language_hints JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "rationale JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "template_score INTEGER NOT NULL DEFAULT 0, "
+                "status VARCHAR(16) NOT NULL DEFAULT 'draft', "
+                "approved_template_key VARCHAR(96) NULL REFERENCES query_recipe_variant_templates(key), "
+                "created_at TIMESTAMP WITH TIME ZONE NOT NULL, "
+                "updated_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_taxonomy_draft_variant_templates ("
+                "id INTEGER PRIMARY KEY, "
+                "generation_id INTEGER NOT NULL REFERENCES query_taxonomy_generations(id), "
+                "template_key VARCHAR(96) NOT NULL, "
+                "label VARCHAR(128) NOT NULL, "
+                "vertical_slug VARCHAR(64) NOT NULL, "
+                "cluster_slug VARCHAR(64) NULL, "
+                "sub_intent VARCHAR(96) NOT NULL, "
+                "source_strategy VARCHAR(32) NOT NULL DEFAULT 'overpass_discovery_enrich', "
+                "aliases JSON NOT NULL DEFAULT '[]', "
+                "osm_tags JSON NOT NULL DEFAULT '[]', "
+                "exclude_tags JSON NOT NULL DEFAULT '[]', "
+                "search_terms JSON NOT NULL DEFAULT '[]', "
+                "website_keywords JSON NOT NULL DEFAULT '[]', "
+                "language_hints JSON NOT NULL DEFAULT '[]', "
+                "rationale JSON NOT NULL DEFAULT '[]', "
+                "template_score INTEGER NOT NULL DEFAULT 0, "
+                "status VARCHAR(16) NOT NULL DEFAULT 'draft', "
+                "approved_template_key VARCHAR(96) NULL REFERENCES query_recipe_variant_templates(key), "
+                "created_at TIMESTAMP NOT NULL, "
+                "updated_at TIMESTAMP NOT NULL"
+                ")"
+            )
+        statements.append("CREATE UNIQUE INDEX IF NOT EXISTS uq_taxonomy_draft_variant_generation_key ON query_taxonomy_draft_variant_templates(generation_id, template_key)")
+        statements.append("CREATE INDEX IF NOT EXISTS ix_query_taxonomy_draft_variant_templates_status ON query_taxonomy_draft_variant_templates(status)")
+
     if "query_recipe_benchmark_prompts" not in tables:
         if dialect == "postgresql":
             statements.append(

@@ -50,6 +50,144 @@
 
       <section class="panel">
         <div class="section-heading">
+          <h2>Taxonomy Expansion</h2>
+          <span>Use OpenAI to draft new verticals, clusters, and variant templates without writing directly into the active taxonomy.</span>
+        </div>
+        <form class="compact-form-grid" action="/recipes/taxonomy/generate" method="post">
+          <label>
+            <span>Admin Prompt</span>
+            <textarea name="prompt" rows="3" placeholder="Expand beauty niches for Thailand beyond salon basics."></textarea>
+          </label>
+          <label>
+            <span>Provider</span>
+            <select name="taxonomy_provider">
+              {% for provider in taxonomy_provider_options %}
+              <option value="{{ provider }}" {% if taxonomy_provider == provider %}selected{% endif %}>{{ provider }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            <span>Model</span>
+            <input type="text" name="taxonomy_model" value="{{ taxonomy_model }}" placeholder="Model override" />
+          </label>
+          <label>
+            <span>Focus Vertical</span>
+            <select name="focus_vertical_slug">
+              <option value="">Auto</option>
+              {% for vertical in verticals %}
+              <option value="{{ vertical.slug }}">{{ vertical.label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            <span>Focus Cluster</span>
+            <select name="focus_cluster_slug">
+              <option value="">Auto</option>
+              {% for cluster in clusters %}
+              <option value="{{ cluster.slug }}">{{ cluster.label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <div class="inline-actions">
+            <button type="submit">Generate Taxonomy Drafts</button>
+          </div>
+        </form>
+        <table>
+          <thead>
+            <tr>
+              <th>Created</th>
+              <th>Prompt</th>
+              <th>Provider</th>
+              <th>Status</th>
+              <th>Focus</th>
+              <th>Drafts</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in taxonomy_generation_rows %}
+            <tr>
+              <td>{{ row.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+              <td>
+                <strong>{{ row.prompt_text[:100] }}</strong>
+                {% if row.prompt_text|length > 100 %}...{% endif %}
+                {% if row.fallback_reason %}
+                <br /><span class="subtle">{{ row.fallback_reason }}</span>
+                {% endif %}
+              </td>
+              <td>{{ row.provider }} / {{ row.model_name }}</td>
+              <td>{{ row.status }}{% if row.used_fallback %}<br /><span class="subtle">fallback used</span>{% endif %}</td>
+              <td>
+                {% if row.focus_cluster_slug %}<code>{{ row.focus_cluster_slug }}</code>
+                {% elif row.focus_vertical_slug %}<code>{{ row.focus_vertical_slug }}</code>
+                {% else %}<span class="subtle">auto</span>{% endif %}
+              </td>
+              <td>V{{ row.vertical_count }} / C{{ row.cluster_count }} / T{{ row.template_count }}</td>
+              <td class="inline-actions">
+                <a class="ghost-button" href="/recipes?taxonomy_generation_id={{ row.id }}">Review</a>
+                {% if row.status == "generated" %}
+                <form action="/recipes/taxonomy/{{ row.id }}/approve" method="post">
+                  <button type="submit">Approve</button>
+                </form>
+                <form action="/recipes/taxonomy/{{ row.id }}/reject" method="post">
+                  <button class="ghost-button" type="submit">Reject</button>
+                </form>
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7">No taxonomy generations yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% if selected_taxonomy_generation %}
+        <div class="section-heading">
+          <h3>Selected Draft Set</h3>
+          <span>{{ selected_taxonomy_generation.prompt_text }}</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Draft Verticals</th>
+              <th>Draft Clusters</th>
+              <th>Draft Variant Templates</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                {% for row in taxonomy_draft_verticals %}
+                <strong>{{ row.label }}</strong> <code>{{ row.slug }}</code> <span class="subtle">({{ row.status }})</span><br />
+                {% if row.rationale %}<span class="subtle">{{ row.rationale|join("; ") }}</span><br />{% endif %}
+                {% else %}
+                <span class="subtle">No vertical drafts.</span>
+                {% endfor %}
+              </td>
+              <td>
+                {% for row in taxonomy_draft_clusters %}
+                <strong>{{ row.label }}</strong> <code>{{ row.slug }}</code> <span class="subtle">({{ row.vertical_slug }}, {{ row.status }})</span><br />
+                {% if row.rationale %}<span class="subtle">{{ row.rationale|join("; ") }}</span><br />{% endif %}
+                {% else %}
+                <span class="subtle">No cluster drafts.</span>
+                {% endfor %}
+              </td>
+              <td>
+                {% for row in taxonomy_draft_templates %}
+                <strong>{{ row.label }}</strong> <code>{{ row.template_key }}</code> <span class="subtle">({{ row.source_strategy }}, {{ row.status }})</span><br />
+                <span class="subtle">{{ row.vertical_slug }} / {{ row.cluster_slug or "-" }} / {{ row.sub_intent }}</span><br />
+                {% if row.search_terms %}<span class="subtle">Search: {{ row.search_terms|join(", ") }}</span><br />{% endif %}
+                {% else %}
+                <span class="subtle">No template drafts.</span>
+                {% endfor %}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        {% endif %}
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
           <h2>Recipe Analytics</h2>
           <span>How source strategy, clusters, and variants are performing across the platform</span>
         </div>

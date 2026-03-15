@@ -84,6 +84,12 @@ class RecipeSourceStrategy(str, Enum):
     DIRECTORY_EXPANSION = "directory_expansion"
 
 
+class TaxonomyDraftStatus(str, Enum):
+    DRAFT = "draft"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
 RECIPE_SOURCE_STRATEGY_ENUM = SqlEnum(
     RecipeSourceStrategy,
     values_callable=lambda enum_cls: [member.value for member in enum_cls],
@@ -361,6 +367,103 @@ class QueryRecipePlan(Base):
     error_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class QueryTaxonomyGeneration(Base):
+    __tablename__ = "query_taxonomy_generations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    prompt_text: Mapped[str] = mapped_column(Text)
+    requested_provider: Mapped[str] = mapped_column(String(32), index=True)
+    provider: Mapped[str] = mapped_column(String(32), index=True)
+    model_name: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16), default="generated", index=True)
+    focus_vertical_slug: Mapped[str | None] = mapped_column(String(64), ForeignKey("taxonomy_verticals.slug"), nullable=True, index=True)
+    focus_cluster_slug: Mapped[str | None] = mapped_column(String(64), ForeignKey("niche_clusters.slug"), nullable=True, index=True)
+    raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parsed_output: Mapped[dict] = mapped_column(JSON, default=dict)
+    used_fallback: Mapped[bool] = mapped_column(Boolean, default=False)
+    fallback_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    focus_vertical_ref: Mapped["TaxonomyVertical | None"] = relationship(foreign_keys=[focus_vertical_slug])
+    focus_cluster_ref: Mapped["NicheCluster | None"] = relationship(foreign_keys=[focus_cluster_slug])
+
+
+class QueryTaxonomyDraftVertical(Base):
+    __tablename__ = "query_taxonomy_draft_verticals"
+    __table_args__ = (
+        UniqueConstraint("generation_id", "slug", name="uq_taxonomy_draft_vertical_generation_slug"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    generation_id: Mapped[int] = mapped_column(ForeignKey("query_taxonomy_generations.id"), index=True)
+    slug: Mapped[str] = mapped_column(String(64), index=True)
+    label: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rationale: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[TaxonomyDraftStatus] = mapped_column(SqlEnum(TaxonomyDraftStatus), default=TaxonomyDraftStatus.DRAFT, index=True)
+    approved_vertical_slug: Mapped[str | None] = mapped_column(String(64), ForeignKey("taxonomy_verticals.slug"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    generation: Mapped["QueryTaxonomyGeneration"] = relationship(foreign_keys=[generation_id])
+    approved_vertical: Mapped["TaxonomyVertical | None"] = relationship(foreign_keys=[approved_vertical_slug])
+
+
+class QueryTaxonomyDraftCluster(Base):
+    __tablename__ = "query_taxonomy_draft_clusters"
+    __table_args__ = (
+        UniqueConstraint("generation_id", "slug", name="uq_taxonomy_draft_cluster_generation_slug"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    generation_id: Mapped[int] = mapped_column(ForeignKey("query_taxonomy_generations.id"), index=True)
+    vertical_slug: Mapped[str] = mapped_column(String(64), index=True)
+    slug: Mapped[str] = mapped_column(String(64), index=True)
+    label: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rationale: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[TaxonomyDraftStatus] = mapped_column(SqlEnum(TaxonomyDraftStatus), default=TaxonomyDraftStatus.DRAFT, index=True)
+    approved_cluster_slug: Mapped[str | None] = mapped_column(String(64), ForeignKey("niche_clusters.slug"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    generation: Mapped["QueryTaxonomyGeneration"] = relationship(foreign_keys=[generation_id])
+    approved_cluster: Mapped["NicheCluster | None"] = relationship(foreign_keys=[approved_cluster_slug])
+
+
+class QueryTaxonomyDraftVariantTemplate(Base):
+    __tablename__ = "query_taxonomy_draft_variant_templates"
+    __table_args__ = (
+        UniqueConstraint("generation_id", "template_key", name="uq_taxonomy_draft_variant_generation_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    generation_id: Mapped[int] = mapped_column(ForeignKey("query_taxonomy_generations.id"), index=True)
+    template_key: Mapped[str] = mapped_column(String(96), index=True)
+    label: Mapped[str] = mapped_column(String(128))
+    vertical_slug: Mapped[str] = mapped_column(String(64), index=True)
+    cluster_slug: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    sub_intent: Mapped[str] = mapped_column(String(96), index=True)
+    source_strategy: Mapped[RecipeSourceStrategy] = mapped_column(RECIPE_SOURCE_STRATEGY_ENUM, default=RecipeSourceStrategy.OVERPASS_DISCOVERY_ENRICH, index=True)
+    aliases: Mapped[list[str]] = mapped_column(JSON, default=list)
+    osm_tags: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
+    exclude_tags: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
+    search_terms: Mapped[list[str]] = mapped_column(JSON, default=list)
+    website_keywords: Mapped[list[str]] = mapped_column(JSON, default=list)
+    language_hints: Mapped[list[str]] = mapped_column(JSON, default=list)
+    rationale: Mapped[list[str]] = mapped_column(JSON, default=list)
+    template_score: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[TaxonomyDraftStatus] = mapped_column(SqlEnum(TaxonomyDraftStatus), default=TaxonomyDraftStatus.DRAFT, index=True)
+    approved_template_key: Mapped[str | None] = mapped_column(String(96), ForeignKey("query_recipe_variant_templates.key"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    generation: Mapped["QueryTaxonomyGeneration"] = relationship(foreign_keys=[generation_id])
+    approved_template: Mapped["QueryRecipeVariantTemplate | None"] = relationship(foreign_keys=[approved_template_key])
 
 
 class QueryRecipeBenchmarkPrompt(Base):

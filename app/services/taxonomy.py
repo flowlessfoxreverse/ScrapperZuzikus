@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import NicheCluster, TaxonomyVertical
+from app.models import NicheCluster, QueryRecipeVariantTemplate, RecipeSourceStrategy, TaxonomyVertical
 
 
 @dataclass(frozen=True)
@@ -118,3 +118,123 @@ def list_active_clusters(session: Session) -> list[NicheCluster]:
             .order_by(NicheCluster.vertical_slug, NicheCluster.sort_order, NicheCluster.label)
         ).all()
     )
+
+
+def upsert_vertical(
+    session: Session,
+    *,
+    slug: str,
+    label: str,
+    description: str | None,
+    sort_order: int = 0,
+) -> TaxonomyVertical:
+    vertical = session.scalar(select(TaxonomyVertical).where(TaxonomyVertical.slug == slug))
+    if vertical is None:
+        vertical = TaxonomyVertical(
+            slug=slug,
+            label=label,
+            description=description,
+            sort_order=sort_order,
+            is_active=True,
+        )
+        session.add(vertical)
+        session.flush()
+        return vertical
+    vertical.label = label
+    vertical.description = description
+    vertical.sort_order = sort_order
+    vertical.is_active = True
+    session.add(vertical)
+    return vertical
+
+
+def upsert_cluster(
+    session: Session,
+    *,
+    slug: str,
+    vertical_slug: str,
+    label: str,
+    description: str | None,
+    sort_order: int = 0,
+) -> NicheCluster:
+    cluster = session.scalar(select(NicheCluster).where(NicheCluster.slug == slug))
+    if cluster is None:
+        cluster = NicheCluster(
+            slug=slug,
+            vertical_slug=vertical_slug,
+            label=label,
+            description=description,
+            sort_order=sort_order,
+            is_active=True,
+        )
+        session.add(cluster)
+        session.flush()
+        return cluster
+    cluster.vertical_slug = vertical_slug
+    cluster.label = label
+    cluster.description = description
+    cluster.sort_order = sort_order
+    cluster.is_active = True
+    session.add(cluster)
+    return cluster
+
+
+def upsert_variant_template(
+    session: Session,
+    *,
+    key: str,
+    label: str,
+    vertical: str,
+    cluster_slug: str | None,
+    sub_intent: str,
+    source_strategy: RecipeSourceStrategy,
+    aliases: list[str],
+    osm_tags: list[dict[str, str]],
+    exclude_tags: list[dict[str, str]],
+    search_terms: list[str],
+    website_keywords: list[str],
+    language_hints: list[str],
+    rationale: list[str],
+    template_score: int,
+    sort_order: int = 0,
+) -> QueryRecipeVariantTemplate:
+    template = session.scalar(select(QueryRecipeVariantTemplate).where(QueryRecipeVariantTemplate.key == key))
+    if template is None:
+        template = QueryRecipeVariantTemplate(
+            key=key,
+            label=label,
+            vertical=vertical,
+            cluster_slug=cluster_slug,
+            sub_intent=sub_intent,
+            source_strategy=source_strategy,
+            aliases=aliases,
+            osm_tags=osm_tags,
+            exclude_tags=exclude_tags,
+            search_terms=search_terms,
+            website_keywords=website_keywords,
+            language_hints=language_hints,
+            rationale=rationale,
+            template_score=template_score,
+            sort_order=sort_order,
+            is_active=True,
+        )
+        session.add(template)
+        session.flush()
+        return template
+    template.label = label
+    template.vertical = vertical
+    template.cluster_slug = cluster_slug
+    template.sub_intent = sub_intent
+    template.source_strategy = source_strategy
+    template.aliases = aliases
+    template.osm_tags = osm_tags
+    template.exclude_tags = exclude_tags
+    template.search_terms = search_terms
+    template.website_keywords = website_keywords
+    template.language_hints = language_hints
+    template.rationale = rationale
+    template.template_score = template_score
+    template.sort_order = sort_order
+    template.is_active = True
+    session.add(template)
+    return template
