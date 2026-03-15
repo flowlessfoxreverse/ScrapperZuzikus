@@ -428,6 +428,13 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 "template_score INTEGER NOT NULL DEFAULT 0, "
                 "prompt_match_score INTEGER NOT NULL DEFAULT 0, "
                 "rank_score INTEGER NOT NULL DEFAULT 0, "
+                "validation_count INTEGER NOT NULL DEFAULT 0, "
+                "observed_validation_score INTEGER NOT NULL DEFAULT 0, "
+                "latest_validation_score INTEGER NULL, "
+                "latest_validation_status VARCHAR(32) NULL, "
+                "latest_total_results INTEGER NULL, "
+                "latest_website_rate DOUBLE PRECISION NULL, "
+                "last_validated_at TIMESTAMP WITH TIME ZONE NULL, "
                 "fit_reasons JSONB NOT NULL DEFAULT '[]'::jsonb, "
                 "rationale JSONB NOT NULL DEFAULT '[]'::jsonb, "
                 "osm_tags JSONB NOT NULL DEFAULT '[]'::jsonb, "
@@ -454,6 +461,13 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 "template_score INTEGER NOT NULL DEFAULT 0, "
                 "prompt_match_score INTEGER NOT NULL DEFAULT 0, "
                 "rank_score INTEGER NOT NULL DEFAULT 0, "
+                "validation_count INTEGER NOT NULL DEFAULT 0, "
+                "observed_validation_score INTEGER NOT NULL DEFAULT 0, "
+                "latest_validation_score INTEGER NULL, "
+                "latest_validation_status VARCHAR(32) NULL, "
+                "latest_total_results INTEGER NULL, "
+                "latest_website_rate FLOAT NULL, "
+                "last_validated_at TIMESTAMP NULL, "
                 "fit_reasons JSON NOT NULL DEFAULT '[]', "
                 "rationale JSON NOT NULL DEFAULT '[]', "
                 "osm_tags JSON NOT NULL DEFAULT '[]', "
@@ -469,6 +483,21 @@ def ensure_recipe_schema(engine: Engine) -> None:
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_recipe_variant_prompt_key ON query_recipe_variants(prompt_fingerprint, variant_key)"
         )
         statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_variants_prompt_fingerprint ON query_recipe_variants(prompt_fingerprint)")
+        statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_variants_slug ON query_recipe_variants(slug)")
+    else:
+        variant_columns = columns_by_table.get("query_recipe_variants", set())
+        variant_additions = {
+            "validation_count": "INTEGER NOT NULL DEFAULT 0",
+            "observed_validation_score": "INTEGER NOT NULL DEFAULT 0",
+            "latest_validation_score": "INTEGER NULL",
+            "latest_validation_status": "VARCHAR(32) NULL",
+            "latest_total_results": "INTEGER NULL",
+            "latest_website_rate": "DOUBLE PRECISION NULL" if dialect == "postgresql" else "FLOAT NULL",
+            "last_validated_at": "TIMESTAMP WITH TIME ZONE NULL" if dialect == "postgresql" else "TIMESTAMP NULL",
+        }
+        for column_name, column_def in variant_additions.items():
+            if column_name not in variant_columns:
+                statements.append(f"ALTER TABLE query_recipe_variants ADD COLUMN {column_name} {column_def}")
         statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_variants_slug ON query_recipe_variants(slug)")
 
     if not statements:

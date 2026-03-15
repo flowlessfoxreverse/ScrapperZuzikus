@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from enum import Enum
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, Enum as SqlEnum, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Date, DateTime, Enum as SqlEnum, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -273,6 +273,13 @@ class QueryRecipeVariant(Base):
     template_score: Mapped[int] = mapped_column(Integer, default=0)
     prompt_match_score: Mapped[int] = mapped_column(Integer, default=0)
     rank_score: Mapped[int] = mapped_column(Integer, default=0)
+    validation_count: Mapped[int] = mapped_column(Integer, default=0)
+    observed_validation_score: Mapped[int] = mapped_column(Integer, default=0)
+    latest_validation_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    latest_validation_status: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    latest_total_results: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    latest_website_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     fit_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
     rationale: Mapped[list[str]] = mapped_column(JSON, default=list)
     osm_tags: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)

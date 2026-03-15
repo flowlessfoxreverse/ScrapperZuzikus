@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import QueryRecipe, QueryRecipeVariant
+from app.models import QueryRecipe, QueryRecipeValidation, QueryRecipeVariant
 from app.services.recipe_drafts import DraftProposal
 
 
@@ -57,6 +58,78 @@ def upsert_prompt_variants(session: Session, prompt: str, proposals: list[DraftP
 
     session.flush()
     return saved
+
+
+def _validation_bonus(score: int, validation_count: int) -> int:
+    if score <= 0 or validation_count <= 0:
+        return 0
+    confidence_factor = min(validation_count, 5) / 5
+    return round(score * 0.4 * confidence_factor)
+
+
+def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> list[DraftProposal]:
+    if not proposals:
+        return proposals
+
+    by_key: dict[str, list[QueryRecipeVariant]] = {}
+    for variant in session.scalars(
+        select(QueryRecipeVariant).where(
+            QueryRecipeVariant.variant_key.in_([proposal.variant_key for proposal in proposals])
+        )
+    ).all():
+        by_key.setdefault(variant.variant_key, []).append(variant)
+
+    adjusted: list[DraftProposal] = []
+    for proposal in proposals:
+        history_rows = by_key.get(proposal.variant_key, [])
+        total_runs = sum(max(row.validation_count, 0) for row in history_rows)
+        weighted_sum = sum(max(row.validation_count, 0) * max(row.observed_validation_score, 0) for row in history_rows)
+        observed_score = round(weighted_sum / total_runs) if total_runs else 0
+        validation_bonus = _validation_bonus(observed_score, total_runs)
+        fit_reasons = list(proposal.fit_reasons)
+        if total_runs:
+            fit_reasons.append(
+                f"Historical validation score {observed_score}/100 across {total_runs} validation run(s)."
+            )
+        adjusted.append(
+            replace(
+                proposal,
+                observed_validation_score=observed_score,
+                historical_validation_count=total_runs,
+                fit_score=proposal.template_score + proposal.prompt_match_score + validation_bonus,
+                fit_reasons=fit_reasons,
+            )
+        )
+
+    adjusted.sort(key=lambda item: (-item.fit_score, -item.observed_validation_score, item.label))
+    return adjusted
+
+
+def record_variant_validation(
+    session: Session,
+    recipe: QueryRecipe,
+    validation: QueryRecipeValidation,
+    metrics: dict,
+) -> None:
+    variant = recipe.source_variant
+    if variant is None:
+        return
+
+    previous_count = max(variant.validation_count, 0)
+    previous_score = max(variant.observed_validation_score, 0)
+    new_score = validation.score or 0
+    new_count = previous_count + 1
+    observed_average = round(((previous_score * previous_count) + new_score) / new_count) if new_count else 0
+
+    variant.validation_count = new_count
+    variant.observed_validation_score = observed_average
+    variant.latest_validation_score = validation.score
+    variant.latest_validation_status = validation.status.value
+    variant.latest_total_results = int(metrics.get("total_results", 0))
+    variant.latest_website_rate = float(metrics.get("website_rate", 0) or 0)
+    variant.last_validated_at = validation.created_at
+    variant.rank_score = variant.template_score + variant.prompt_match_score + _validation_bonus(observed_average, new_count)
+    session.add(variant)
 
 
 def prompt_variant_recipe_map(session: Session, prompt: str) -> dict[str, str]:

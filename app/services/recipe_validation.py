@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import DailyUsage, QueryRecipe, QueryRecipeValidation, QueryRecipeVersion, RecipeStatus, Region
+from app.services.recipe_variants import record_variant_validation
 
 
 settings = get_settings()
@@ -249,6 +250,8 @@ def validate_recipe_version(session: Session, recipe_id: int) -> tuple[QueryReci
     session.add(version)
     session.add(recipe)
     session.add(validation)
+    session.flush()
+    record_variant_validation(session, recipe, validation, metrics)
     session.commit()
     session.refresh(validation)
     return validation, False

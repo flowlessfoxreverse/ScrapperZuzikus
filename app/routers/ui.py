@@ -24,7 +24,7 @@ from app.services.recipe_drafts import DraftProposal, build_draft_variants_from_
 from app.services.recipe_lint import RecipeLintResult, lint_recipe_content, parse_tag_block
 from app.services.taxonomy import list_active_clusters, list_active_verticals
 from app.services.recipe_validation import get_validation_quota_snapshot, validate_recipe_version
-from app.services.recipe_variants import prompt_variant_recipe_map, upsert_prompt_variants
+from app.services.recipe_variants import apply_variant_history, prompt_variant_recipe_map, upsert_prompt_variants
 from app.services.region_catalog import country_catalog, upsert_country_with_subdivisions
 from app.services.runs import find_active_run, request_run_cancellation
 from app.tasks import run_scrape, sync_region_catalog_task
@@ -1031,6 +1031,11 @@ def recipe_editor(
     if draft_prompt:
         try:
             draft_variants, draft_proposal = select_draft_variant(draft_prompt, draft_variant_slug)
+            draft_variants = apply_variant_history(db, draft_variants)
+            draft_proposal = next(
+                (proposal for proposal in draft_variants if proposal.variant_key == draft_proposal.variant_key),
+                draft_variants[0],
+            )
             upsert_prompt_variants(db, draft_prompt, draft_variants)
             db.commit()
             draft_lint = lint_recipe_content(
@@ -1195,7 +1200,7 @@ def create_recipe_variants_html(
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
     try:
-        proposals = build_draft_variants_from_prompt(prompt)
+        proposals = apply_variant_history(db, build_draft_variants_from_prompt(prompt))
     except ValueError as exc:
         return RedirectResponse(url=f"/recipes?error={quote_plus(str(exc)[:200])}", status_code=303)
     saved_variants = upsert_prompt_variants(db, prompt, proposals)
@@ -1270,6 +1275,11 @@ def generate_recipe_draft_html(
     verticals, clusters = taxonomy_context(db)
     try:
         draft_variants, draft_proposal = select_draft_variant(prompt, selected_variant_slug or None)
+        draft_variants = apply_variant_history(db, draft_variants)
+        draft_proposal = next(
+            (proposal for proposal in draft_variants if proposal.variant_key == draft_proposal.variant_key),
+            draft_variants[0],
+        )
         upsert_prompt_variants(db, prompt, draft_variants)
         db.commit()
         draft_lint = lint_recipe_content(
