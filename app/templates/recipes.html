@@ -97,6 +97,109 @@
         <table>
           <thead>
             <tr>
+              <th>Recommendation Policy</th>
+              <th>State</th>
+              <th>Recommended Gate</th>
+              <th>Trusted Gate</th>
+              <th>Suppression Gate</th>
+              <th>Save</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in recommendation_policy_rows %}
+            <tr>
+              <td>
+                <form id="policy-{{ row.policy_key }}" action="/recipes/recommendation-policies/{{ row.policy_key }}" method="post"></form>
+                <input form="policy-{{ row.policy_key }}" type="hidden" name="label" value="{{ row.label }}" />
+                <strong>{{ row.label }}</strong><br />
+                <span class="subtle">{{ row.policy_key }}</span>
+              </td>
+              <td>
+                <select form="policy-{{ row.policy_key }}" name="is_active">
+                  <option value="true" {% if row.is_active %}selected{% endif %}>Active</option>
+                  <option value="false" {% if not row.is_active %}selected{% endif %}>Inactive</option>
+                </select>
+              </td>
+              <td>
+                <div class="compact-form-grid">
+                  <label>
+                    <span>Validation</span>
+                    <input form="policy-{{ row.policy_key }}" type="number" min="0" max="100" name="recommended_validation_score" value="{{ row.recommended_validation_score }}" />
+                  </label>
+                  <label>
+                    <span>Val Runs</span>
+                    <input form="policy-{{ row.policy_key }}" type="number" min="0" name="recommended_validation_runs" value="{{ row.recommended_validation_runs }}" />
+                  </label>
+                  <label>
+                    <span>Production</span>
+                    <input form="policy-{{ row.policy_key }}" type="number" min="0" max="100" name="recommended_production_score" value="{{ row.recommended_production_score }}" />
+                  </label>
+                  <label>
+                    <span>Prod Runs</span>
+                    <input form="policy-{{ row.policy_key }}" type="number" min="0" name="recommended_production_runs" value="{{ row.recommended_production_runs }}" />
+                  </label>
+                  <label>
+                    <span>Activations</span>
+                    <input form="policy-{{ row.policy_key }}" type="number" min="0" name="recommended_activation_count" value="{{ row.recommended_activation_count }}" />
+                  </label>
+                </div>
+              </td>
+              <td>
+                <div class="compact-form-grid">
+                  <label>
+                    <span>Validation</span>
+                    <input form="policy-{{ row.policy_key }}" type="number" min="0" max="100" name="trusted_validation_score" value="{{ row.trusted_validation_score }}" />
+                  </label>
+                  <label>
+                    <span>Val Runs</span>
+                    <input form="policy-{{ row.policy_key }}" type="number" min="0" name="trusted_validation_runs" value="{{ row.trusted_validation_runs }}" />
+                  </label>
+                  <label>
+                    <span>Production</span>
+                    <input form="policy-{{ row.policy_key }}" type="number" min="0" max="100" name="trusted_production_score" value="{{ row.trusted_production_score }}" />
+                  </label>
+                  <label>
+                    <span>Prod Runs</span>
+                    <input form="policy-{{ row.policy_key }}" type="number" min="0" name="trusted_production_runs" value="{{ row.trusted_production_runs }}" />
+                  </label>
+                  <label>
+                    <span>Activations</span>
+                    <input form="policy-{{ row.policy_key }}" type="number" min="0" name="trusted_activation_count" value="{{ row.trusted_activation_count }}" />
+                  </label>
+                </div>
+              </td>
+              <td>
+                <div class="compact-form-grid">
+                  <label>
+                    <span>Validation Max</span>
+                    <input form="policy-{{ row.policy_key }}" type="number" min="0" max="100" name="suppression_validation_score_max" value="{{ row.suppression_validation_score_max }}" />
+                  </label>
+                  <label>
+                    <span>Val Runs</span>
+                    <input form="policy-{{ row.policy_key }}" type="number" min="0" name="suppression_validation_runs_min" value="{{ row.suppression_validation_runs_min }}" />
+                  </label>
+                  <label>
+                    <span>Production Max</span>
+                    <input form="policy-{{ row.policy_key }}" type="number" min="0" max="100" name="suppression_production_score_max" value="{{ row.suppression_production_score_max }}" />
+                  </label>
+                  <label>
+                    <span>Prod Runs</span>
+                    <input form="policy-{{ row.policy_key }}" type="number" min="0" name="suppression_production_runs_min" value="{{ row.suppression_production_runs_min }}" />
+                  </label>
+                </div>
+              </td>
+              <td>
+                <button form="policy-{{ row.policy_key }}" type="submit">Save Policy</button>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6">No recommendation policies available.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <table>
+          <thead>
+            <tr>
               <th>Source Strategy</th>
               <th>Templates</th>
               <th>Active Recipes</th>

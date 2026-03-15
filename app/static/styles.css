@@ -208,6 +208,22 @@ legend {
   gap: 10px;
 }
 
+.compact-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 8px;
+}
+
+.compact-form-grid label span {
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.compact-form-grid input,
+.compact-form-grid select {
+  padding: 8px 9px;
+}
+
 .checkbox-card {
   display: grid;
   gap: 4px;

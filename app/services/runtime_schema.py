@@ -393,6 +393,68 @@ def ensure_recipe_schema(engine: Engine) -> None:
         statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_variant_templates_key ON query_recipe_variant_templates(key)")
         statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_variant_templates_cluster_slug ON query_recipe_variant_templates(cluster_slug)")
 
+    if "query_recipe_recommendation_policies" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_recipe_recommendation_policies ("
+                "id SERIAL PRIMARY KEY, "
+                "policy_key VARCHAR(64) NOT NULL UNIQUE, "
+                "label VARCHAR(128) NOT NULL, "
+                "source_strategy VARCHAR(32) NULL, "
+                "recommended_validation_score INTEGER NOT NULL DEFAULT 55, "
+                "recommended_validation_runs INTEGER NOT NULL DEFAULT 1, "
+                "recommended_production_score INTEGER NOT NULL DEFAULT 0, "
+                "recommended_production_runs INTEGER NOT NULL DEFAULT 0, "
+                "recommended_activation_count INTEGER NOT NULL DEFAULT 0, "
+                "trusted_validation_score INTEGER NOT NULL DEFAULT 65, "
+                "trusted_validation_runs INTEGER NOT NULL DEFAULT 2, "
+                "trusted_production_score INTEGER NOT NULL DEFAULT 15, "
+                "trusted_production_runs INTEGER NOT NULL DEFAULT 1, "
+                "trusted_activation_count INTEGER NOT NULL DEFAULT 1, "
+                "suppression_validation_score_max INTEGER NOT NULL DEFAULT 40, "
+                "suppression_validation_runs_min INTEGER NOT NULL DEFAULT 2, "
+                "suppression_production_score_max INTEGER NOT NULL DEFAULT 5, "
+                "suppression_production_runs_min INTEGER NOT NULL DEFAULT 1, "
+                "is_active BOOLEAN NOT NULL DEFAULT TRUE, "
+                "created_at TIMESTAMP WITH TIME ZONE NOT NULL, "
+                "updated_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_recipe_recommendation_policies ("
+                "id INTEGER PRIMARY KEY, "
+                "policy_key VARCHAR(64) NOT NULL UNIQUE, "
+                "label VARCHAR(128) NOT NULL, "
+                "source_strategy VARCHAR(32) NULL, "
+                "recommended_validation_score INTEGER NOT NULL DEFAULT 55, "
+                "recommended_validation_runs INTEGER NOT NULL DEFAULT 1, "
+                "recommended_production_score INTEGER NOT NULL DEFAULT 0, "
+                "recommended_production_runs INTEGER NOT NULL DEFAULT 0, "
+                "recommended_activation_count INTEGER NOT NULL DEFAULT 0, "
+                "trusted_validation_score INTEGER NOT NULL DEFAULT 65, "
+                "trusted_validation_runs INTEGER NOT NULL DEFAULT 2, "
+                "trusted_production_score INTEGER NOT NULL DEFAULT 15, "
+                "trusted_production_runs INTEGER NOT NULL DEFAULT 1, "
+                "trusted_activation_count INTEGER NOT NULL DEFAULT 1, "
+                "suppression_validation_score_max INTEGER NOT NULL DEFAULT 40, "
+                "suppression_validation_runs_min INTEGER NOT NULL DEFAULT 2, "
+                "suppression_production_score_max INTEGER NOT NULL DEFAULT 5, "
+                "suppression_production_runs_min INTEGER NOT NULL DEFAULT 1, "
+                "is_active BOOLEAN NOT NULL DEFAULT 1, "
+                "created_at TIMESTAMP NOT NULL, "
+                "updated_at TIMESTAMP NOT NULL"
+                ")"
+            )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_recipe_recommendation_policies_policy_key "
+            "ON query_recipe_recommendation_policies(policy_key)"
+        )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_recipe_recommendation_policies_source_strategy "
+            "ON query_recipe_recommendation_policies(source_strategy)"
+        )
+
     category_vertical = None
     if "vertical" in category_columns:
         try:

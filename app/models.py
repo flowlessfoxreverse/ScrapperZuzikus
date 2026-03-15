@@ -255,6 +255,32 @@ class QueryRecipeVariantTemplate(Base):
     cluster_ref: Mapped["NicheCluster | None"] = relationship(foreign_keys=[cluster_slug])
 
 
+class QueryRecipeRecommendationPolicy(Base):
+    __tablename__ = "query_recipe_recommendation_policies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    policy_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    label: Mapped[str] = mapped_column(String(128))
+    source_strategy: Mapped[RecipeSourceStrategy | None] = mapped_column(RECIPE_SOURCE_STRATEGY_ENUM, nullable=True, index=True)
+    recommended_validation_score: Mapped[int] = mapped_column(Integer, default=55)
+    recommended_validation_runs: Mapped[int] = mapped_column(Integer, default=1)
+    recommended_production_score: Mapped[int] = mapped_column(Integer, default=0)
+    recommended_production_runs: Mapped[int] = mapped_column(Integer, default=0)
+    recommended_activation_count: Mapped[int] = mapped_column(Integer, default=0)
+    trusted_validation_score: Mapped[int] = mapped_column(Integer, default=65)
+    trusted_validation_runs: Mapped[int] = mapped_column(Integer, default=2)
+    trusted_production_score: Mapped[int] = mapped_column(Integer, default=15)
+    trusted_production_runs: Mapped[int] = mapped_column(Integer, default=1)
+    trusted_activation_count: Mapped[int] = mapped_column(Integer, default=1)
+    suppression_validation_score_max: Mapped[int] = mapped_column(Integer, default=40)
+    suppression_validation_runs_min: Mapped[int] = mapped_column(Integer, default=2)
+    suppression_production_score_max: Mapped[int] = mapped_column(Integer, default=5)
+    suppression_production_runs_min: Mapped[int] = mapped_column(Integer, default=1)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class QueryRecipeVersion(Base):
     __tablename__ = "query_recipe_versions"
     __table_args__ = (

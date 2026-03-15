@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import Category, Company, ContactChannel, ContactChannelType, Email, NicheCluster, Phone, ProxyEndpoint, ProxyKind, QueryRecipe, QueryRecipePlanVariantOutcome, QueryRecipeValidation, QueryRecipeVariant, QueryRecipeVariantRunStat, QueryRecipeVariantTemplate, QueryRecipeVersion, RecipeAdapter, RecipeSourceStrategy, RecipeStatus, Region, RequestMetric, RunCategory, RunStatus, ScrapeRun, TaxonomyVertical, ValidationStatus
+from app.models import Category, Company, ContactChannel, ContactChannelType, Email, NicheCluster, Phone, ProxyEndpoint, ProxyKind, QueryRecipe, QueryRecipePlanVariantOutcome, QueryRecipeRecommendationPolicy, QueryRecipeValidation, QueryRecipeVariant, QueryRecipeVariantRunStat, QueryRecipeVariantTemplate, QueryRecipeVersion, RecipeAdapter, RecipeSourceStrategy, RecipeStatus, Region, RequestMetric, RunCategory, RunStatus, ScrapeRun, TaxonomyVertical, ValidationStatus
 from app.schemas import EmailRow
 from app.services.category_recipes import latest_recipe_version, sync_recipe_to_category, upsert_recipe_backed_category
 from app.services.host_suppression import normalize_host_key
@@ -37,6 +37,8 @@ from app.services.recipe_variants import (
     derive_recommendation_state,
     prompt_fingerprint,
     prompt_variant_recipe_map,
+    recommendation_policy_map,
+    resolve_recommendation_policy,
     upsert_prompt_variants,
 )
 from app.services.region_catalog import country_catalog, upsert_country_with_subdivisions
@@ -275,6 +277,28 @@ class RecipeTopVariantRow:
     validation_score: int
     production_score: int
     production_runs: int
+
+
+@dataclass
+class RecommendationPolicyRow:
+    policy_key: str
+    label: str
+    source_strategy: str
+    recommended_validation_score: int
+    recommended_validation_runs: int
+    recommended_production_score: int
+    recommended_production_runs: int
+    recommended_activation_count: int
+    trusted_validation_score: int
+    trusted_validation_runs: int
+    trusted_production_score: int
+    trusted_production_runs: int
+    trusted_activation_count: int
+    suppression_validation_score_max: int
+    suppression_validation_runs_min: int
+    suppression_production_score_max: int
+    suppression_production_runs_min: int
+    is_active: bool
 
 
 @dataclass
@@ -797,6 +821,7 @@ def build_proxy_usage_map(db: Session, *, limit: int = 5000) -> dict[int, dict[s
 
 def build_recipe_rows(db: Session) -> list[RecipeRow]:
     recipes = db.scalars(select(QueryRecipe).order_by(QueryRecipe.vertical, QueryRecipe.label)).all()
+    policy_map = recommendation_policy_map(db)
     rows: list[RecipeRow] = []
     for recipe in recipes:
         version = recipe.versions[0] if recipe.versions else None
@@ -820,8 +845,9 @@ def build_recipe_rows(db: Session) -> list[RecipeRow]:
         recommendation_state_score = 0
         recommendation_reasons = ["No source variant is linked yet."]
         if recipe.source_variant and version:
+            policy = resolve_recommendation_policy(policy_map, version.source_strategy) or version.source_strategy
             recommendation_state, recommendation_state_score, recommendation_reasons, _ = derive_recommendation_state(
-                source_strategy=version.source_strategy,
+                source_strategy=policy,
                 observed_validation_score=recipe.source_variant.observed_validation_score,
                 historical_validation_count=recipe.source_variant.validation_count,
                 production_score=recipe.source_variant.observed_production_score,
@@ -887,6 +913,39 @@ def build_recipe_rows(db: Session) -> list[RecipeRow]:
             )
         )
     return rows
+
+
+def build_recommendation_policy_rows(db: Session) -> list[RecommendationPolicyRow]:
+    rows = recommendation_policy_map(db)
+    ordered_keys = ["global"] + [strategy.value for strategy in RecipeSourceStrategy]
+    result: list[RecommendationPolicyRow] = []
+    for key in ordered_keys:
+        policy = rows.get(key)
+        if policy is None:
+            continue
+        result.append(
+            RecommendationPolicyRow(
+                policy_key=policy.policy_key,
+                label=policy.label,
+                source_strategy=policy.source_strategy.value if policy.source_strategy else "global",
+                recommended_validation_score=policy.recommended_validation_score,
+                recommended_validation_runs=policy.recommended_validation_runs,
+                recommended_production_score=policy.recommended_production_score,
+                recommended_production_runs=policy.recommended_production_runs,
+                recommended_activation_count=policy.recommended_activation_count,
+                trusted_validation_score=policy.trusted_validation_score,
+                trusted_validation_runs=policy.trusted_validation_runs,
+                trusted_production_score=policy.trusted_production_score,
+                trusted_production_runs=policy.trusted_production_runs,
+                trusted_activation_count=policy.trusted_activation_count,
+                suppression_validation_score_max=policy.suppression_validation_score_max,
+                suppression_validation_runs_min=policy.suppression_validation_runs_min,
+                suppression_production_score_max=policy.suppression_production_score_max,
+                suppression_production_runs_min=policy.suppression_production_runs_min,
+                is_active=policy.is_active,
+            )
+        )
+    return result
 
 
 def build_category_rows(db: Session) -> list[CategoryRow]:
@@ -1594,6 +1653,7 @@ def recipe_editor(
     verticals, clusters = taxonomy_context(db)
     strategy_rows, cluster_rows, market_rows, strategy_market_rows, top_variants = build_recipe_analytics(db)
     strategy_threshold_rows = build_strategy_threshold_rows()
+    recommendation_policy_rows = build_recommendation_policy_rows(db)
     if draft_prompt:
         try:
             plan = plan_recipe_prompt(
@@ -1678,9 +1738,10 @@ def recipe_editor(
         "cluster_rows": cluster_rows,
         "market_rows": market_rows,
         "strategy_market_rows": strategy_market_rows,
-        "top_variants": top_variants,
+            "top_variants": top_variants,
             "recipe_source_strategies": list(RecipeSourceStrategy),
             "strategy_activation_thresholds": strategy_threshold_rows,
+            "recommendation_policy_rows": recommendation_policy_rows,
             "activation_thresholds": {
                 "validation_score": settings.recipe_activation_min_validation_score,
                 "validation_runs": settings.recipe_activation_min_validation_runs,
@@ -2016,6 +2077,7 @@ def generate_recipe_draft_html(
     verticals, clusters = taxonomy_context(db)
     strategy_rows, cluster_rows, market_rows, strategy_market_rows, top_variants = build_recipe_analytics(db)
     strategy_threshold_rows = build_strategy_threshold_rows()
+    recommendation_policy_rows = build_recommendation_policy_rows(db)
     try:
         plan = plan_recipe_prompt(
             db,
@@ -2112,9 +2174,10 @@ def generate_recipe_draft_html(
         "strategy_rows": strategy_rows,
         "cluster_rows": cluster_rows,
         "market_rows": market_rows,
-        "strategy_market_rows": strategy_market_rows,
-        "top_variants": top_variants,
+            "strategy_market_rows": strategy_market_rows,
+            "top_variants": top_variants,
             "strategy_activation_thresholds": strategy_threshold_rows,
+            "recommendation_policy_rows": recommendation_policy_rows,
             "activation_thresholds": {
                 "validation_score": settings.recipe_activation_min_validation_score,
                 "validation_runs": settings.recipe_activation_min_validation_runs,
@@ -2156,6 +2219,54 @@ def validate_recipe_html(
     except Exception as exc:
         db.rollback()
         return RedirectResponse(url=f"/recipes?error={quote_plus(str(exc)[:200])}", status_code=303)
+
+
+@router.post("/recipes/recommendation-policies/{policy_key}", response_class=HTMLResponse)
+def update_recommendation_policy_html(
+    policy_key: str,
+    label: str = Form(...),
+    recommended_validation_score: int = Form(...),
+    recommended_validation_runs: int = Form(...),
+    recommended_production_score: int = Form(...),
+    recommended_production_runs: int = Form(...),
+    recommended_activation_count: int = Form(...),
+    trusted_validation_score: int = Form(...),
+    trusted_validation_runs: int = Form(...),
+    trusted_production_score: int = Form(...),
+    trusted_production_runs: int = Form(...),
+    trusted_activation_count: int = Form(...),
+    suppression_validation_score_max: int = Form(...),
+    suppression_validation_runs_min: int = Form(...),
+    suppression_production_score_max: int = Form(...),
+    suppression_production_runs_min: int = Form(...),
+    is_active: str = Form("true"),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    policy = recommendation_policy_map(db).get(policy_key)
+    if policy is None:
+        return RedirectResponse(url="/recipes?error=Recommendation%20policy%20not%20found.", status_code=303)
+
+    policy.label = label.strip() or policy.label
+    policy.recommended_validation_score = max(0, min(100, recommended_validation_score))
+    policy.recommended_validation_runs = max(0, recommended_validation_runs)
+    policy.recommended_production_score = max(0, min(100, recommended_production_score))
+    policy.recommended_production_runs = max(0, recommended_production_runs)
+    policy.recommended_activation_count = max(0, recommended_activation_count)
+    policy.trusted_validation_score = max(0, min(100, trusted_validation_score))
+    policy.trusted_validation_runs = max(0, trusted_validation_runs)
+    policy.trusted_production_score = max(0, min(100, trusted_production_score))
+    policy.trusted_production_runs = max(0, trusted_production_runs)
+    policy.trusted_activation_count = max(0, trusted_activation_count)
+    policy.suppression_validation_score_max = max(0, min(100, suppression_validation_score_max))
+    policy.suppression_validation_runs_min = max(0, suppression_validation_runs_min)
+    policy.suppression_production_score_max = max(0, min(100, suppression_production_score_max))
+    policy.suppression_production_runs_min = max(0, suppression_production_runs_min)
+    policy.is_active = is_active.strip().lower() == "true"
+    db.commit()
+    return RedirectResponse(
+        url=f"/recipes?message={quote_plus(f'Updated recommendation policy {policy.label}.')}",
+        status_code=303,
+    )
 
 
 @router.post("/recipes/{recipe_id}/promote", response_class=HTMLResponse)

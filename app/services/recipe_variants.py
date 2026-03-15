@@ -6,13 +6,134 @@ import hashlib
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
-from app.models import QueryRecipe, QueryRecipePlanVariantOutcome, QueryRecipeValidation, QueryRecipeVariant, QueryRecipeVariantRunStat, Region
+from app.models import (
+    QueryRecipe,
+    QueryRecipePlanVariantOutcome,
+    QueryRecipeRecommendationPolicy,
+    QueryRecipeValidation,
+    QueryRecipeVariant,
+    QueryRecipeVariantRunStat,
+    RecipeSourceStrategy,
+    Region,
+)
 from app.services.recipe_drafts import DraftProposal
 from app.services.recipe_prompt_normalization import normalize_prompt_text, resolve_prompt_country_code
 from app.config import get_settings
 
 
 settings = get_settings()
+
+
+DEFAULT_RECOMMENDATION_POLICIES: dict[str, dict[str, object]] = {
+    "global": {
+        "label": "Global Baseline",
+        "source_strategy": None,
+        "recommended_validation_score": 55,
+        "recommended_validation_runs": 1,
+        "recommended_production_score": 0,
+        "recommended_production_runs": 0,
+        "recommended_activation_count": 0,
+        "trusted_validation_score": 65,
+        "trusted_validation_runs": 2,
+        "trusted_production_score": 15,
+        "trusted_production_runs": 1,
+        "trusted_activation_count": 1,
+        "suppression_validation_score_max": 40,
+        "suppression_validation_runs_min": 2,
+        "suppression_production_score_max": 5,
+        "suppression_production_runs_min": 1,
+    },
+    "overpass_discovery_enrich": {
+        "label": "Overpass Discovery",
+        "source_strategy": "overpass_discovery_enrich",
+        "recommended_validation_score": 55,
+        "recommended_validation_runs": 1,
+        "recommended_production_score": 0,
+        "recommended_production_runs": 0,
+        "recommended_activation_count": 0,
+        "trusted_validation_score": 65,
+        "trusted_validation_runs": 2,
+        "trusted_production_score": 10,
+        "trusted_production_runs": 1,
+        "trusted_activation_count": 1,
+        "suppression_validation_score_max": 38,
+        "suppression_validation_runs_min": 2,
+        "suppression_production_score_max": 5,
+        "suppression_production_runs_min": 1,
+    },
+    "hybrid_discovery": {
+        "label": "Hybrid Discovery",
+        "source_strategy": "hybrid_discovery",
+        "recommended_validation_score": 58,
+        "recommended_validation_runs": 1,
+        "recommended_production_score": 5,
+        "recommended_production_runs": 1,
+        "recommended_activation_count": 0,
+        "trusted_validation_score": 68,
+        "trusted_validation_runs": 2,
+        "trusted_production_score": 18,
+        "trusted_production_runs": 1,
+        "trusted_activation_count": 1,
+        "suppression_validation_score_max": 40,
+        "suppression_validation_runs_min": 2,
+        "suppression_production_score_max": 5,
+        "suppression_production_runs_min": 1,
+    },
+    "website_first": {
+        "label": "Website First",
+        "source_strategy": "website_first",
+        "recommended_validation_score": 52,
+        "recommended_validation_runs": 1,
+        "recommended_production_score": 10,
+        "recommended_production_runs": 1,
+        "recommended_activation_count": 0,
+        "trusted_validation_score": 62,
+        "trusted_validation_runs": 2,
+        "trusted_production_score": 20,
+        "trusted_production_runs": 1,
+        "trusted_activation_count": 1,
+        "suppression_validation_score_max": 40,
+        "suppression_validation_runs_min": 2,
+        "suppression_production_score_max": 8,
+        "suppression_production_runs_min": 1,
+    },
+    "browser_assisted_discovery": {
+        "label": "Browser Assisted",
+        "source_strategy": "browser_assisted_discovery",
+        "recommended_validation_score": 65,
+        "recommended_validation_runs": 1,
+        "recommended_production_score": 15,
+        "recommended_production_runs": 1,
+        "recommended_activation_count": 1,
+        "trusted_validation_score": 75,
+        "trusted_validation_runs": 2,
+        "trusted_production_score": 25,
+        "trusted_production_runs": 2,
+        "trusted_activation_count": 1,
+        "suppression_validation_score_max": 45,
+        "suppression_validation_runs_min": 2,
+        "suppression_production_score_max": 10,
+        "suppression_production_runs_min": 1,
+    },
+    "directory_expansion": {
+        "label": "Directory Expansion",
+        "source_strategy": "directory_expansion",
+        "recommended_validation_score": 60,
+        "recommended_validation_runs": 1,
+        "recommended_production_score": 10,
+        "recommended_production_runs": 1,
+        "recommended_activation_count": 0,
+        "trusted_validation_score": 70,
+        "trusted_validation_runs": 2,
+        "trusted_production_score": 20,
+        "trusted_production_runs": 1,
+        "trusted_activation_count": 1,
+        "suppression_validation_score_max": 40,
+        "suppression_validation_runs_min": 2,
+        "suppression_production_score_max": 8,
+        "suppression_production_runs_min": 1,
+    },
+}
 
 
 def prompt_fingerprint(prompt: str) -> str:
@@ -157,6 +278,57 @@ def _source_strategy_thresholds(source_strategy) -> dict[str, int]:
     return thresholds
 
 
+def ensure_default_recommendation_policies(session: Session) -> dict[str, QueryRecipeRecommendationPolicy]:
+    existing = {
+        row.policy_key: row
+        for row in session.scalars(select(QueryRecipeRecommendationPolicy)).all()
+    }
+    changed = False
+    for policy_key, defaults in DEFAULT_RECOMMENDATION_POLICIES.items():
+        row = existing.get(policy_key)
+        if row is None:
+            row = QueryRecipeRecommendationPolicy(
+                policy_key=policy_key,
+                label=str(defaults["label"]),
+                source_strategy=RecipeSourceStrategy(str(defaults["source_strategy"])) if defaults["source_strategy"] else None,
+                recommended_validation_score=int(defaults["recommended_validation_score"]),
+                recommended_validation_runs=int(defaults["recommended_validation_runs"]),
+                recommended_production_score=int(defaults["recommended_production_score"]),
+                recommended_production_runs=int(defaults["recommended_production_runs"]),
+                recommended_activation_count=int(defaults["recommended_activation_count"]),
+                trusted_validation_score=int(defaults["trusted_validation_score"]),
+                trusted_validation_runs=int(defaults["trusted_validation_runs"]),
+                trusted_production_score=int(defaults["trusted_production_score"]),
+                trusted_production_runs=int(defaults["trusted_production_runs"]),
+                trusted_activation_count=int(defaults["trusted_activation_count"]),
+                suppression_validation_score_max=int(defaults["suppression_validation_score_max"]),
+                suppression_validation_runs_min=int(defaults["suppression_validation_runs_min"]),
+                suppression_production_score_max=int(defaults["suppression_production_score_max"]),
+                suppression_production_runs_min=int(defaults["suppression_production_runs_min"]),
+                is_active=True,
+            )
+            session.add(row)
+            existing[policy_key] = row
+            changed = True
+    if changed:
+        session.flush()
+    return existing
+
+
+def recommendation_policy_map(session: Session) -> dict[str, QueryRecipeRecommendationPolicy]:
+    return ensure_default_recommendation_policies(session)
+
+
+def resolve_recommendation_policy(policy_map: dict[str, QueryRecipeRecommendationPolicy], source_strategy) -> QueryRecipeRecommendationPolicy | None:
+    strategy_value = getattr(source_strategy, "value", str(source_strategy)) if source_strategy else None
+    if strategy_value and strategy_value in policy_map and policy_map[strategy_value].is_active:
+        return policy_map[strategy_value]
+    global_policy = policy_map.get("global")
+    if global_policy and global_policy.is_active:
+        return global_policy
+    return None
+
+
 def derive_recommendation_state(
     *,
     source_strategy,
@@ -175,21 +347,48 @@ def derive_recommendation_state(
     strategy_production_score: int,
     strategy_production_run_count: int,
 ) -> tuple[str, int, list[str], int]:
+    policy = None
     thresholds = _source_strategy_thresholds(source_strategy)
+    if isinstance(source_strategy, QueryRecipeRecommendationPolicy):
+        policy = source_strategy
+    elif hasattr(source_strategy, "recommended_validation_score"):
+        policy = source_strategy
+    if policy is not None:
+        thresholds = {
+            "validation_score": int(policy.recommended_validation_score),
+            "validation_runs": int(policy.recommended_validation_runs),
+            "production_score": int(policy.recommended_production_score),
+            "production_runs": int(policy.recommended_production_runs),
+        }
     reasons: list[str] = []
     recommendation_score = 0
     state = "experimental"
 
+    recommended_validation_score = int(getattr(policy, "recommended_validation_score", thresholds["validation_score"])) if policy is not None else thresholds["validation_score"]
+    recommended_validation_runs = int(getattr(policy, "recommended_validation_runs", thresholds["validation_runs"])) if policy is not None else thresholds["validation_runs"]
+    recommended_production_score = int(getattr(policy, "recommended_production_score", thresholds["production_score"])) if policy is not None else thresholds["production_score"]
+    recommended_production_runs = int(getattr(policy, "recommended_production_runs", thresholds["production_runs"])) if policy is not None else thresholds["production_runs"]
+    recommended_activation_count = int(getattr(policy, "recommended_activation_count", 0)) if policy is not None else 0
+    trusted_validation_score = int(getattr(policy, "trusted_validation_score", max(recommended_validation_score + 10, 65))) if policy is not None else max(recommended_validation_score + 10, 65)
+    trusted_validation_runs = int(getattr(policy, "trusted_validation_runs", max(recommended_validation_runs + 1, 2))) if policy is not None else max(recommended_validation_runs + 1, 2)
+    trusted_production_score = int(getattr(policy, "trusted_production_score", max(recommended_production_score + 10, 15))) if policy is not None else max(recommended_production_score + 10, 15)
+    trusted_production_runs = int(getattr(policy, "trusted_production_runs", max(recommended_production_runs, 1))) if policy is not None else max(recommended_production_runs, 1)
+    trusted_activation_count = int(getattr(policy, "trusted_activation_count", 1)) if policy is not None else 1
+    suppression_validation_score_max = int(getattr(policy, "suppression_validation_score_max", max(35, recommended_validation_score - 15))) if policy is not None else max(35, recommended_validation_score - 15)
+    suppression_validation_runs_min = int(getattr(policy, "suppression_validation_runs_min", max(2, recommended_validation_runs))) if policy is not None else max(2, recommended_validation_runs)
+    suppression_production_score_max = int(getattr(policy, "suppression_production_score_max", max(5, recommended_production_score - 5))) if policy is not None else max(5, recommended_production_score - 5)
+    suppression_production_runs_min = int(getattr(policy, "suppression_production_runs_min", max(1, recommended_production_runs))) if policy is not None else max(1, recommended_production_runs)
+
     validation_ready = (
-        historical_validation_count >= thresholds["validation_runs"]
-        and observed_validation_score >= thresholds["validation_score"]
+        historical_validation_count >= recommended_validation_runs
+        and observed_validation_score >= recommended_validation_score
     )
-    production_required = thresholds["production_runs"] > 0
+    production_required = recommended_production_runs > 0
     production_ready = (
         not production_required
         or (
-            production_run_count >= thresholds["production_runs"]
-            and production_score >= thresholds["production_score"]
+            production_run_count >= recommended_production_runs
+            and production_score >= recommended_production_score
         )
     )
     activation_signal = planner_activation_count + prompt_activation_count
@@ -199,10 +398,10 @@ def derive_recommendation_state(
     if validation_ready:
         recommendation_score += 30
         reasons.append(
-            f"Validation clears the {thresholds['validation_score']}/100 floor for {getattr(source_strategy, 'value', source_strategy)}."
+            f"Validation clears the {recommended_validation_score}/100 floor for {getattr(source_strategy, 'value', source_strategy)}."
         )
     elif historical_validation_count:
-        gap = max(0, thresholds["validation_score"] - observed_validation_score)
+        gap = max(0, recommended_validation_score - observed_validation_score)
         reasons.append(f"Validation is still {gap} point(s) below the promotion floor.")
     else:
         reasons.append("No validation evidence yet.")
@@ -235,10 +434,10 @@ def derive_recommendation_state(
         reasons.append("Users repeatedly select this variant during planning.")
 
     if (
-        historical_validation_count >= max(2, thresholds["validation_runs"])
-        and observed_validation_score < max(35, thresholds["validation_score"] - 15)
-        and production_run_count >= max(1, thresholds["production_runs"])
-        and production_score < max(5, thresholds["production_score"] - 5)
+        historical_validation_count >= suppression_validation_runs_min
+        and observed_validation_score <= suppression_validation_score_max
+        and production_run_count >= suppression_production_runs_min
+        and production_score <= suppression_production_score_max
     ):
         state = "suppressed"
         recommendation_score = max(recommendation_score - 25, 0)
@@ -246,17 +445,17 @@ def derive_recommendation_state(
         return state, recommendation_score, reasons, -20
 
     if (
-        validation_ready
-        and historical_validation_count >= max(2, thresholds["validation_runs"])
-        and production_ready
-        and production_run_count >= max(1, thresholds["production_runs"])
-        and (activation_signal >= 1 or draft_signal >= 2 or market_production_run_count >= 2)
+        historical_validation_count >= trusted_validation_runs
+        and observed_validation_score >= trusted_validation_score
+        and production_run_count >= trusted_production_runs
+        and production_score >= trusted_production_score
+        and (activation_signal >= trusted_activation_count or draft_signal >= max(trusted_activation_count + 1, 2) or market_production_run_count >= 2)
     ):
         state = "trusted"
         reasons.append("This variant has both strong evidence and repeated downstream adoption.")
         return state, recommendation_score, reasons, 12
 
-    if validation_ready and (production_ready or activation_signal >= 1 or draft_signal >= 1):
+    if validation_ready and (production_ready or activation_signal >= recommended_activation_count or draft_signal >= max(recommended_activation_count, 1)):
         state = "recommended"
         reasons.append("This variant has enough evidence to recommend, but not yet enough to fully trust.")
         return state, recommendation_score, reasons, 5
@@ -269,6 +468,7 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
     if not proposals:
         return proposals
 
+    policy_map = recommendation_policy_map(session)
     prompt_market_country = resolve_prompt_country_code(session, proposals[0].prompt)
 
     by_key: dict[str, list[QueryRecipeVariant]] = {}
@@ -471,7 +671,6 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
             )
         recommendation_state, recommendation_state_score, recommendation_reasons, recommendation_bonus = (
             derive_recommendation_state(
-                source_strategy=proposal.source_strategy,
                 observed_validation_score=observed_score,
                 historical_validation_count=total_runs,
                 production_score=production_score,
@@ -486,6 +685,7 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
                 market_production_run_count=market_runs,
                 strategy_production_score=strategy_score,
                 strategy_production_run_count=strategy_runs,
+                source_strategy=resolve_recommendation_policy(policy_map, proposal.source_strategy) or proposal.source_strategy,
             )
         )
         adjusted.append(
