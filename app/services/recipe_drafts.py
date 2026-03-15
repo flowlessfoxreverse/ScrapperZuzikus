@@ -55,6 +55,9 @@ class DraftProposal:
     recommendation_state: str = "experimental"
     recommendation_state_score: int = 0
     recommendation_reasons: list[str] = field(default_factory=list)
+    recommendation_policy_key: str = "global"
+    recommendation_policy_label: str = "Global Baseline"
+    recommendation_blockers: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

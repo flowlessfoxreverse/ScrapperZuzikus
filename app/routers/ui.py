@@ -210,6 +210,9 @@ class RecipeRow:
     recommendation_state: str
     recommendation_state_score: int
     recommendation_reasons: list[str]
+    recommendation_policy_key: str
+    recommendation_policy_label: str
+    recommendation_blockers: list[str]
     created_at: datetime
 
 
@@ -844,9 +847,12 @@ def build_recipe_rows(db: Session) -> list[RecipeRow]:
         recommendation_state = "experimental"
         recommendation_state_score = 0
         recommendation_reasons = ["No source variant is linked yet."]
+        recommendation_policy_key = "global"
+        recommendation_policy_label = "Global Baseline"
+        recommendation_blockers = ["No source variant is linked yet."]
         if recipe.source_variant and version:
             policy = resolve_recommendation_policy(policy_map, version.source_strategy) or version.source_strategy
-            recommendation_state, recommendation_state_score, recommendation_reasons, _ = derive_recommendation_state(
+            recommendation = derive_recommendation_state(
                 source_strategy=policy,
                 observed_validation_score=recipe.source_variant.observed_validation_score,
                 historical_validation_count=recipe.source_variant.validation_count,
@@ -863,6 +869,12 @@ def build_recipe_rows(db: Session) -> list[RecipeRow]:
                 strategy_production_score=0,
                 strategy_production_run_count=0,
             )
+            recommendation_state = recommendation.state
+            recommendation_state_score = recommendation.score
+            recommendation_reasons = recommendation.reasons
+            recommendation_policy_key = recommendation.policy_key
+            recommendation_policy_label = recommendation.policy_label
+            recommendation_blockers = recommendation.blockers
         rows.append(
             RecipeRow(
                 id=recipe.id,
@@ -909,6 +921,9 @@ def build_recipe_rows(db: Session) -> list[RecipeRow]:
                 recommendation_state=recommendation_state,
                 recommendation_state_score=recommendation_state_score,
                 recommendation_reasons=recommendation_reasons,
+                recommendation_policy_key=recommendation_policy_key,
+                recommendation_policy_label=recommendation_policy_label,
+                recommendation_blockers=recommendation_blockers,
                 created_at=recipe.created_at,
             )
         )

@@ -86,6 +86,9 @@ class PlannedVariant(BaseModel):
     recommendation_state: str = "experimental"
     recommendation_state_score: int = 0
     recommendation_reasons: list[str] = Field(default_factory=list)
+    recommendation_policy_key: str = "global"
+    recommendation_policy_label: str = "Global Baseline"
+    recommendation_blockers: list[str] = Field(default_factory=list)
 
 
 class PlannedPromptPayload(BaseModel):
@@ -268,6 +271,9 @@ def _model_to_variant(variant: PlannedVariant) -> DraftProposal:
         recommendation_state=variant.recommendation_state,
         recommendation_state_score=variant.recommendation_state_score,
         recommendation_reasons=variant.recommendation_reasons,
+        recommendation_policy_key=variant.recommendation_policy_key,
+        recommendation_policy_label=variant.recommendation_policy_label,
+        recommendation_blockers=variant.recommendation_blockers,
     )
 
 

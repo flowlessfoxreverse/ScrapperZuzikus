@@ -636,7 +636,9 @@
               <th>Production Yield</th>
               <th>Production Runs</th>
               <th>State</th>
+              <th>Policy</th>
               <th>State Score</th>
+              <th>Blockers</th>
               <th>Market</th>
               <th>Market Yield</th>
               <th>Market Runs</th>
@@ -674,7 +676,9 @@
               <td>{{ variant.production_score or "-" }}</td>
               <td>{{ variant.production_run_count or "-" }}</td>
               <td><span class="badge {% if variant.recommendation_state == 'trusted' %}muted{% elif variant.recommendation_state == 'suppressed' %}warn{% endif %}" title="{{ variant.recommendation_reasons|join(' ') }}">{{ variant.recommendation_state }}</span></td>
+              <td><span class="subtle">{{ variant.recommendation_policy_label }}</span></td>
               <td>{{ variant.recommendation_state_score }}</td>
+              <td>{{ variant.recommendation_blockers|join(" ") if variant.recommendation_blockers else "-" }}</td>
               <td>{{ variant.market_country_code or "-" }}</td>
               <td>{{ variant.market_production_score or "-" }}</td>
               <td>{{ variant.market_production_run_count or "-" }}</td>
@@ -864,6 +868,10 @@
             <strong>{{ draft_proposal.recommendation_state }}</strong>
           </div>
           <div class="stat-card">
+            <span class="subtle">Applied Policy</span>
+            <strong>{{ draft_proposal.recommendation_policy_label }}</strong>
+          </div>
+          <div class="stat-card">
             <span class="subtle">State Score</span>
             <strong>{{ draft_proposal.recommendation_state_score }}</strong>
           </div>
@@ -875,6 +883,9 @@
         </ul>
         {% if draft_proposal.recommendation_reasons %}
         <p class="subtle">Recommendation reasons: {{ draft_proposal.recommendation_reasons|join(" ") }}</p>
+        {% endif %}
+        {% if draft_proposal.recommendation_blockers %}
+        <p class="subtle">Policy blockers: {{ draft_proposal.recommendation_blockers|join(" ") }}</p>
         {% endif %}
         {% if draft_proposal.fit_reasons %}
         <p class="subtle">Prompt-match reasons: {{ draft_proposal.fit_reasons|join(" ") }}</p>
@@ -1021,7 +1032,9 @@
               <th>Linked Category</th>
               <th>Source Variant</th>
               <th>Recommendation</th>
+              <th>Policy</th>
               <th>State Score</th>
+              <th>Blockers</th>
               <th>Created</th>
               <th>Action</th>
             </tr>
@@ -1090,7 +1103,9 @@
                   {{ recipe.recommendation_state }}
                 </span>
               </td>
+              <td><span class="subtle">{{ recipe.recommendation_policy_label }}</span></td>
               <td>{{ recipe.recommendation_state_score }}</td>
+              <td>{{ recipe.recommendation_blockers|join(" ") if recipe.recommendation_blockers else "-" }}</td>
               <td>{{ recipe.created_at.strftime("%Y-%m-%d") }}</td>
               <td>
                 <div class="hero-actions">

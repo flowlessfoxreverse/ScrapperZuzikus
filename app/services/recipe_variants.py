@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import hashlib
 
 from sqlalchemy import case, func, select
@@ -22,6 +22,17 @@ from app.config import get_settings
 
 
 settings = get_settings()
+
+
+@dataclass(frozen=True)
+class RecommendationDecision:
+    state: str
+    score: int
+    reasons: list[str]
+    rank_bonus: int
+    policy_key: str
+    policy_label: str
+    blockers: list[str]
 
 
 DEFAULT_RECOMMENDATION_POLICIES: dict[str, dict[str, object]] = {
@@ -346,7 +357,7 @@ def derive_recommendation_state(
     market_production_run_count: int,
     strategy_production_score: int,
     strategy_production_run_count: int,
-) -> tuple[str, int, list[str], int]:
+) -> RecommendationDecision:
     policy = None
     thresholds = _source_strategy_thresholds(source_strategy)
     if isinstance(source_strategy, QueryRecipeRecommendationPolicy):
@@ -361,8 +372,11 @@ def derive_recommendation_state(
             "production_runs": int(policy.recommended_production_runs),
         }
     reasons: list[str] = []
+    blockers: list[str] = []
     recommendation_score = 0
     state = "experimental"
+    policy_key = str(getattr(policy, "policy_key", getattr(source_strategy, "value", "global") or "global"))
+    policy_label = str(getattr(policy, "label", getattr(source_strategy, "value", "Global Baseline") or "Global Baseline"))
 
     recommended_validation_score = int(getattr(policy, "recommended_validation_score", thresholds["validation_score"])) if policy is not None else thresholds["validation_score"]
     recommended_validation_runs = int(getattr(policy, "recommended_validation_runs", thresholds["validation_runs"])) if policy is not None else thresholds["validation_runs"]
@@ -403,8 +417,19 @@ def derive_recommendation_state(
     elif historical_validation_count:
         gap = max(0, recommended_validation_score - observed_validation_score)
         reasons.append(f"Validation is still {gap} point(s) below the promotion floor.")
+        blockers.append(
+            f"{policy_label}: validation score {observed_validation_score}/100 is below the recommended floor {recommended_validation_score}/100."
+        )
     else:
         reasons.append("No validation evidence yet.")
+        blockers.append(
+            f"{policy_label}: needs at least {recommended_validation_runs} validation run(s) before recommendation."
+        )
+
+    if 0 < historical_validation_count < recommended_validation_runs:
+        blockers.append(
+            f"{policy_label}: only {historical_validation_count} validation run(s); needs {recommended_validation_runs}."
+        )
 
     if production_run_count:
         recommendation_score += min(production_score // 5, 20)
@@ -412,8 +437,19 @@ def derive_recommendation_state(
             reasons.append("Production results meet the current strategy gate.")
         else:
             reasons.append("Production results exist, but are not yet strong enough for promotion.")
+            if production_run_count < recommended_production_runs:
+                blockers.append(
+                    f"{policy_label}: only {production_run_count} production run(s); needs {recommended_production_runs}."
+                )
+            if production_score < recommended_production_score:
+                blockers.append(
+                    f"{policy_label}: production score {production_score}/100 is below the recommended floor {recommended_production_score}/100."
+                )
     elif production_required:
         reasons.append("No production evidence yet for a strategy that requires it.")
+        blockers.append(
+            f"{policy_label}: needs at least {recommended_production_runs} production run(s) with score >= {recommended_production_score}/100."
+        )
 
     if market_production_run_count:
         recommendation_score += min(market_production_score // 8, 10)
@@ -432,6 +468,10 @@ def derive_recommendation_state(
     elif selection_signal:
         recommendation_score += min(selection_signal * 2, 8)
         reasons.append("Users repeatedly select this variant during planning.")
+    elif recommended_activation_count > 0:
+        blockers.append(
+            f"{policy_label}: needs at least {recommended_activation_count} planner or prompt activation signal(s)."
+        )
 
     if (
         historical_validation_count >= suppression_validation_runs_min
@@ -442,7 +482,10 @@ def derive_recommendation_state(
         state = "suppressed"
         recommendation_score = max(recommendation_score - 25, 0)
         reasons.append("Repeated validation and production evidence suggest this variant is weak.")
-        return state, recommendation_score, reasons, -20
+        blockers.append(
+            f"{policy_label}: suppression triggered by validation <= {suppression_validation_score_max}/100 and production <= {suppression_production_score_max}/100."
+        )
+        return RecommendationDecision(state, recommendation_score, reasons, -20, policy_key, policy_label, blockers)
 
     if (
         historical_validation_count >= trusted_validation_runs
@@ -453,15 +496,27 @@ def derive_recommendation_state(
     ):
         state = "trusted"
         reasons.append("This variant has both strong evidence and repeated downstream adoption.")
-        return state, recommendation_score, reasons, 12
+        return RecommendationDecision(state, recommendation_score, reasons, 12, policy_key, policy_label, blockers)
 
     if validation_ready and (production_ready or activation_signal >= recommended_activation_count or draft_signal >= max(recommended_activation_count, 1)):
         state = "recommended"
         reasons.append("This variant has enough evidence to recommend, but not yet enough to fully trust.")
-        return state, recommendation_score, reasons, 5
+        return RecommendationDecision(state, recommendation_score, reasons, 5, policy_key, policy_label, blockers)
 
     reasons.append("Keep this variant visible while more validation or production evidence accumulates.")
-    return state, recommendation_score, reasons, 0
+    if observed_validation_score < trusted_validation_score or historical_validation_count < trusted_validation_runs:
+        blockers.append(
+            f"{policy_label}: trusted state needs validation >= {trusted_validation_score}/100 across {trusted_validation_runs} run(s)."
+        )
+    if production_score < trusted_production_score or production_run_count < trusted_production_runs:
+        blockers.append(
+            f"{policy_label}: trusted state needs production >= {trusted_production_score}/100 across {trusted_production_runs} run(s)."
+        )
+    if activation_signal < trusted_activation_count:
+        blockers.append(
+            f"{policy_label}: trusted state needs {trusted_activation_count} activation signal(s)."
+        )
+    return RecommendationDecision(state, recommendation_score, reasons, 0, policy_key, policy_label, blockers)
 
 
 def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> list[DraftProposal]:
@@ -669,8 +724,7 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
                 f"{proposal.source_strategy.value} strategy yield {strategy_score}/100 across {strategy_runs} production run(s)"
                 + (f" in {prompt_market_country}." if prompt_market_country else ".")
             )
-        recommendation_state, recommendation_state_score, recommendation_reasons, recommendation_bonus = (
-            derive_recommendation_state(
+        recommendation = derive_recommendation_state(
                 observed_validation_score=observed_score,
                 historical_validation_count=total_runs,
                 production_score=production_score,
@@ -686,7 +740,6 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
                 strategy_production_score=strategy_score,
                 strategy_production_run_count=strategy_runs,
                 source_strategy=resolve_recommendation_policy(policy_map, proposal.source_strategy) or proposal.source_strategy,
-            )
         )
         adjusted.append(
             replace(
@@ -707,11 +760,14 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
                 market_production_run_count=market_runs,
                 strategy_production_score=strategy_score,
                 strategy_production_run_count=strategy_runs,
-                fit_score=proposal.template_score + proposal.prompt_match_score + validation_bonus + cluster_bonus + adoption_bonus + planner_conversion_bonus + production_bonus + market_bonus + strategy_bonus + recommendation_bonus,
+                fit_score=proposal.template_score + proposal.prompt_match_score + validation_bonus + cluster_bonus + adoption_bonus + planner_conversion_bonus + production_bonus + market_bonus + strategy_bonus + recommendation.rank_bonus,
                 fit_reasons=fit_reasons,
-                recommendation_state=recommendation_state,
-                recommendation_state_score=recommendation_state_score,
-                recommendation_reasons=recommendation_reasons,
+                recommendation_state=recommendation.state,
+                recommendation_state_score=recommendation.score,
+                recommendation_reasons=recommendation.reasons,
+                recommendation_policy_key=recommendation.policy_key,
+                recommendation_policy_label=recommendation.policy_label,
+                recommendation_blockers=recommendation.blockers,
             )
         )
 
