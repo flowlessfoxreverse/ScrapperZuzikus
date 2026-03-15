@@ -981,68 +981,6 @@ def ensure_recipe_schema(engine: Engine) -> None:
             "ON query_prompt_cluster_decisions(cluster_slug)"
         )
 
-    if "query_prompt_variant_decisions" not in tables:
-        if dialect == "postgresql":
-            statements.append(
-                "CREATE TABLE IF NOT EXISTS query_prompt_variant_decisions ("
-                "id SERIAL PRIMARY KEY, "
-                "prompt_text TEXT NOT NULL, "
-                "prompt_fingerprint VARCHAR(64) NOT NULL, "
-                "vertical VARCHAR(64) NOT NULL, "
-                "cluster_slug VARCHAR(64) NULL, "
-                "variant_key VARCHAR(96) NOT NULL, "
-                "source_variant_id INTEGER NULL, "
-                "selected_count INTEGER NOT NULL DEFAULT 0, "
-                "draft_created_count INTEGER NOT NULL DEFAULT 0, "
-                "activated_count INTEGER NOT NULL DEFAULT 0, "
-                "last_selected_at TIMESTAMP WITH TIME ZONE NULL, "
-                "last_drafted_at TIMESTAMP WITH TIME ZONE NULL, "
-                "last_activated_at TIMESTAMP WITH TIME ZONE NULL, "
-                "created_at TIMESTAMP WITH TIME ZONE NOT NULL, "
-                "updated_at TIMESTAMP WITH TIME ZONE NOT NULL"
-                ")"
-            )
-        else:
-            statements.append(
-                "CREATE TABLE IF NOT EXISTS query_prompt_variant_decisions ("
-                "id INTEGER PRIMARY KEY, "
-                "prompt_text TEXT NOT NULL, "
-                "prompt_fingerprint VARCHAR(64) NOT NULL, "
-                "vertical VARCHAR(64) NOT NULL, "
-                "cluster_slug VARCHAR(64) NULL, "
-                "variant_key VARCHAR(96) NOT NULL, "
-                "source_variant_id INTEGER NULL, "
-                "selected_count INTEGER NOT NULL DEFAULT 0, "
-                "draft_created_count INTEGER NOT NULL DEFAULT 0, "
-                "activated_count INTEGER NOT NULL DEFAULT 0, "
-                "last_selected_at TIMESTAMP NULL, "
-                "last_drafted_at TIMESTAMP NULL, "
-                "last_activated_at TIMESTAMP NULL, "
-                "created_at TIMESTAMP NOT NULL, "
-                "updated_at TIMESTAMP NOT NULL"
-                ")"
-            )
-        statements.append(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_prompt_variant_decision "
-            + (
-                "ON query_prompt_variant_decisions(prompt_fingerprint, variant_key, COALESCE(market_country_code, ''))"
-                if dialect == "postgresql"
-                else "ON query_prompt_variant_decisions(prompt_fingerprint, variant_key, market_country_code)"
-            )
-        )
-        statements.append(
-            "CREATE INDEX IF NOT EXISTS ix_query_prompt_variant_decisions_prompt_fingerprint "
-            "ON query_prompt_variant_decisions(prompt_fingerprint)"
-        )
-        statements.append(
-            "CREATE INDEX IF NOT EXISTS ix_query_prompt_variant_decisions_market_country_code "
-            "ON query_prompt_variant_decisions(market_country_code)"
-        )
-        statements.append(
-            "CREATE INDEX IF NOT EXISTS ix_query_prompt_variant_decisions_variant_key "
-            "ON query_prompt_variant_decisions(variant_key)"
-        )
-
     if "query_recipe_variant_run_stats" not in tables:
         if dialect == "postgresql":
             statements.append(
