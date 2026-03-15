@@ -316,6 +316,7 @@ class RecommendationPolicySimulationRow:
     form_values: dict[str, object]
     impact_parts: list[str]
     summary: str
+    learning_summary: str
 
 
 @dataclass
@@ -348,6 +349,17 @@ class RecommendationPolicyExperimentScoreboardRow:
     degraded_count: int
     insufficient_data_count: int
     avg_delta: int | None
+
+
+@dataclass
+class RecommendationPolicyExperimentLearning:
+    improved_count: int
+    neutral_count: int
+    degraded_count: int
+    insufficient_data_count: int
+    avg_delta: int | None
+    adjustment_factor: float
+    summary: str
 
 
 @dataclass
@@ -1135,6 +1147,7 @@ def build_recommendation_policy_simulation_rows(db: Session) -> list[Recommendat
                     form_values={},
                     impact_parts=["No variants yet"],
                     summary="No recipe variants exist for this policy scope yet.",
+                    learning_summary="No suggestion history available for this policy scope.",
                 )
             )
             continue
@@ -1174,6 +1187,39 @@ def build_recommendation_policy_simulation_rows(db: Session) -> list[Recommendat
         suggested_trusted_activations = max(
             suggested_recommended_activations + 1,
             min(5, _percentile_int(activation_counts, 0.75) if activation_counts else policy.trusted_activation_count),
+        )
+
+        learning = recommendation_policy_experiment_learning(db, policy)
+
+        def blend_threshold(current_value: int, suggested_value: int) -> int:
+            blended = current_value + round((suggested_value - current_value) * learning.adjustment_factor)
+            return max(0, blended)
+
+        suggested_recommended_validation = max(25, min(95, blend_threshold(policy.recommended_validation_score, suggested_recommended_validation)))
+        suggested_trusted_validation = max(
+            suggested_recommended_validation + 5,
+            min(100, blend_threshold(policy.trusted_validation_score, suggested_trusted_validation)),
+        )
+        suggested_recommended_production = max(5, min(95, blend_threshold(policy.recommended_production_score, suggested_recommended_production)))
+        suggested_trusted_production = max(
+            suggested_recommended_production + 5,
+            min(100, blend_threshold(policy.trusted_production_score, suggested_trusted_production)),
+        )
+        suggested_suppression_validation = max(
+            0,
+            min(suggested_recommended_validation - 5, blend_threshold(policy.suppression_validation_score_max, suggested_suppression_validation)),
+        )
+        suggested_suppression_production = max(
+            0,
+            min(suggested_recommended_production - 3, blend_threshold(policy.suppression_production_score_max, suggested_suppression_production)),
+        )
+        suggested_recommended_activations = max(
+            0,
+            min(3, blend_threshold(policy.recommended_activation_count, suggested_recommended_activations)),
+        )
+        suggested_trusted_activations = max(
+            suggested_recommended_activations + 1,
+            min(5, blend_threshold(policy.trusted_activation_count, suggested_trusted_activations)),
         )
 
         simulated_policy = SimpleNamespace(
@@ -1252,6 +1298,7 @@ def build_recommendation_policy_simulation_rows(db: Session) -> list[Recommendat
                 },
                 impact_parts=impact_parts,
                 summary=summary,
+                learning_summary=learning.summary,
             )
         )
     return rows
@@ -1361,6 +1408,82 @@ def build_recommendation_policy_experiment_scoreboard(
             )
         )
     return scoreboard_rows
+
+
+def recommendation_policy_experiment_learning(
+    db: Session,
+    policy: QueryRecipeRecommendationPolicy,
+    *,
+    limit: int = 12,
+) -> RecommendationPolicyExperimentLearning:
+    audits = db.scalars(
+        select(QueryRecipeRecommendationPolicyAudit)
+        .where(QueryRecipeRecommendationPolicyAudit.policy_key == policy.policy_key)
+        .where(QueryRecipeRecommendationPolicyAudit.change_kind == "suggested_accept")
+        .order_by(QueryRecipeRecommendationPolicyAudit.changed_at.desc())
+        .limit(limit)
+    ).all()
+    if not audits:
+        return RecommendationPolicyExperimentLearning(
+            improved_count=0,
+            neutral_count=0,
+            degraded_count=0,
+            insufficient_data_count=0,
+            avg_delta=None,
+            adjustment_factor=1.0,
+            summary="No accepted suggestion history yet; using neutral simulation bias.",
+        )
+
+    now = datetime.now(timezone.utc)
+    outcomes: list[tuple[str, int | None]] = []
+    for audit in audits:
+        before_window = recommendation_policy_window_snapshot(
+            db,
+            policy,
+            audit.changed_at - timedelta(days=7),
+            audit.changed_at,
+        )
+        after_window = recommendation_policy_window_snapshot(
+            db,
+            policy,
+            audit.changed_at,
+            min(audit.changed_at + timedelta(days=7), now),
+        )
+        outcome, delta, _ = classify_recommendation_policy_outcome(before_window, after_window)
+        outcomes.append((outcome, delta))
+
+    improved_count = sum(1 for outcome, _ in outcomes if outcome == "improved")
+    neutral_count = sum(1 for outcome, _ in outcomes if outcome == "neutral")
+    degraded_count = sum(1 for outcome, _ in outcomes if outcome == "degraded")
+    insufficient_data_count = sum(1 for outcome, _ in outcomes if outcome == "insufficient_data")
+    deltas = [delta for _, delta in outcomes if delta is not None]
+    avg_delta = round(sum(deltas) / len(deltas)) if deltas else None
+
+    if improved_count > degraded_count and (avg_delta or 0) >= 3:
+        adjustment_factor = 1.15
+        summary = (
+            f"Accepted suggestions improved {improved_count} time(s) vs {degraded_count} degraded; "
+            "simulator leans more aggressively."
+        )
+    elif degraded_count > improved_count and (avg_delta or 0) <= -3:
+        adjustment_factor = 0.5
+        summary = (
+            f"Accepted suggestions degraded {degraded_count} time(s) vs {improved_count} improved; "
+            "simulator is pulling closer to current thresholds."
+        )
+    else:
+        adjustment_factor = 0.75
+        summary = "Accepted suggestion history is mixed, so simulation uses a moderate bias."
+
+    return RecommendationPolicyExperimentLearning(
+        improved_count=improved_count,
+        neutral_count=neutral_count,
+        degraded_count=degraded_count,
+        insufficient_data_count=insufficient_data_count,
+        avg_delta=avg_delta,
+        adjustment_factor=adjustment_factor,
+        summary=summary,
+    )
 
 
 def build_recommendation_policy_audit_rows(db: Session, limit: int = 20) -> list[RecommendationPolicyAuditRow]:

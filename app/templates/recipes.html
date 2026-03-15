@@ -288,6 +288,7 @@
               <th>Suggested Thresholds</th>
               <th>Simulated State Mix</th>
               <th>Projected Delta</th>
+              <th>Learning Bias</th>
               <th>Recommendation</th>
               <th>Apply</th>
             </tr>
@@ -303,6 +304,7 @@
               <td><code>{{ row.suggested_thresholds }}</code></td>
               <td><code>{{ row.simulated_state_mix }}</code></td>
               <td>{{ row.impact_parts|join(", ") }}</td>
+              <td>{{ row.learning_summary }}</td>
               <td>{{ row.summary }}</td>
               <td>
                 {% if row.form_values %}
@@ -319,7 +321,7 @@
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="7">No policy simulations available yet.</td></tr>
+            <tr><td colspan="8">No policy simulations available yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>
