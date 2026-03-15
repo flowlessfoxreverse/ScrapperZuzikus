@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Recipe Evaluations</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Planner Evaluation</p>
+          <h1>Recipe Prompt Benchmarks</h1>
+          <p class="subtle">Battle test heuristic and LLM planners against the same prompt set before trusting live prompt generation.</p>
+        </div>
+        <div class="hero-actions">
+          <a class="ghost-button" href="/recipes">Back to Recipes</a>
+          <a class="ghost-button" href="/">Dashboard</a>
+        </div>
+      </section>
+
+      <section class="panel">
+        {% if message %}
+        <div class="notice">{{ message }}</div>
+        {% endif %}
+        {% if error %}
+        <div class="notice warn">{{ error }}</div>
+        {% endif %}
+        <div class="section-heading">
+          <h2>Planner Run Controls</h2>
+          <span>Select which planner configuration the benchmark buttons should use.</span>
+        </div>
+        <form action="/recipe-evals" method="get" class="run-form">
+          <div class="run-grid">
+            <label>
+              <span>Planner Provider</span>
+              <select name="planner_provider">
+                {% for provider in planner_provider_options %}
+                <option value="{{ provider }}" {% if planner_provider == provider %}selected{% endif %}>{{ provider }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>
+              <span>Planner Model</span>
+              <input type="text" name="planner_model" value="{{ planner_model }}" placeholder="Model override" />
+            </label>
+          </div>
+          <button type="submit">Update Run Controls</button>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Benchmark Dataset</h2>
+          <span>Store a reusable prompt set with expected cluster and variant hints.</span>
+        </div>
+        <form action="/recipe-evals/prompts" method="post" class="run-form">
+          <label>
+            <span>Prompt</span>
+            <textarea name="prompt_text" rows="3" placeholder="Complete beauty experience in Thailand"></textarea>
+          </label>
+          <div class="run-grid">
+            <label>
+              <span>Market</span>
+              <input type="text" name="market_country_code" placeholder="TH" maxlength="2" />
+            </label>
+            <label>
+              <span>Expected Vertical</span>
+              <input type="text" name="expected_vertical" placeholder="beauty" />
+            </label>
+            <label>
+              <span>Expected Cluster</span>
+              <input type="text" name="expected_cluster_slug" placeholder="beauty_services" />
+            </label>
+            <label>
+              <span>Expected Variant Keys</span>
+              <input type="text" name="expected_variant_keys" placeholder="hair-salon,nail-salon,spa" />
+            </label>
+          </div>
+          <label>
+            <span>Notes</span>
+            <input type="text" name="notes" placeholder="Why this prompt matters / what good output looks like" />
+          </label>
+          <button type="submit">Add Benchmark Prompt</button>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Planner Summary</h2>
+          <span>Aggregate scorecard across all scored benchmark runs.</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Model</th>
+              <th>Evals</th>
+              <th>Scored</th>
+              <th>Avg Cluster</th>
+              <th>Avg Variants</th>
+              <th>Avg Overall</th>
+              <th>Latest Eval</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in provider_summary_rows %}
+            <tr>
+              <td>{{ row.provider }}</td>
+              <td>{{ row.model_name }}</td>
+              <td>{{ row.eval_count }}</td>
+              <td>{{ row.scored_eval_count }}</td>
+              <td>{{ row.avg_cluster_judgement if row.avg_cluster_judgement is not none else "-" }}</td>
+              <td>{{ row.avg_variant_judgement if row.avg_variant_judgement is not none else "-" }}</td>
+              <td>{{ row.avg_overall_judgement if row.avg_overall_judgement is not none else "-" }}</td>
+              <td>{{ row.latest_eval_at.strftime("%Y-%m-%d %H:%M") if row.latest_eval_at else "-" }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="8">No benchmark evaluations yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Benchmark Prompts</h2>
+          <span>Run planners against stored prompts and compare outcomes over time.</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Prompt</th>
+              <th>Expected</th>
+              <th>Market</th>
+              <th>Evals</th>
+              <th>Last Eval</th>
+              <th>Run</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in benchmark_prompts %}
+            <tr>
+              <td>
+                <strong>{{ row.prompt_text }}</strong><br />
+                {% if row.notes %}<span class="subtle">{{ row.notes }}</span>{% endif %}
+              </td>
+              <td>
+                <span class="subtle">Vertical</span> {{ row.expected_vertical or "-" }}<br />
+                <span class="subtle">Cluster</span> {{ row.expected_cluster_slug or "-" }}<br />
+                <span class="subtle">Variants</span>
+                {% if row.expected_variant_keys %}{{ row.expected_variant_keys|join(", ") }}{% else %}-{% endif %}
+              </td>
+              <td>{{ row.market_country_code or "-" }}</td>
+              <td>{{ row.scored_eval_count }}/{{ row.eval_count }}</td>
+              <td>{{ row.last_eval_at.strftime("%Y-%m-%d %H:%M") if row.last_eval_at else "-" }}</td>
+              <td>
+                <form action="/recipe-evals/{{ row.id }}/run" method="post" class="inline-form">
+                  <input type="hidden" name="planner_provider" value="{{ planner_provider }}" />
+                  <input type="hidden" name="planner_model" value="{{ planner_model }}" />
+                  <label class="inline-checkbox">
+                    <input type="checkbox" name="compare_with_heuristic" value="true" />
+                    <span>+ heuristic</span>
+                  </label>
+                  <button type="submit">Run Eval</button>
+                </form>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6">No benchmark prompts defined yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Recent Evaluations</h2>
+          <span>Open an eval row to score cluster choice and variant usefulness.</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Prompt</th>
+              <th>Provider</th>
+              <th>Chosen Cluster</th>
+              <th>Top Variants</th>
+              <th>Scores</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in recent_evals %}
+            <tr>
+              <td>
+                <strong>{{ row.prompt_text }}</strong><br />
+                <span class="subtle">{{ row.market_country_code or "-" }} | {{ row.created_at.strftime("%Y-%m-%d %H:%M") }}</span>
+              </td>
+              <td>{{ row.provider }} / {{ row.model_name }}</td>
+              <td>{{ row.chosen_cluster_slug or "-" }}<br /><span class="subtle">score {{ row.cluster_score }}</span></td>
+              <td>
+                {% if row.top_variant_keys %}{{ row.top_variant_keys|join(", ") }}{% else %}-{% endif %}
+              </td>
+              <td>
+                <span class="subtle">Cluster</span> {{ row.cluster_judgement if row.cluster_judgement is not none else "-" }}<br />
+                <span class="subtle">Variants</span> {{ row.variant_judgement if row.variant_judgement is not none else "-" }}<br />
+                <span class="subtle">Overall</span> {{ row.overall_judgement if row.overall_judgement is not none else "-" }}
+              </td>
+              <td>
+                <a class="ghost-button" href="/recipe-evals?eval_id={{ row.id }}&planner_provider={{ planner_provider }}&planner_model={{ planner_model }}">Review</a>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6">No evaluations yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      {% if selected_eval_row %}
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Score Evaluation</h2>
+          <span>Judge whether the planner chose the right cluster and surfaced useful variants.</span>
+        </div>
+        <div class="country-summary">
+          <div class="stat-card">
+            <span class="subtle">Prompt</span>
+            <strong>{{ selected_eval_row.prompt_text }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Provider</span>
+            <strong>{{ selected_eval_row.provider }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Model</span>
+            <strong>{{ selected_eval_row.model_name }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Chosen Cluster</span>
+            <strong>{{ selected_eval_row.chosen_cluster_slug or "-" }}</strong>
+          </div>
+        </div>
+        <table>
+          <tbody>
+            <tr><th>Expected Vertical</th><td>{{ selected_eval_row.expected_vertical or "-" }}</td></tr>
+            <tr><th>Expected Cluster</th><td>{{ selected_eval_row.expected_cluster_slug or "-" }}</td></tr>
+            <tr><th>Expected Variants</th><td>{% if selected_eval_row.expected_variant_keys %}{{ selected_eval_row.expected_variant_keys|join(", ") }}{% else %}-{% endif %}</td></tr>
+            <tr><th>Default Variant</th><td>{{ selected_eval_row.default_variant_key or "-" }}</td></tr>
+            <tr><th>Top Variants</th><td>{% if selected_eval_row.top_variant_keys %}{{ selected_eval_row.top_variant_keys|join(", ") }}{% else %}-{% endif %}</td></tr>
+            <tr><th>Planner Summary</th><td><code>{{ selected_eval_row.planner_summary }}</code></td></tr>
+          </tbody>
+        </table>
+        <form action="/recipe-evals/{{ selected_eval_row.id }}/score" method="post" class="run-form">
+          <div class="run-grid">
+            <label>
+              <span>Cluster Judgement (0-5)</span>
+              <input type="number" min="0" max="5" name="cluster_judgement" value="{{ selected_eval_row.cluster_judgement if selected_eval_row.cluster_judgement is not none else 0 }}" />
+            </label>
+            <label>
+              <span>Variant Judgement (0-5)</span>
+              <input type="number" min="0" max="5" name="variant_judgement" value="{{ selected_eval_row.variant_judgement if selected_eval_row.variant_judgement is not none else 0 }}" />
+            </label>
+            <label>
+              <span>Overall Judgement (0-5)</span>
+              <input type="number" min="0" max="5" name="overall_judgement" value="{{ selected_eval_row.overall_judgement if selected_eval_row.overall_judgement is not none else 0 }}" />
+            </label>
+          </div>
+          <label>
+            <span>Scoring Notes</span>
+            <textarea name="scoring_notes" rows="3" placeholder="Why this output is good or bad">{{ selected_eval_row.scoring_notes or "" }}</textarea>
+          </label>
+          <button type="submit">Save Score</button>
+        </form>
+      </section>
+      {% endif %}
+    </main>
+  </body>
+</html>

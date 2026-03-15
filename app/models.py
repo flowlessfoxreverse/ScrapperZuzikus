@@ -363,6 +363,56 @@ class QueryRecipePlan(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
+class QueryRecipeBenchmarkPrompt(Base):
+    __tablename__ = "query_recipe_benchmark_prompts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    prompt_text: Mapped[str] = mapped_column(Text)
+    prompt_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    market_country_code: Mapped[str | None] = mapped_column(String(2), nullable=True, index=True)
+    expected_vertical: Mapped[str | None] = mapped_column(String(64), ForeignKey("taxonomy_verticals.slug"), nullable=True, index=True)
+    expected_cluster_slug: Mapped[str | None] = mapped_column(String(64), ForeignKey("niche_clusters.slug"), nullable=True, index=True)
+    expected_variant_keys: Mapped[list[str]] = mapped_column(JSON, default=list)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    vertical_ref: Mapped["TaxonomyVertical | None"] = relationship(foreign_keys=[expected_vertical])
+    cluster_ref: Mapped["NicheCluster | None"] = relationship(foreign_keys=[expected_cluster_slug])
+
+
+class QueryRecipeBenchmarkEval(Base):
+    __tablename__ = "query_recipe_benchmark_evals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    benchmark_prompt_id: Mapped[int] = mapped_column(ForeignKey("query_recipe_benchmark_prompts.id"), index=True)
+    plan_id: Mapped[int | None] = mapped_column(ForeignKey("query_recipe_plans.id"), nullable=True, index=True)
+    requested_provider: Mapped[str] = mapped_column(String(32), index=True)
+    provider: Mapped[str] = mapped_column(String(32), index=True)
+    model_name: Mapped[str] = mapped_column(String(64), index=True)
+    market_country_code: Mapped[str | None] = mapped_column(String(2), nullable=True, index=True)
+    chosen_vertical: Mapped[str | None] = mapped_column(String(64), ForeignKey("taxonomy_verticals.slug"), nullable=True, index=True)
+    chosen_cluster_slug: Mapped[str | None] = mapped_column(String(64), ForeignKey("niche_clusters.slug"), nullable=True, index=True)
+    cluster_score: Mapped[int] = mapped_column(Integer, default=0)
+    top_variant_keys: Mapped[list[str]] = mapped_column(JSON, default=list)
+    default_variant_key: Mapped[str | None] = mapped_column(String(96), nullable=True)
+    variant_count: Mapped[int] = mapped_column(Integer, default=0)
+    planner_summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    cluster_judgement: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    variant_judgement: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    overall_judgement: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    scoring_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    benchmark_prompt: Mapped["QueryRecipeBenchmarkPrompt"] = relationship(foreign_keys=[benchmark_prompt_id])
+    plan: Mapped["QueryRecipePlan | None"] = relationship(foreign_keys=[plan_id])
+    vertical_ref: Mapped["TaxonomyVertical | None"] = relationship(foreign_keys=[chosen_vertical])
+    cluster_ref: Mapped["NicheCluster | None"] = relationship(foreign_keys=[chosen_cluster_slug])
+
+
 class QueryRecipePlanVariantOutcome(Base):
     __tablename__ = "query_recipe_plan_variant_outcomes"
     __table_args__ = (

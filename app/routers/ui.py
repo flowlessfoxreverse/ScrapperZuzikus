@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import Category, Company, ContactChannel, ContactChannelType, Email, NicheCluster, Phone, ProxyEndpoint, ProxyKind, QueryRecipe, QueryRecipePlanVariantOutcome, QueryRecipeRecommendationPolicy, QueryRecipeRecommendationPolicyAudit, QueryRecipeValidation, QueryRecipeVariant, QueryRecipeVariantRunStat, QueryRecipeVariantTemplate, QueryRecipeVersion, RecipeAdapter, RecipeSourceStrategy, RecipeStatus, Region, RequestMetric, RunCategory, RunStatus, ScrapeRun, TaxonomyVertical, ValidationStatus
+from app.models import Category, Company, ContactChannel, ContactChannelType, Email, NicheCluster, Phone, ProxyEndpoint, ProxyKind, QueryRecipe, QueryRecipeBenchmarkEval, QueryRecipeBenchmarkPrompt, QueryRecipePlanVariantOutcome, QueryRecipeRecommendationPolicy, QueryRecipeRecommendationPolicyAudit, QueryRecipeValidation, QueryRecipeVariant, QueryRecipeVariantRunStat, QueryRecipeVariantTemplate, QueryRecipeVersion, RecipeAdapter, RecipeSourceStrategy, RecipeStatus, Region, RequestMetric, RunCategory, RunStatus, ScrapeRun, TaxonomyVertical, ValidationStatus
 from app.schemas import EmailRow
 from app.services.category_recipes import latest_recipe_version, sync_recipe_to_category, upsert_recipe_backed_category
 from app.services.host_suppression import normalize_host_key
@@ -399,6 +399,60 @@ class PlannerConversionSummaryRow:
     selected_rate: int
     drafted_rate: int
     activated_rate: int
+
+
+@dataclass
+class RecipeBenchmarkPromptRow:
+    id: int
+    prompt_text: str
+    market_country_code: str | None
+    expected_vertical: str | None
+    expected_cluster_slug: str | None
+    expected_variant_keys: list[str]
+    notes: str | None
+    is_active: bool
+    eval_count: int
+    scored_eval_count: int
+    last_eval_at: datetime | None
+
+
+@dataclass
+class RecipeBenchmarkEvalRow:
+    id: int
+    benchmark_prompt_id: int
+    prompt_text: str
+    market_country_code: str | None
+    requested_provider: str
+    provider: str
+    model_name: str
+    chosen_vertical: str | None
+    chosen_cluster_slug: str | None
+    cluster_score: int
+    top_variant_keys: list[str]
+    default_variant_key: str | None
+    variant_count: int
+    cluster_judgement: int | None
+    variant_judgement: int | None
+    overall_judgement: int | None
+    scoring_notes: str | None
+    created_at: datetime
+    scored_at: datetime | None
+    expected_vertical: str | None
+    expected_cluster_slug: str | None
+    expected_variant_keys: list[str]
+    planner_summary: dict[str, object]
+
+
+@dataclass
+class RecipeBenchmarkProviderSummaryRow:
+    provider: str
+    model_name: str
+    eval_count: int
+    scored_eval_count: int
+    avg_cluster_judgement: float | None
+    avg_variant_judgement: float | None
+    avg_overall_judgement: float | None
+    latest_eval_at: datetime | None
 
 
 def taxonomy_context(db: Session) -> tuple[list[TaxonomyVertical], list[NicheCluster]]:
@@ -2014,6 +2068,126 @@ def build_planner_conversion_summary(
     )
 
 
+def build_recipe_benchmark_prompt_rows(db: Session) -> list[RecipeBenchmarkPromptRow]:
+    eval_rows = {
+        prompt_id: (int(eval_count or 0), int(scored_count or 0), last_eval_at)
+        for prompt_id, eval_count, scored_count, last_eval_at in db.execute(
+            select(
+                QueryRecipeBenchmarkEval.benchmark_prompt_id,
+                func.count(QueryRecipeBenchmarkEval.id),
+                func.count(case((QueryRecipeBenchmarkEval.overall_judgement.is_not(None), 1))),
+                func.max(QueryRecipeBenchmarkEval.created_at),
+            )
+            .group_by(QueryRecipeBenchmarkEval.benchmark_prompt_id)
+        ).all()
+    }
+    prompts = db.scalars(
+        select(QueryRecipeBenchmarkPrompt).order_by(
+            desc(QueryRecipeBenchmarkPrompt.is_active),
+            QueryRecipeBenchmarkPrompt.prompt_text,
+        )
+    ).all()
+    rows: list[RecipeBenchmarkPromptRow] = []
+    for prompt in prompts:
+        eval_count, scored_eval_count, last_eval_at = eval_rows.get(prompt.id, (0, 0, None))
+        rows.append(
+            RecipeBenchmarkPromptRow(
+                id=prompt.id,
+                prompt_text=prompt.prompt_text,
+                market_country_code=prompt.market_country_code,
+                expected_vertical=prompt.expected_vertical,
+                expected_cluster_slug=prompt.expected_cluster_slug,
+                expected_variant_keys=list(prompt.expected_variant_keys or []),
+                notes=prompt.notes,
+                is_active=prompt.is_active,
+                eval_count=eval_count,
+                scored_eval_count=scored_eval_count,
+                last_eval_at=last_eval_at,
+            )
+        )
+    return rows
+
+
+def build_recipe_benchmark_eval_rows(db: Session, limit: int = 30) -> list[RecipeBenchmarkEvalRow]:
+    evals = db.scalars(
+        select(QueryRecipeBenchmarkEval)
+        .order_by(QueryRecipeBenchmarkEval.created_at.desc())
+        .limit(limit)
+    ).all()
+    prompt_ids = {row.benchmark_prompt_id for row in evals}
+    prompts = {
+        row.id: row
+        for row in db.scalars(
+            select(QueryRecipeBenchmarkPrompt).where(QueryRecipeBenchmarkPrompt.id.in_(prompt_ids))
+        ).all()
+    } if prompt_ids else {}
+    rows: list[RecipeBenchmarkEvalRow] = []
+    for row in evals:
+        prompt = prompts.get(row.benchmark_prompt_id)
+        rows.append(
+            RecipeBenchmarkEvalRow(
+                id=row.id,
+                benchmark_prompt_id=row.benchmark_prompt_id,
+                prompt_text=prompt.prompt_text if prompt else "",
+                market_country_code=row.market_country_code,
+                requested_provider=row.requested_provider,
+                provider=row.provider,
+                model_name=row.model_name,
+                chosen_vertical=row.chosen_vertical,
+                chosen_cluster_slug=row.chosen_cluster_slug,
+                cluster_score=row.cluster_score,
+                top_variant_keys=list(row.top_variant_keys or []),
+                default_variant_key=row.default_variant_key,
+                variant_count=row.variant_count,
+                cluster_judgement=row.cluster_judgement,
+                variant_judgement=row.variant_judgement,
+                overall_judgement=row.overall_judgement,
+                scoring_notes=row.scoring_notes,
+                created_at=row.created_at,
+                scored_at=row.scored_at,
+                expected_vertical=prompt.expected_vertical if prompt else None,
+                expected_cluster_slug=prompt.expected_cluster_slug if prompt else None,
+                expected_variant_keys=list(prompt.expected_variant_keys or []) if prompt else [],
+                planner_summary=dict(row.planner_summary or {}),
+            )
+        )
+    return rows
+
+
+def build_recipe_benchmark_provider_summary_rows(db: Session) -> list[RecipeBenchmarkProviderSummaryRow]:
+    rows = db.execute(
+        select(
+            QueryRecipeBenchmarkEval.provider,
+            QueryRecipeBenchmarkEval.model_name,
+            func.count(QueryRecipeBenchmarkEval.id),
+            func.count(case((QueryRecipeBenchmarkEval.overall_judgement.is_not(None), 1))),
+            func.avg(QueryRecipeBenchmarkEval.cluster_judgement),
+            func.avg(QueryRecipeBenchmarkEval.variant_judgement),
+            func.avg(QueryRecipeBenchmarkEval.overall_judgement),
+            func.max(QueryRecipeBenchmarkEval.created_at),
+        )
+        .group_by(QueryRecipeBenchmarkEval.provider, QueryRecipeBenchmarkEval.model_name)
+        .order_by(
+            desc(func.count(QueryRecipeBenchmarkEval.id)),
+            QueryRecipeBenchmarkEval.provider,
+            QueryRecipeBenchmarkEval.model_name,
+        )
+    ).all()
+    return [
+        RecipeBenchmarkProviderSummaryRow(
+            provider=provider,
+            model_name=model_name,
+            eval_count=int(eval_count or 0),
+            scored_eval_count=int(scored_eval_count or 0),
+            avg_cluster_judgement=(round(float(avg_cluster), 2) if avg_cluster is not None else None),
+            avg_variant_judgement=(round(float(avg_variant), 2) if avg_variant is not None else None),
+            avg_overall_judgement=(round(float(avg_overall), 2) if avg_overall is not None else None),
+            latest_eval_at=latest_eval_at,
+        )
+        for provider, model_name, eval_count, scored_eval_count, avg_cluster, avg_variant, avg_overall, latest_eval_at in rows
+    ]
+
+
 def activation_gate_errors(recipe: QueryRecipe, version: QueryRecipeVersion) -> list[str]:
     errors: list[str] = []
     thresholds = source_strategy_thresholds(version.source_strategy)
@@ -2426,6 +2600,161 @@ def recipe_editor(
                 "production_runs": settings.recipe_activation_min_production_runs,
             },
         },
+    )
+
+
+@router.get("/recipe-evals", response_class=HTMLResponse)
+def recipe_eval_console(
+    request: Request,
+    message: str | None = None,
+    error: str | None = None,
+    eval_id: int | None = None,
+    planner_provider: str | None = None,
+    planner_model: str | None = None,
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    selected_eval = None
+    if eval_id is not None:
+        selected_eval = db.scalar(select(QueryRecipeBenchmarkEval).where(QueryRecipeBenchmarkEval.id == eval_id))
+    return templates.TemplateResponse(
+        request=request,
+        name="recipe_evals.html",
+        context={
+            "message": message,
+            "error": error,
+            "planner_provider": planner_provider or settings.recipe_planner_provider,
+            "planner_model": planner_model or (
+                settings.recipe_planner_openai_model
+                if (planner_provider or settings.recipe_planner_provider).strip().lower() == "openai"
+                else settings.recipe_planner_model
+            ),
+            "planner_provider_options": RECIPE_PLANNER_PROVIDER_OPTIONS,
+            "benchmark_prompts": build_recipe_benchmark_prompt_rows(db),
+            "recent_evals": build_recipe_benchmark_eval_rows(db),
+            "provider_summary_rows": build_recipe_benchmark_provider_summary_rows(db),
+            "selected_eval": selected_eval,
+            "selected_eval_row": next((row for row in build_recipe_benchmark_eval_rows(db, limit=200) if row.id == eval_id), None) if eval_id is not None else None,
+        },
+    )
+
+
+@router.post("/recipe-evals/prompts", response_class=HTMLResponse)
+def create_recipe_benchmark_prompt(
+    prompt_text: str = Form(...),
+    market_country_code: str = Form(""),
+    expected_vertical: str = Form(""),
+    expected_cluster_slug: str = Form(""),
+    expected_variant_keys: str = Form(""),
+    notes: str = Form(""),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    prompt_text = prompt_text.strip()
+    if not prompt_text:
+        return RedirectResponse(url="/recipe-evals?error=Prompt%20is%20required.", status_code=303)
+    expected_variants = [item.strip() for item in expected_variant_keys.split(",") if item.strip()]
+    db.add(
+        QueryRecipeBenchmarkPrompt(
+            prompt_text=prompt_text,
+            prompt_fingerprint=prompt_fingerprint(prompt_text),
+            market_country_code=market_country_code.strip().upper() or None,
+            expected_vertical=expected_vertical.strip() or None,
+            expected_cluster_slug=expected_cluster_slug.strip() or None,
+            expected_variant_keys=expected_variants,
+            notes=notes.strip() or None,
+            is_active=True,
+        )
+    )
+    db.commit()
+    return RedirectResponse(url="/recipe-evals?message=Benchmark%20prompt%20added.", status_code=303)
+
+
+@router.post("/recipe-evals/{prompt_id}/run", response_class=HTMLResponse)
+def run_recipe_benchmark_eval(
+    prompt_id: int,
+    planner_provider: str | None = Form(None),
+    planner_model: str | None = Form(None),
+    compare_with_heuristic: bool = Form(False),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    prompt = db.scalar(select(QueryRecipeBenchmarkPrompt).where(QueryRecipeBenchmarkPrompt.id == prompt_id))
+    if prompt is None:
+        return RedirectResponse(url="/recipe-evals?error=Benchmark%20prompt%20not%20found.", status_code=303)
+
+    def persist_eval(plan_result) -> QueryRecipeBenchmarkEval:
+        planner_summary = build_planner_info(plan_result)
+        row = QueryRecipeBenchmarkEval(
+            benchmark_prompt_id=prompt.id,
+            plan_id=plan_result.plan_id,
+            requested_provider=plan_result.requested_provider,
+            provider=plan_result.provider,
+            model_name=plan_result.model_name,
+            market_country_code=plan_result.market_country_code,
+            chosen_vertical=plan_result.cluster_choice.vertical,
+            chosen_cluster_slug=plan_result.cluster_choice.cluster_slug,
+            cluster_score=plan_result.cluster_choice.score,
+            top_variant_keys=[variant.variant_key for variant in plan_result.draft_variants[:5]],
+            default_variant_key=plan_result.draft_proposal.variant_key,
+            variant_count=len(plan_result.draft_variants),
+            planner_summary=planner_summary,
+        )
+        db.add(row)
+        db.flush()
+        return row
+
+    try:
+        plan = plan_recipe_prompt(
+            db,
+            prompt.prompt_text,
+            requested_provider=planner_provider,
+            requested_model=planner_model,
+        )
+        created = [persist_eval(plan)]
+        if compare_with_heuristic and plan.requested_provider != "heuristic":
+            compare_plan = plan_recipe_prompt(
+                db,
+                prompt.prompt_text,
+                requested_provider="heuristic",
+            )
+            created.append(persist_eval(compare_plan))
+        db.commit()
+    except (ValueError, RuntimeError) as exc:
+        db.rollback()
+        return RedirectResponse(url=f"/recipe-evals?error={quote_plus(str(exc)[:200])}", status_code=303)
+
+    message = f"Ran {len(created)} planner evaluation(s) for benchmark prompt."
+    return RedirectResponse(
+        url=(
+            f"/recipe-evals?message={quote_plus(message)}"
+            f"&eval_id={created[0].id}"
+            f"&planner_provider={quote_plus(plan.requested_provider)}"
+            f"&planner_model={quote_plus(plan.requested_model)}"
+        ),
+        status_code=303,
+    )
+
+
+@router.post("/recipe-evals/{eval_id}/score", response_class=HTMLResponse)
+def score_recipe_benchmark_eval(
+    eval_id: int,
+    cluster_judgement: int = Form(...),
+    variant_judgement: int = Form(...),
+    overall_judgement: int = Form(...),
+    scoring_notes: str = Form(""),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    row = db.scalar(select(QueryRecipeBenchmarkEval).where(QueryRecipeBenchmarkEval.id == eval_id))
+    if row is None:
+        return RedirectResponse(url="/recipe-evals?error=Evaluation%20not%20found.", status_code=303)
+    row.cluster_judgement = max(0, min(int(cluster_judgement), 5))
+    row.variant_judgement = max(0, min(int(variant_judgement), 5))
+    row.overall_judgement = max(0, min(int(overall_judgement), 5))
+    row.scoring_notes = scoring_notes.strip() or None
+    row.scored_at = datetime.now(timezone.utc)
+    db.add(row)
+    db.commit()
+    return RedirectResponse(
+        url=f"/recipe-evals?message=Evaluation%20scored.&eval_id={eval_id}",
+        status_code=303,
     )
 
 

@@ -675,6 +675,122 @@ def ensure_recipe_schema(engine: Engine) -> None:
             statements.append("ALTER TABLE query_recipe_plans ADD COLUMN market_country_code VARCHAR(2) NULL")
         statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_plans_market_country_code ON query_recipe_plans(market_country_code)")
 
+    if "query_recipe_benchmark_prompts" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_recipe_benchmark_prompts ("
+                "id SERIAL PRIMARY KEY, "
+                "prompt_text TEXT NOT NULL, "
+                "prompt_fingerprint VARCHAR(64) NOT NULL, "
+                "market_country_code VARCHAR(2) NULL, "
+                "expected_vertical VARCHAR(64) NULL REFERENCES taxonomy_verticals(slug), "
+                "expected_cluster_slug VARCHAR(64) NULL REFERENCES niche_clusters(slug), "
+                "expected_variant_keys JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "notes TEXT NULL, "
+                "is_active BOOLEAN NOT NULL DEFAULT TRUE, "
+                "created_at TIMESTAMP WITH TIME ZONE NOT NULL, "
+                "updated_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_recipe_benchmark_prompts ("
+                "id INTEGER PRIMARY KEY, "
+                "prompt_text TEXT NOT NULL, "
+                "prompt_fingerprint VARCHAR(64) NOT NULL, "
+                "market_country_code VARCHAR(2) NULL, "
+                "expected_vertical VARCHAR(64) NULL REFERENCES taxonomy_verticals(slug), "
+                "expected_cluster_slug VARCHAR(64) NULL REFERENCES niche_clusters(slug), "
+                "expected_variant_keys JSON NOT NULL DEFAULT '[]', "
+                "notes TEXT NULL, "
+                "is_active BOOLEAN NOT NULL DEFAULT 1, "
+                "created_at TIMESTAMP NOT NULL, "
+                "updated_at TIMESTAMP NOT NULL"
+                ")"
+            )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_recipe_benchmark_prompts_prompt_fingerprint "
+            "ON query_recipe_benchmark_prompts(prompt_fingerprint)"
+        )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_recipe_benchmark_prompts_market_country_code "
+            "ON query_recipe_benchmark_prompts(market_country_code)"
+        )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_recipe_benchmark_prompts_is_active "
+            "ON query_recipe_benchmark_prompts(is_active)"
+        )
+
+    if "query_recipe_benchmark_evals" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_recipe_benchmark_evals ("
+                "id SERIAL PRIMARY KEY, "
+                "benchmark_prompt_id INTEGER NOT NULL REFERENCES query_recipe_benchmark_prompts(id), "
+                "plan_id INTEGER NULL REFERENCES query_recipe_plans(id), "
+                "requested_provider VARCHAR(32) NOT NULL, "
+                "provider VARCHAR(32) NOT NULL, "
+                "model_name VARCHAR(64) NOT NULL, "
+                "market_country_code VARCHAR(2) NULL, "
+                "chosen_vertical VARCHAR(64) NULL REFERENCES taxonomy_verticals(slug), "
+                "chosen_cluster_slug VARCHAR(64) NULL REFERENCES niche_clusters(slug), "
+                "cluster_score INTEGER NOT NULL DEFAULT 0, "
+                "top_variant_keys JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "default_variant_key VARCHAR(96) NULL, "
+                "variant_count INTEGER NOT NULL DEFAULT 0, "
+                "planner_summary JSONB NOT NULL DEFAULT '{}'::jsonb, "
+                "cluster_judgement INTEGER NULL, "
+                "variant_judgement INTEGER NULL, "
+                "overall_judgement INTEGER NULL, "
+                "scoring_notes TEXT NULL, "
+                "scored_at TIMESTAMP WITH TIME ZONE NULL, "
+                "created_at TIMESTAMP WITH TIME ZONE NOT NULL, "
+                "updated_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_recipe_benchmark_evals ("
+                "id INTEGER PRIMARY KEY, "
+                "benchmark_prompt_id INTEGER NOT NULL REFERENCES query_recipe_benchmark_prompts(id), "
+                "plan_id INTEGER NULL REFERENCES query_recipe_plans(id), "
+                "requested_provider VARCHAR(32) NOT NULL, "
+                "provider VARCHAR(32) NOT NULL, "
+                "model_name VARCHAR(64) NOT NULL, "
+                "market_country_code VARCHAR(2) NULL, "
+                "chosen_vertical VARCHAR(64) NULL REFERENCES taxonomy_verticals(slug), "
+                "chosen_cluster_slug VARCHAR(64) NULL REFERENCES niche_clusters(slug), "
+                "cluster_score INTEGER NOT NULL DEFAULT 0, "
+                "top_variant_keys JSON NOT NULL DEFAULT '[]', "
+                "default_variant_key VARCHAR(96) NULL, "
+                "variant_count INTEGER NOT NULL DEFAULT 0, "
+                "planner_summary JSON NOT NULL DEFAULT '{}', "
+                "cluster_judgement INTEGER NULL, "
+                "variant_judgement INTEGER NULL, "
+                "overall_judgement INTEGER NULL, "
+                "scoring_notes TEXT NULL, "
+                "scored_at TIMESTAMP NULL, "
+                "created_at TIMESTAMP NOT NULL, "
+                "updated_at TIMESTAMP NOT NULL"
+                ")"
+            )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_recipe_benchmark_evals_benchmark_prompt_id "
+            "ON query_recipe_benchmark_evals(benchmark_prompt_id)"
+        )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_recipe_benchmark_evals_provider "
+            "ON query_recipe_benchmark_evals(provider, model_name)"
+        )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_recipe_benchmark_evals_market_country_code "
+            "ON query_recipe_benchmark_evals(market_country_code)"
+        )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_recipe_benchmark_evals_created_at "
+            "ON query_recipe_benchmark_evals(created_at)"
+        )
+
     if "query_recipe_plan_variant_outcomes" not in tables:
         if dialect == "postgresql":
             statements.append(

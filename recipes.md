@@ -9,7 +9,164 @@ Build a shared recipe system for category discovery that gives the platform:
 - reusable templates across all users
 - a clear path from AI-assisted draft to production-safe recipe
 
-This file is the roadmap for the recipe/template foundation before implementation starts.
+This file now serves two roles:
+
+- record what is already implemented in the live recipe system
+- keep a trimmed roadmap of the next recipe improvements we intentionally defer until after battle testing
+
+## Implemented Functionality
+
+The following recipe functionality is already built into the platform.
+
+### Taxonomy
+
+- database-backed `verticals`
+- database-backed `niche_clusters`
+- seeded curated internal taxonomy
+- recipes and categories linked back to taxonomy instead of relying on a fixed enum only
+
+### Recipe Core
+
+- `query_recipes`
+- `query_recipe_versions`
+- `query_recipe_validations`
+- `query_recipe_variants`
+- `query_recipe_variant_templates`
+- versioned recipe lifecycle:
+  - `draft`
+  - `candidate`
+  - `validated`
+  - `active`
+  - `deprecated`
+
+### Prompt Planning
+
+- planner abstraction with persisted planner runs
+- heuristic planner provider
+- optional OpenAI planner provider behind the same contract
+- per-request planner provider/model override in the UI
+- compare-against-heuristic mode
+- persisted planner outputs and variant outcomes
+
+### Variant Generation
+
+- one prompt -> cluster -> multiple ranked candidate variants
+- curated cluster-specific variant libraries
+- multi-select bulk creation of draft recipes from generated variants
+- persistent generated variant records
+- source-plan and source-variant attribution from prompt generation through recipe creation
+
+### Ranking Signals
+
+- template score
+- prompt match score
+- validation score
+- cluster baseline validation
+- platform adoption
+- prompt-specific selection history
+- prompt-specific activation history
+- planner conversion history
+- production scrape outcomes
+- market-aware production performance
+- market-aware planner conversion
+- market-aware prompt-variant history
+- market-aware cluster history
+
+### Recommendation Layer
+
+- recommendation states:
+  - `experimental`
+  - `recommended`
+  - `trusted`
+  - `suppressed`
+- recommendation policies with editable thresholds
+- per-policy audit trail
+- policy simulation
+- apply-suggested-policy flow
+- policy experiment outcome classification
+- policy learning bias from past experiment outcomes
+- market-aware policy simulation
+- policy impact snapshots and 7-day before/after windows
+
+### Validation and Safety
+
+- recipe linting
+- public Overpass sampled validation with platform-wide cache
+- validation quota tracking
+- activation gates by source strategy
+- planner fallback to heuristic when provider output or credentials fail
+
+### Analytics and Transparency
+
+- recipe analytics for:
+  - cluster
+  - source strategy
+  - market
+  - strategy by market
+  - top variants
+- planner comparison summary
+- row-level variant diff between selected planner and heuristic
+- planner conversion summary
+- cluster decision explanation
+- alternate cluster display
+- recommendation policy impact and experiment scoreboard
+- policy blockers and applied-policy display on variants
+
+### Benchmark / Battle-Test Infrastructure
+
+- prompt benchmark dataset storage
+- admin eval page
+- persisted benchmark planner runs
+- manual per-prompt scoring workflow
+- aggregate planner comparison summary by provider/model
+
+## Deferred Improvements We Are Holding For Now
+
+These are reasonable future recipe improvements, but they are intentionally deferred until battle testing proves they are worth the added complexity.
+
+- richer curated sub-intent libraries for every cluster
+- stronger prompt normalization and semantic similarity matching
+- source-strategy-specific validation rules beyond the current activation gate layer
+- automatic policy tuning beyond the current recommendation/simulation system
+- deeper recipe governance and approval workflows
+- more policy-state automation or experiment orchestration
+- stronger AI-assisted tag/variant expansion
+- recipe performance dashboards beyond the current eval and analytics views
+
+## Battle-Test Recommendation
+
+Before adding more recipe management features, the recommended focus is:
+
+1. build and curate a real benchmark prompt set
+2. run heuristic and OpenAI planners side by side
+3. score prompts manually for:
+   - cluster choice
+   - variant usefulness
+   - overall quality
+4. analyze failures
+5. only then return to planner/recipe improvements
+
+## Benchmark Dataset Format
+
+The prompt benchmark dataset should use one row per benchmark prompt with these fields:
+
+- `prompt_text`
+- `market_country_code`
+- `expected_vertical`
+- `expected_cluster_slug`
+- `expected_variant_keys`
+- `notes`
+- `is_active`
+
+Meaning:
+
+- `prompt_text`: the exact user-style prompt to test
+- `market_country_code`: optional market hint like `TH`
+- `expected_vertical`: the best-fit vertical if known
+- `expected_cluster_slug`: the expected cluster if known
+- `expected_variant_keys`: comma-separated or array form of the variants we would consider acceptable
+- `notes`: why this prompt matters or what makes a good answer
+- `is_active`: whether it should participate in active benchmark runs
 
 ## Product Direction
 
