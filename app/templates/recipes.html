@@ -151,6 +151,50 @@
         <table>
           <thead>
             <tr>
+              <th>Country</th>
+              <th>Runs</th>
+              <th>Variants</th>
+              <th>Avg Production</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in market_rows %}
+            <tr>
+              <td>{{ row.country_code }}</td>
+              <td>{{ row.run_count }}</td>
+              <td>{{ row.variant_count }}</td>
+              <td>{{ row.avg_score }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4">No country-level production analytics yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <table>
+          <thead>
+            <tr>
+              <th>Country</th>
+              <th>Source Strategy</th>
+              <th>Runs</th>
+              <th>Avg Production</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in strategy_market_rows %}
+            <tr>
+              <td>{{ row.country_code }}</td>
+              <td>{{ row.source_strategy }}</td>
+              <td>{{ row.run_count }}</td>
+              <td>{{ row.avg_score }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4">No country-strategy production analytics yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <table>
+          <thead>
+            <tr>
               <th>Top Variant</th>
               <th>Cluster</th>
               <th>Source Strategy</th>
@@ -488,7 +532,12 @@
               <th>Validation Runs</th>
               <th>Production Yield</th>
               <th>Production Runs</th>
+              <th>Market</th>
+              <th>Market Yield</th>
+              <th>Market Runs</th>
               <th>Cluster Baseline</th>
+              <th>Strategy Yield</th>
+              <th>Strategy Runs</th>
               <th>Planner Selection</th>
               <th>Planner Drafts</th>
               <th>Planner Activation</th>
@@ -519,6 +568,9 @@
               <td>{{ variant.historical_validation_count or "-" }}</td>
               <td>{{ variant.production_score or "-" }}</td>
               <td>{{ variant.production_run_count or "-" }}</td>
+              <td>{{ variant.market_country_code or "-" }}</td>
+              <td>{{ variant.market_production_score or "-" }}</td>
+              <td>{{ variant.market_production_run_count or "-" }}</td>
               <td>
                 {% if variant.cluster_validation_count %}
                 {{ variant.cluster_validation_score }}/{{ variant.cluster_validation_count }}
@@ -526,6 +578,8 @@
                 -
                 {% endif %}
               </td>
+              <td>{{ variant.strategy_production_score or "-" }}</td>
+              <td>{{ variant.strategy_production_run_count or "-" }}</td>
               <td>{{ variant.planner_selection_count or "-" }}</td>
               <td>{{ variant.planner_draft_count or "-" }}</td>
               <td>{{ variant.planner_activation_count or "-" }}</td>
@@ -637,6 +691,18 @@
             <strong>{{ draft_proposal.production_run_count or "-" }}</strong>
           </div>
           <div class="stat-card">
+            <span class="subtle">Market</span>
+            <strong>{{ draft_proposal.market_country_code or "-" }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Market Yield</span>
+            <strong>{{ draft_proposal.market_production_score or "-" }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Market Runs</span>
+            <strong>{{ draft_proposal.market_production_run_count or "-" }}</strong>
+          </div>
+          <div class="stat-card">
             <span class="subtle">Cluster Baseline</span>
             <strong>
               {% if draft_proposal.cluster_validation_count %}
@@ -645,6 +711,14 @@
               -
               {% endif %}
             </strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Strategy Yield</span>
+            <strong>{{ draft_proposal.strategy_production_score or "-" }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Strategy Runs</span>
+            <strong>{{ draft_proposal.strategy_production_run_count or "-" }}</strong>
           </div>
           <div class="stat-card">
             <span class="subtle">Planner Selection</span>

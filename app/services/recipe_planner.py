@@ -78,6 +78,11 @@ class PlannedVariant(BaseModel):
     prompt_activation_count: int = 0
     production_score: int = 0
     production_run_count: int = 0
+    market_country_code: str | None = None
+    market_production_score: int = 0
+    market_production_run_count: int = 0
+    strategy_production_score: int = 0
+    strategy_production_run_count: int = 0
 
 
 class PlannedPromptPayload(BaseModel):
@@ -252,6 +257,11 @@ def _model_to_variant(variant: PlannedVariant) -> DraftProposal:
         prompt_activation_count=variant.prompt_activation_count,
         production_score=variant.production_score,
         production_run_count=variant.production_run_count,
+        market_country_code=variant.market_country_code,
+        market_production_score=variant.market_production_score,
+        market_production_run_count=variant.market_production_run_count,
+        strategy_production_score=variant.strategy_production_score,
+        strategy_production_run_count=variant.strategy_production_run_count,
     )
 
 

@@ -47,6 +47,11 @@ class DraftProposal:
     prompt_activation_count: int = 0
     production_score: int = 0
     production_run_count: int = 0
+    market_country_code: str | None = None
+    market_production_score: int = 0
+    market_production_run_count: int = 0
+    strategy_production_score: int = 0
+    strategy_production_run_count: int = 0
 
 
 @dataclass(frozen=True)

@@ -6,9 +6,9 @@ import hashlib
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
-from app.models import QueryRecipe, QueryRecipePlanVariantOutcome, QueryRecipeValidation, QueryRecipeVariant
+from app.models import QueryRecipe, QueryRecipePlanVariantOutcome, QueryRecipeValidation, QueryRecipeVariant, QueryRecipeVariantRunStat, Region
 from app.services.recipe_drafts import DraftProposal
-from app.services.recipe_prompt_normalization import normalize_prompt_text
+from app.services.recipe_prompt_normalization import normalize_prompt_text, resolve_prompt_country_code
 
 
 def prompt_fingerprint(prompt: str) -> str:
@@ -91,9 +91,25 @@ def _production_bonus(score: int, run_count: int) -> int:
     return round(score * 0.3 * confidence_factor)
 
 
+def _market_bonus(score: int, run_count: int) -> int:
+    if score <= 0 or run_count <= 0:
+        return 0
+    confidence_factor = min(run_count, 4) / 4
+    return round(score * 0.25 * confidence_factor)
+
+
+def _strategy_bonus_from_outcomes(score: int, run_count: int) -> int:
+    if score <= 0 or run_count <= 0:
+        return 0
+    confidence_factor = min(run_count, 6) / 6
+    return round(score * 0.2 * confidence_factor)
+
+
 def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> list[DraftProposal]:
     if not proposals:
         return proposals
+
+    prompt_market_country = resolve_prompt_country_code(session, proposals[0].prompt)
 
     by_key: dict[str, list[QueryRecipeVariant]] = {}
     by_cluster: dict[str, list[QueryRecipeVariant]] = {}
@@ -153,6 +169,64 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
             .group_by(QueryRecipePlanVariantOutcome.variant_key)
         ).all()
     }
+    template_keys = [proposal.template_key for proposal in proposals if proposal.template_key]
+    cluster_strategy_pairs = {
+        (proposal.cluster_slug, proposal.source_strategy.value)
+        for proposal in proposals
+        if proposal.cluster_slug
+    }
+    market_rows = []
+    if prompt_market_country and template_keys:
+        market_rows = session.execute(
+            select(
+                QueryRecipeVariant.template_key,
+                func.count(QueryRecipeVariantRunStat.id),
+                func.avg(QueryRecipeVariantRunStat.score),
+            )
+            .select_from(QueryRecipeVariantRunStat)
+            .join(QueryRecipeVariant, QueryRecipeVariant.id == QueryRecipeVariantRunStat.variant_id)
+            .join(Region, Region.id == QueryRecipeVariantRunStat.region_id)
+            .where(
+                QueryRecipeVariant.template_key.in_(template_keys),
+                Region.country_code == prompt_market_country,
+            )
+            .group_by(QueryRecipeVariant.template_key)
+        ).all()
+    market_stats_by_template = {
+        template_key: (int(run_count or 0), round(avg_score or 0))
+        for template_key, run_count, avg_score in market_rows
+        if template_key
+    }
+    strategy_rows = []
+    if cluster_strategy_pairs:
+        strategy_query = (
+            select(
+                QueryRecipeVariant.cluster_slug,
+                QueryRecipeVariant.source_strategy,
+                func.count(QueryRecipeVariantRunStat.id),
+                func.avg(QueryRecipeVariantRunStat.score),
+            )
+            .select_from(QueryRecipeVariantRunStat)
+            .join(QueryRecipeVariant, QueryRecipeVariant.id == QueryRecipeVariantRunStat.variant_id)
+            .where(
+                QueryRecipeVariant.cluster_slug.in_([pair[0] for pair in cluster_strategy_pairs]),
+                QueryRecipeVariant.source_strategy.in_([pair[1] for pair in cluster_strategy_pairs]),
+            )
+            .group_by(QueryRecipeVariant.cluster_slug, QueryRecipeVariant.source_strategy)
+        )
+        if prompt_market_country:
+            strategy_query = strategy_query.join(Region, Region.id == QueryRecipeVariantRunStat.region_id).where(
+                Region.country_code == prompt_market_country
+            )
+        strategy_rows = session.execute(strategy_query).all()
+    strategy_stats = {
+        (
+            cluster_slug,
+            source_strategy.value if hasattr(source_strategy, "value") else str(source_strategy),
+        ): (int(run_count or 0), round(avg_score or 0))
+        for cluster_slug, source_strategy, run_count, avg_score in strategy_rows
+        if cluster_slug
+    }
 
     adjusted: list[DraftProposal] = []
     for proposal in proposals:
@@ -177,6 +251,13 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
         ) if any(max(row.production_run_count, 0) for row in history_rows) else 0
         production_runs = sum(max(row.production_run_count, 0) for row in history_rows)
         production_bonus = _production_bonus(production_score, production_runs)
+        market_runs, market_score = market_stats_by_template.get(proposal.template_key, (0, 0))
+        market_bonus = _market_bonus(market_score, market_runs)
+        strategy_runs, strategy_score = strategy_stats.get(
+            (proposal.cluster_slug or "", proposal.source_strategy.value),
+            (0, 0),
+        )
+        strategy_bonus = _strategy_bonus_from_outcomes(strategy_score, strategy_runs)
         planner_selection_count, planner_draft_count, planner_activation_count = planner_conversion_counts.get(
             proposal.variant_key,
             (0, 0, 0),
@@ -219,6 +300,15 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
             fit_reasons.append(
                 f"Production yield score {production_score}/100 across {production_runs} completed production run(s)."
             )
+        if market_runs and prompt_market_country:
+            fit_reasons.append(
+                f"{prompt_market_country} market yield {market_score}/100 across {market_runs} production run(s)."
+            )
+        if strategy_runs:
+            fit_reasons.append(
+                f"{proposal.source_strategy.value} strategy yield {strategy_score}/100 across {strategy_runs} production run(s)"
+                + (f" in {prompt_market_country}." if prompt_market_country else ".")
+            )
         adjusted.append(
             replace(
                 proposal,
@@ -233,7 +323,12 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
                 planner_activation_count=int(planner_activation_count or 0),
                 production_score=production_score,
                 production_run_count=production_runs,
-                fit_score=proposal.template_score + proposal.prompt_match_score + validation_bonus + cluster_bonus + adoption_bonus + planner_conversion_bonus + production_bonus,
+                market_country_code=prompt_market_country,
+                market_production_score=market_score,
+                market_production_run_count=market_runs,
+                strategy_production_score=strategy_score,
+                strategy_production_run_count=strategy_runs,
+                fit_score=proposal.template_score + proposal.prompt_match_score + validation_bonus + cluster_bonus + adoption_bonus + planner_conversion_bonus + production_bonus + market_bonus + strategy_bonus,
                 fit_reasons=fit_reasons,
             )
         )
@@ -243,6 +338,8 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
             -item.fit_score,
             -item.planner_activation_count,
             -item.planner_draft_count,
+            -item.market_production_score,
+            -item.strategy_production_score,
             -item.production_score,
             -item.observed_validation_score,
             -item.cluster_validation_score,

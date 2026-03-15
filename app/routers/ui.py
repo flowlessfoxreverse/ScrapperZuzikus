@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import Category, Company, ContactChannel, ContactChannelType, Email, NicheCluster, Phone, ProxyEndpoint, ProxyKind, QueryRecipe, QueryRecipePlanVariantOutcome, QueryRecipeValidation, QueryRecipeVariant, QueryRecipeVariantTemplate, QueryRecipeVersion, RecipeAdapter, RecipeSourceStrategy, RecipeStatus, Region, RequestMetric, RunCategory, RunStatus, ScrapeRun, TaxonomyVertical, ValidationStatus
+from app.models import Category, Company, ContactChannel, ContactChannelType, Email, NicheCluster, Phone, ProxyEndpoint, ProxyKind, QueryRecipe, QueryRecipePlanVariantOutcome, QueryRecipeValidation, QueryRecipeVariant, QueryRecipeVariantRunStat, QueryRecipeVariantTemplate, QueryRecipeVersion, RecipeAdapter, RecipeSourceStrategy, RecipeStatus, Region, RequestMetric, RunCategory, RunStatus, ScrapeRun, TaxonomyVertical, ValidationStatus
 from app.schemas import EmailRow
 from app.services.category_recipes import latest_recipe_version, sync_recipe_to_category, upsert_recipe_backed_category
 from app.services.host_suppression import normalize_host_key
@@ -239,6 +239,22 @@ class RecipeClusterAnalyticsRow:
     avg_validation_score: int
     avg_production_score: int
     avg_rank_score: int
+
+
+@dataclass
+class RecipeMarketAnalyticsRow:
+    country_code: str
+    run_count: int
+    variant_count: int
+    avg_score: int
+
+
+@dataclass
+class RecipeStrategyMarketAnalyticsRow:
+    country_code: str
+    source_strategy: str
+    run_count: int
+    avg_score: int
 
 
 @dataclass
@@ -871,7 +887,13 @@ def build_category_rows(db: Session) -> list[CategoryRow]:
 
 def build_recipe_analytics(
     db: Session,
-) -> tuple[list[RecipeStrategyAnalyticsRow], list[RecipeClusterAnalyticsRow], list[RecipeTopVariantRow]]:
+) -> tuple[
+    list[RecipeStrategyAnalyticsRow],
+    list[RecipeClusterAnalyticsRow],
+    list[RecipeMarketAnalyticsRow],
+    list[RecipeStrategyMarketAnalyticsRow],
+    list[RecipeTopVariantRow],
+]:
     strategy_rows_raw = db.execute(
         select(
             QueryRecipeVariant.source_strategy,
@@ -940,6 +962,51 @@ def build_recipe_analytics(
         if cluster_slug
     ]
 
+    market_rows = [
+        RecipeMarketAnalyticsRow(
+            country_code=country_code,
+            run_count=int(run_count or 0),
+            variant_count=int(variant_count or 0),
+            avg_score=round(avg_score or 0),
+        )
+        for country_code, run_count, variant_count, avg_score in db.execute(
+            select(
+                Region.country_code,
+                func.count(QueryRecipeVariantRunStat.id),
+                func.count(func.distinct(QueryRecipeVariantRunStat.variant_id)),
+                func.avg(QueryRecipeVariantRunStat.score),
+            )
+            .select_from(QueryRecipeVariantRunStat)
+            .join(Region, Region.id == QueryRecipeVariantRunStat.region_id)
+            .group_by(Region.country_code)
+            .order_by(desc(func.avg(QueryRecipeVariantRunStat.score)), Region.country_code)
+        ).all()
+        if country_code
+    ]
+
+    strategy_market_rows = [
+        RecipeStrategyMarketAnalyticsRow(
+            country_code=country_code,
+            source_strategy=source_strategy.value if isinstance(source_strategy, RecipeSourceStrategy) else str(source_strategy),
+            run_count=int(run_count or 0),
+            avg_score=round(avg_score or 0),
+        )
+        for country_code, source_strategy, run_count, avg_score in db.execute(
+            select(
+                Region.country_code,
+                QueryRecipeVariant.source_strategy,
+                func.count(QueryRecipeVariantRunStat.id),
+                func.avg(QueryRecipeVariantRunStat.score),
+            )
+            .select_from(QueryRecipeVariantRunStat)
+            .join(QueryRecipeVariant, QueryRecipeVariant.id == QueryRecipeVariantRunStat.variant_id)
+            .join(Region, Region.id == QueryRecipeVariantRunStat.region_id)
+            .group_by(Region.country_code, QueryRecipeVariant.source_strategy)
+            .order_by(desc(func.avg(QueryRecipeVariantRunStat.score)), Region.country_code, QueryRecipeVariant.source_strategy)
+        ).all()
+        if country_code
+    ]
+
     top_variants = [
         RecipeTopVariantRow(
             label=variant.label,
@@ -962,7 +1029,7 @@ def build_recipe_analytics(
         ).all()
     ]
 
-    return strategy_rows, cluster_rows[:8], top_variants
+    return strategy_rows, cluster_rows[:8], market_rows[:8], strategy_market_rows[:12], top_variants
 
 
 def source_strategy_thresholds(source_strategy: RecipeSourceStrategy | None) -> dict[str, int]:
@@ -1493,7 +1560,7 @@ def recipe_editor(
     planner_variant_compare_rows: list[PlannerVariantCompareRow] = []
     planner_conversion_rows: list[PlannerConversionSummaryRow] = []
     verticals, clusters = taxonomy_context(db)
-    strategy_rows, cluster_rows, top_variants = build_recipe_analytics(db)
+    strategy_rows, cluster_rows, market_rows, strategy_market_rows, top_variants = build_recipe_analytics(db)
     strategy_threshold_rows = build_strategy_threshold_rows()
     if draft_prompt:
         try:
@@ -1575,9 +1642,11 @@ def recipe_editor(
             "planner_conversion_rows": planner_conversion_rows,
             "cluster_choice": cluster_choice,
             "alternate_clusters": alternate_clusters,
-            "strategy_rows": strategy_rows,
-            "cluster_rows": cluster_rows,
-            "top_variants": top_variants,
+        "strategy_rows": strategy_rows,
+        "cluster_rows": cluster_rows,
+        "market_rows": market_rows,
+        "strategy_market_rows": strategy_market_rows,
+        "top_variants": top_variants,
             "recipe_source_strategies": list(RecipeSourceStrategy),
             "strategy_activation_thresholds": strategy_threshold_rows,
             "activation_thresholds": {
@@ -1913,7 +1982,7 @@ def generate_recipe_draft_html(
     planner_variant_compare_rows: list[PlannerVariantCompareRow] = []
     planner_conversion_rows: list[PlannerConversionSummaryRow] = []
     verticals, clusters = taxonomy_context(db)
-    strategy_rows, cluster_rows, top_variants = build_recipe_analytics(db)
+    strategy_rows, cluster_rows, market_rows, strategy_market_rows, top_variants = build_recipe_analytics(db)
     strategy_threshold_rows = build_strategy_threshold_rows()
     try:
         plan = plan_recipe_prompt(
@@ -2008,9 +2077,11 @@ def generate_recipe_draft_html(
             "planner_conversion_rows": planner_conversion_rows,
             "cluster_choice": cluster_choice,
             "alternate_clusters": alternate_clusters,
-            "strategy_rows": strategy_rows,
-            "cluster_rows": cluster_rows,
-            "top_variants": top_variants,
+        "strategy_rows": strategy_rows,
+        "cluster_rows": cluster_rows,
+        "market_rows": market_rows,
+        "strategy_market_rows": strategy_market_rows,
+        "top_variants": top_variants,
             "strategy_activation_thresholds": strategy_threshold_rows,
             "activation_thresholds": {
                 "validation_score": settings.recipe_activation_min_validation_score,
