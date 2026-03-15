@@ -756,6 +756,74 @@ def ensure_recipe_schema(engine: Engine) -> None:
             "ON query_recipe_plan_variant_outcomes(market_country_code)"
         )
 
+    if "query_prompt_variant_decisions" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_prompt_variant_decisions ("
+                "id SERIAL PRIMARY KEY, "
+                "prompt_text TEXT NOT NULL, "
+                "prompt_fingerprint VARCHAR(64) NOT NULL, "
+                "vertical VARCHAR(64) NOT NULL, "
+                "cluster_slug VARCHAR(64) NULL, "
+                "variant_key VARCHAR(96) NOT NULL, "
+                "source_variant_id INTEGER NULL, "
+                "selected_count INTEGER NOT NULL DEFAULT 0, "
+                "draft_created_count INTEGER NOT NULL DEFAULT 0, "
+                "activated_count INTEGER NOT NULL DEFAULT 0, "
+                "last_selected_at TIMESTAMP WITH TIME ZONE NULL, "
+                "last_drafted_at TIMESTAMP WITH TIME ZONE NULL, "
+                "last_activated_at TIMESTAMP WITH TIME ZONE NULL, "
+                "created_at TIMESTAMP WITH TIME ZONE NOT NULL, "
+                "updated_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_prompt_variant_decisions ("
+                "id INTEGER PRIMARY KEY, "
+                "prompt_text TEXT NOT NULL, "
+                "prompt_fingerprint VARCHAR(64) NOT NULL, "
+                "vertical VARCHAR(64) NOT NULL, "
+                "cluster_slug VARCHAR(64) NULL, "
+                "variant_key VARCHAR(96) NOT NULL, "
+                "source_variant_id INTEGER NULL, "
+                "selected_count INTEGER NOT NULL DEFAULT 0, "
+                "draft_created_count INTEGER NOT NULL DEFAULT 0, "
+                "activated_count INTEGER NOT NULL DEFAULT 0, "
+                "last_selected_at TIMESTAMP NULL, "
+                "last_drafted_at TIMESTAMP NULL, "
+                "last_activated_at TIMESTAMP NULL, "
+                "created_at TIMESTAMP NOT NULL, "
+                "updated_at TIMESTAMP NOT NULL"
+                ")"
+            )
+        statements.append(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_prompt_variant_decision "
+            + (
+                "ON query_prompt_variant_decisions(prompt_fingerprint, variant_key, COALESCE(market_country_code, ''))"
+                if dialect == "postgresql"
+                else "ON query_prompt_variant_decisions(prompt_fingerprint, variant_key, market_country_code)"
+            )
+        )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_prompt_variant_decisions_market_country_code "
+            "ON query_prompt_variant_decisions(market_country_code)"
+        )
+    else:
+        prompt_variant_columns = columns_by_table.get("query_prompt_variant_decisions", set())
+        if "market_country_code" not in prompt_variant_columns:
+            statements.append("ALTER TABLE query_prompt_variant_decisions ADD COLUMN market_country_code VARCHAR(2) NULL")
+        if dialect == "postgresql":
+            statements.append("DROP INDEX IF EXISTS uq_prompt_variant_decision")
+            statements.append(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_prompt_variant_decision "
+                "ON query_prompt_variant_decisions(prompt_fingerprint, variant_key, COALESCE(market_country_code, ''))"
+            )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_prompt_variant_decisions_market_country_code "
+            "ON query_prompt_variant_decisions(market_country_code)"
+        )
+
     if "query_recipe_variants" not in tables:
         if dialect == "postgresql":
             statements.append(
@@ -956,11 +1024,19 @@ def ensure_recipe_schema(engine: Engine) -> None:
             )
         statements.append(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_prompt_variant_decision "
-            "ON query_prompt_variant_decisions(prompt_fingerprint, variant_key)"
+            + (
+                "ON query_prompt_variant_decisions(prompt_fingerprint, variant_key, COALESCE(market_country_code, ''))"
+                if dialect == "postgresql"
+                else "ON query_prompt_variant_decisions(prompt_fingerprint, variant_key, market_country_code)"
+            )
         )
         statements.append(
             "CREATE INDEX IF NOT EXISTS ix_query_prompt_variant_decisions_prompt_fingerprint "
             "ON query_prompt_variant_decisions(prompt_fingerprint)"
+        )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_prompt_variant_decisions_market_country_code "
+            "ON query_prompt_variant_decisions(market_country_code)"
         )
         statements.append(
             "CREATE INDEX IF NOT EXISTS ix_query_prompt_variant_decisions_variant_key "
@@ -1021,6 +1097,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
     else:
         prompt_variant_columns = columns_by_table.get("query_prompt_variant_decisions", set())
         prompt_variant_additions = {
+            "market_country_code": "VARCHAR(2) NULL",
             "source_variant_id": "INTEGER NULL",
             "selected_count": "INTEGER NOT NULL DEFAULT 0",
             "draft_created_count": "INTEGER NOT NULL DEFAULT 0",
@@ -1033,9 +1110,19 @@ def ensure_recipe_schema(engine: Engine) -> None:
         for column_name, column_def in prompt_variant_additions.items():
             if column_name not in prompt_variant_columns:
                 statements.append(f"ALTER TABLE query_prompt_variant_decisions ADD COLUMN {column_name} {column_def}")
+        if dialect == "postgresql":
+            statements.append("DROP INDEX IF EXISTS uq_prompt_variant_decision")
+            statements.append(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_prompt_variant_decision "
+                "ON query_prompt_variant_decisions(prompt_fingerprint, variant_key, COALESCE(market_country_code, ''))"
+            )
         statements.append(
             "CREATE INDEX IF NOT EXISTS ix_query_prompt_variant_decisions_variant_key "
             "ON query_prompt_variant_decisions(variant_key)"
+        )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_prompt_variant_decisions_market_country_code "
+            "ON query_prompt_variant_decisions(market_country_code)"
         )
 
     for table_name in (

@@ -478,12 +478,13 @@ class QueryPromptClusterDecision(Base):
 class QueryPromptVariantDecision(Base):
     __tablename__ = "query_prompt_variant_decisions"
     __table_args__ = (
-        UniqueConstraint("prompt_fingerprint", "variant_key", name="uq_prompt_variant_decision"),
+        UniqueConstraint("prompt_fingerprint", "variant_key", "market_country_code", name="uq_prompt_variant_decision"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     prompt_text: Mapped[str] = mapped_column(Text)
     prompt_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    market_country_code: Mapped[str | None] = mapped_column(String(2), nullable=True, index=True)
     vertical: Mapped[str] = mapped_column(String(64), ForeignKey("taxonomy_verticals.slug"), index=True)
     cluster_slug: Mapped[str | None] = mapped_column(String(64), ForeignKey("niche_clusters.slug"), nullable=True, index=True)
     variant_key: Mapped[str] = mapped_column(String(96), index=True)

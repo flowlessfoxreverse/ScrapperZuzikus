@@ -13,6 +13,7 @@ from app.models import (
     QueryRecipeVariant,
 )
 from app.services.recipe_drafts import DraftProposal
+from app.services.recipe_prompt_normalization import resolve_prompt_country_code
 from app.services.recipe_variants import prompt_fingerprint
 
 
@@ -23,11 +24,19 @@ def _prompt_variant_bonus(selected_count: int, draft_created_count: int, activat
     return selection_bonus + draft_bonus + activation_bonus
 
 
+def _market_prompt_variant_bonus(selected_count: int, draft_created_count: int, activated_count: int) -> int:
+    selection_bonus = min(selected_count, 4)
+    draft_bonus = min(draft_created_count, 4)
+    activation_bonus = min(activated_count, 4) * 2
+    return selection_bonus + draft_bonus + activation_bonus
+
+
 def apply_prompt_variant_history(session: Session, prompt: str, proposals: list[DraftProposal]) -> list[DraftProposal]:
     if not prompt.strip() or not proposals:
         return proposals
 
     fingerprint = prompt_fingerprint(prompt)
+    prompt_market_country = resolve_prompt_country_code(session, prompt)
     history = {
         row.variant_key: row
         for row in session.scalars(
@@ -37,18 +46,36 @@ def apply_prompt_variant_history(session: Session, prompt: str, proposals: list[
             )
         ).all()
     }
+    market_history: dict[str, QueryPromptVariantDecision] = {}
+    if prompt_market_country:
+        market_history = {
+            row.variant_key: row
+            for row in session.scalars(
+                select(QueryPromptVariantDecision).where(
+                    QueryPromptVariantDecision.prompt_fingerprint == fingerprint,
+                    QueryPromptVariantDecision.market_country_code == prompt_market_country,
+                    QueryPromptVariantDecision.variant_key.in_([proposal.variant_key for proposal in proposals]),
+                )
+            ).all()
+        }
 
     adjusted: list[DraftProposal] = []
     for proposal in proposals:
         row = history.get(proposal.variant_key)
-        if row is None:
-            adjusted.append(proposal)
-            continue
-        selection_count = max(row.selected_count, 0)
-        draft_created_count = max(row.draft_created_count, 0)
-        activated_count = max(row.activated_count, 0)
-        bonus = _prompt_variant_bonus(selection_count, draft_created_count, activated_count)
         fit_reasons = list(proposal.fit_reasons)
+        selection_count = max(row.selected_count, 0) if row is not None else 0
+        draft_created_count = max(row.draft_created_count, 0) if row is not None else 0
+        activated_count = max(row.activated_count, 0) if row is not None else 0
+        bonus = _prompt_variant_bonus(selection_count, draft_created_count, activated_count)
+        market_row = market_history.get(proposal.variant_key)
+        market_selection_count = max(market_row.selected_count, 0) if market_row is not None else 0
+        market_draft_created_count = max(market_row.draft_created_count, 0) if market_row is not None else 0
+        market_activated_count = max(market_row.activated_count, 0) if market_row is not None else 0
+        market_bonus = _market_prompt_variant_bonus(
+            market_selection_count,
+            market_draft_created_count,
+            market_activated_count,
+        )
         if selection_count:
             fit_reasons.append(
                 f"Historically selected {selection_count} time(s) for prompts matching this fingerprint."
@@ -61,13 +88,28 @@ def apply_prompt_variant_history(session: Session, prompt: str, proposals: list[
             fit_reasons.append(
                 f"Historically activated {activated_count} time(s) from this prompt."
             )
+        if prompt_market_country and market_selection_count:
+            fit_reasons.append(
+                f"Historically selected {market_selection_count} time(s) for this prompt in {prompt_market_country}."
+            )
+        if prompt_market_country and market_draft_created_count:
+            fit_reasons.append(
+                f"Historically drafted {market_draft_created_count} time(s) for this prompt in {prompt_market_country}."
+            )
+        if prompt_market_country and market_activated_count:
+            fit_reasons.append(
+                f"Historically activated {market_activated_count} time(s) for this prompt in {prompt_market_country}."
+            )
         adjusted.append(
             replace(
                 proposal,
+                market_prompt_selection_count=market_selection_count,
+                market_prompt_draft_count=market_draft_created_count,
+                market_prompt_activation_count=market_activated_count,
                 prompt_selection_count=selection_count,
                 prompt_draft_count=draft_created_count,
                 prompt_activation_count=activated_count,
-                fit_score=proposal.fit_score + bonus,
+                fit_score=proposal.fit_score + bonus + market_bonus,
                 fit_reasons=fit_reasons,
             )
         )
@@ -75,6 +117,8 @@ def apply_prompt_variant_history(session: Session, prompt: str, proposals: list[
     adjusted.sort(
         key=lambda item: (
             -item.fit_score,
+            -item.market_prompt_activation_count,
+            -item.market_prompt_draft_count,
             -item.prompt_activation_count,
             -item.prompt_draft_count,
             -item.prompt_selection_count,
@@ -103,11 +147,13 @@ def record_prompt_variant_decisions(
         return
 
     fingerprint = prompt_fingerprint(prompt_text)
+    prompt_market_country = resolve_prompt_country_code(session, prompt_text)
     existing = {
         row.variant_key: row
         for row in session.scalars(
             select(QueryPromptVariantDecision).where(
                 QueryPromptVariantDecision.prompt_fingerprint == fingerprint,
+                QueryPromptVariantDecision.market_country_code == prompt_market_country,
                 QueryPromptVariantDecision.variant_key.in_(list(affected_keys)),
             )
         ).all()
@@ -122,6 +168,7 @@ def record_prompt_variant_decisions(
             row = QueryPromptVariantDecision(
                 prompt_text=prompt_text,
                 prompt_fingerprint=fingerprint,
+                market_country_code=prompt_market_country,
                 vertical=variant.vertical,
                 cluster_slug=variant.cluster_slug,
                 variant_key=variant.variant_key,
@@ -129,6 +176,7 @@ def record_prompt_variant_decisions(
             )
             session.add(row)
         row.prompt_text = prompt_text
+        row.market_country_code = prompt_market_country
         row.vertical = variant.vertical
         row.cluster_slug = variant.cluster_slug
         row.source_variant_id = variant.id
@@ -147,9 +195,11 @@ def record_prompt_variant_activation(session: Session, recipe: QueryRecipe) -> N
         return
 
     fingerprint = prompt_fingerprint(variant.prompt_text)
+    prompt_market_country = resolve_prompt_country_code(session, variant.prompt_text)
     row = session.scalar(
         select(QueryPromptVariantDecision).where(
             QueryPromptVariantDecision.prompt_fingerprint == fingerprint,
+            QueryPromptVariantDecision.market_country_code == prompt_market_country,
             QueryPromptVariantDecision.variant_key == variant.variant_key,
         )
     )
@@ -158,6 +208,7 @@ def record_prompt_variant_activation(session: Session, recipe: QueryRecipe) -> N
         row = QueryPromptVariantDecision(
             prompt_text=variant.prompt_text,
             prompt_fingerprint=fingerprint,
+            market_country_code=prompt_market_country,
             vertical=variant.vertical,
             cluster_slug=variant.cluster_slug,
             variant_key=variant.variant_key,
@@ -165,6 +216,7 @@ def record_prompt_variant_activation(session: Session, recipe: QueryRecipe) -> N
         )
         session.add(row)
     row.prompt_text = variant.prompt_text
+    row.market_country_code = prompt_market_country
     row.vertical = variant.vertical
     row.cluster_slug = variant.cluster_slug
     row.source_variant_id = variant.id

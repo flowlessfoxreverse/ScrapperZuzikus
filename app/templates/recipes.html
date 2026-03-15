@@ -779,6 +779,7 @@
               <th>Planner Drafts</th>
               <th>Planner Activation</th>
               <th>Market Planner</th>
+              <th>Market Prompt</th>
               <th>Prompt Selection</th>
               <th>Prompt Activation</th>
               <th>Variant Adoption</th>
@@ -828,6 +829,13 @@
               <td>
                 {% if variant.market_country_code %}
                 {{ variant.market_planner_selection_count or 0 }}/{{ variant.market_planner_draft_count or 0 }}/{{ variant.market_planner_activation_count or 0 }}
+                {% else %}
+                -
+                {% endif %}
+              </td>
+              <td>
+                {% if variant.market_country_code %}
+                {{ variant.market_prompt_selection_count or 0 }}/{{ variant.market_prompt_draft_count or 0 }}/{{ variant.market_prompt_activation_count or 0 }}
                 {% else %}
                 -
                 {% endif %}
@@ -986,6 +994,16 @@
             <strong>
               {% if draft_proposal.market_country_code %}
               {{ draft_proposal.market_planner_selection_count or 0 }}/{{ draft_proposal.market_planner_draft_count or 0 }}/{{ draft_proposal.market_planner_activation_count or 0 }}
+              {% else %}
+              -
+              {% endif %}
+            </strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Market Prompt</span>
+            <strong>
+              {% if draft_proposal.market_country_code %}
+              {{ draft_proposal.market_prompt_selection_count or 0 }}/{{ draft_proposal.market_prompt_draft_count or 0 }}/{{ draft_proposal.market_prompt_activation_count or 0 }}
               {% else %}
               -
               {% endif %}

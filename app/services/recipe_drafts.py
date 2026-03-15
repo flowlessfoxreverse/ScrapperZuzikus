@@ -45,6 +45,9 @@ class DraftProposal:
     market_planner_selection_count: int = 0
     market_planner_draft_count: int = 0
     market_planner_activation_count: int = 0
+    market_prompt_selection_count: int = 0
+    market_prompt_draft_count: int = 0
+    market_prompt_activation_count: int = 0
     prompt_selection_count: int = 0
     prompt_draft_count: int = 0
     prompt_activation_count: int = 0

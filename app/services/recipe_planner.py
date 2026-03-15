@@ -77,6 +77,9 @@ class PlannedVariant(BaseModel):
     market_planner_selection_count: int = 0
     market_planner_draft_count: int = 0
     market_planner_activation_count: int = 0
+    market_prompt_selection_count: int = 0
+    market_prompt_draft_count: int = 0
+    market_prompt_activation_count: int = 0
     prompt_selection_count: int = 0
     prompt_draft_count: int = 0
     prompt_activation_count: int = 0
@@ -266,6 +269,9 @@ def _model_to_variant(variant: PlannedVariant) -> DraftProposal:
         market_planner_selection_count=variant.market_planner_selection_count,
         market_planner_draft_count=variant.market_planner_draft_count,
         market_planner_activation_count=variant.market_planner_activation_count,
+        market_prompt_selection_count=variant.market_prompt_selection_count,
+        market_prompt_draft_count=variant.market_prompt_draft_count,
+        market_prompt_activation_count=variant.market_prompt_activation_count,
         prompt_selection_count=variant.prompt_selection_count,
         prompt_draft_count=variant.prompt_draft_count,
         prompt_activation_count=variant.prompt_activation_count,
