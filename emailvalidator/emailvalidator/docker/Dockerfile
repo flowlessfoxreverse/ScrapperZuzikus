@@ -9,10 +9,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python deps first (layer-cached unless pyproject.toml changes)
+# Create a minimal app stub so hatchling can resolve the package before source arrives
 COPY pyproject.toml .
-RUN pip install --no-cache-dir -e ".[dev]"
+RUN mkdir -p app && touch app/__init__.py
+RUN pip install --no-cache-dir ".[dev]"
 
-# Copy source
+# Copy source (replaces the stub)
 COPY . .
 
 EXPOSE 8000
