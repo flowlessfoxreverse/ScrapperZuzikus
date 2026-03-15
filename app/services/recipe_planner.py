@@ -70,6 +70,9 @@ class PlannedVariant(BaseModel):
     cluster_validation_count: int = 0
     variant_adoption_count: int = 0
     cluster_adoption_count: int = 0
+    planner_selection_count: int = 0
+    planner_draft_count: int = 0
+    planner_activation_count: int = 0
     prompt_selection_count: int = 0
     prompt_draft_count: int = 0
     prompt_activation_count: int = 0
@@ -241,6 +244,9 @@ def _model_to_variant(variant: PlannedVariant) -> DraftProposal:
         cluster_validation_count=variant.cluster_validation_count,
         variant_adoption_count=variant.variant_adoption_count,
         cluster_adoption_count=variant.cluster_adoption_count,
+        planner_selection_count=variant.planner_selection_count,
+        planner_draft_count=variant.planner_draft_count,
+        planner_activation_count=variant.planner_activation_count,
         prompt_selection_count=variant.prompt_selection_count,
         prompt_draft_count=variant.prompt_draft_count,
         prompt_activation_count=variant.prompt_activation_count,

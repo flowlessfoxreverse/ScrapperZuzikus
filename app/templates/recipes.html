@@ -489,6 +489,9 @@
               <th>Production Yield</th>
               <th>Production Runs</th>
               <th>Cluster Baseline</th>
+              <th>Planner Selection</th>
+              <th>Planner Drafts</th>
+              <th>Planner Activation</th>
               <th>Prompt Selection</th>
               <th>Prompt Activation</th>
               <th>Variant Adoption</th>
@@ -523,6 +526,9 @@
                 -
                 {% endif %}
               </td>
+              <td>{{ variant.planner_selection_count or "-" }}</td>
+              <td>{{ variant.planner_draft_count or "-" }}</td>
+              <td>{{ variant.planner_activation_count or "-" }}</td>
               <td>{{ variant.prompt_selection_count or "-" }}</td>
               <td>{{ variant.prompt_activation_count or "-" }}</td>
               <td>{{ variant.variant_adoption_count or "-" }}</td>
@@ -639,6 +645,18 @@
               -
               {% endif %}
             </strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Planner Selection</span>
+            <strong>{{ draft_proposal.planner_selection_count or "-" }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Planner Drafts</span>
+            <strong>{{ draft_proposal.planner_draft_count or "-" }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Planner Activation</span>
+            <strong>{{ draft_proposal.planner_activation_count or "-" }}</strong>
           </div>
           <div class="stat-card">
             <span class="subtle">Prompt Selection</span>

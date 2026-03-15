@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import replace
 import hashlib
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
-from app.models import QueryRecipe, QueryRecipeValidation, QueryRecipeVariant
+from app.models import QueryRecipe, QueryRecipePlanVariantOutcome, QueryRecipeValidation, QueryRecipeVariant
 from app.services.recipe_drafts import DraftProposal
 from app.services.recipe_prompt_normalization import normalize_prompt_text
 
@@ -77,6 +77,13 @@ def _adoption_bonus(adoption_count: int, cluster_adoption_count: int) -> int:
     return variant_bonus + cluster_bonus
 
 
+def _planner_conversion_bonus(selection_count: int, drafted_count: int, activated_count: int) -> int:
+    selection_bonus = min(selection_count, 8)
+    drafted_bonus = min(drafted_count, 8) * 2
+    activated_bonus = min(activated_count, 8) * 4
+    return selection_bonus + drafted_bonus + activated_bonus
+
+
 def _production_bonus(score: int, run_count: int) -> int:
     if score <= 0 or run_count <= 0:
         return 0
@@ -133,6 +140,19 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
         ).all()
         if cluster_slug
     }
+    planner_conversion_counts = {
+        variant_key: (selected_count, drafted_count, activated_count)
+        for variant_key, selected_count, drafted_count, activated_count in session.execute(
+            select(
+                QueryRecipePlanVariantOutcome.variant_key,
+                func.count(case((QueryRecipePlanVariantOutcome.was_selected.is_(True), 1))).label("selected_count"),
+                func.count(case((QueryRecipePlanVariantOutcome.was_drafted.is_(True), 1))).label("drafted_count"),
+                func.count(case((QueryRecipePlanVariantOutcome.was_activated.is_(True), 1))).label("activated_count"),
+            )
+            .where(QueryRecipePlanVariantOutcome.variant_key.in_([proposal.variant_key for proposal in proposals]))
+            .group_by(QueryRecipePlanVariantOutcome.variant_key)
+        ).all()
+    }
 
     adjusted: list[DraftProposal] = []
     for proposal in proposals:
@@ -157,6 +177,15 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
         ) if any(max(row.production_run_count, 0) for row in history_rows) else 0
         production_runs = sum(max(row.production_run_count, 0) for row in history_rows)
         production_bonus = _production_bonus(production_score, production_runs)
+        planner_selection_count, planner_draft_count, planner_activation_count = planner_conversion_counts.get(
+            proposal.variant_key,
+            (0, 0, 0),
+        )
+        planner_conversion_bonus = _planner_conversion_bonus(
+            int(planner_selection_count or 0),
+            int(planner_draft_count or 0),
+            int(planner_activation_count or 0),
+        )
         fit_reasons = list(proposal.fit_reasons)
         if total_runs:
             fit_reasons.append(
@@ -174,6 +203,18 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
             fit_reasons.append(
                 f"Cluster already reused in {cluster_adoption_count} recipe draft(s)."
             )
+        if planner_selection_count:
+            fit_reasons.append(
+                f"Historically selected in {planner_selection_count} planner run(s)."
+            )
+        if planner_draft_count:
+            fit_reasons.append(
+                f"Historically turned into {planner_draft_count} draft recipe(s) across planner runs."
+            )
+        if planner_activation_count:
+            fit_reasons.append(
+                f"Historically activated {planner_activation_count} time(s) across planner runs."
+            )
         if production_runs:
             fit_reasons.append(
                 f"Production yield score {production_score}/100 across {production_runs} completed production run(s)."
@@ -187,9 +228,12 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
                 cluster_validation_count=cluster_runs,
                 variant_adoption_count=adoption_count,
                 cluster_adoption_count=cluster_adoption_count,
+                planner_selection_count=int(planner_selection_count or 0),
+                planner_draft_count=int(planner_draft_count or 0),
+                planner_activation_count=int(planner_activation_count or 0),
                 production_score=production_score,
                 production_run_count=production_runs,
-                fit_score=proposal.template_score + proposal.prompt_match_score + validation_bonus + cluster_bonus + adoption_bonus + production_bonus,
+                fit_score=proposal.template_score + proposal.prompt_match_score + validation_bonus + cluster_bonus + adoption_bonus + planner_conversion_bonus + production_bonus,
                 fit_reasons=fit_reasons,
             )
         )
@@ -197,6 +241,8 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
     adjusted.sort(
         key=lambda item: (
             -item.fit_score,
+            -item.planner_activation_count,
+            -item.planner_draft_count,
             -item.production_score,
             -item.observed_validation_score,
             -item.cluster_validation_score,
