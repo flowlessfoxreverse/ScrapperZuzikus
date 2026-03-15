@@ -20,6 +20,7 @@ from app.services.runtime_schema import (
     ensure_request_metric_schema,
     ensure_run_company_retry_schema,
     ensure_scrape_run_control_columns,
+    ensure_source_bridge_schema,
 )
 from app.services.run_companies import reconcile_active_runs, reconcile_terminal_runs
 
@@ -37,6 +38,7 @@ async def lifespan(_app: FastAPI):
     ensure_request_metric_schema(engine)
     ensure_run_company_retry_schema(engine)
     ensure_recipe_schema(engine)
+    ensure_source_bridge_schema(engine)
     with SessionLocal() as session:
         seed_defaults(session)
         sync_region_catalog(session)

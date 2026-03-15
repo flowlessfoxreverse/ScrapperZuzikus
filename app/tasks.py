@@ -18,6 +18,7 @@ from app.services.runtime_schema import (
     ensure_request_metric_schema,
     ensure_run_company_retry_schema,
     ensure_scrape_run_control_columns,
+    ensure_source_bridge_schema,
 )
 from app.services.run_companies import close_open_run_companies
 
@@ -30,6 +31,7 @@ ensure_phone_schema(engine)
 ensure_request_metric_schema(engine)
 ensure_run_company_retry_schema(engine)
 ensure_recipe_schema(engine)
+ensure_source_bridge_schema(engine)
 redis_broker = RedisBroker(url=settings.redis_url)
 dramatiq.set_broker(redis_broker)
 

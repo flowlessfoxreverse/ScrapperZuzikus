@@ -212,6 +212,228 @@ def ensure_request_metric_schema(engine: Engine) -> None:
             connection.execute(text(statement))
 
 
+def ensure_source_bridge_schema(engine: Engine) -> None:
+    tables = _table_names(engine)
+    if not {"regions", "categories", "companies", "scrape_runs", "query_recipes", "query_recipe_versions"}.issubset(tables):
+        return
+
+    dialect = engine.dialect.name
+    statements: list[str] = []
+
+    if "source_jobs" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS source_jobs ("
+                "id SERIAL PRIMARY KEY, "
+                "source VARCHAR(32) NOT NULL DEFAULT 'overpass', "
+                "status VARCHAR(16) NOT NULL DEFAULT 'queued', "
+                "prompt_text TEXT NULL, "
+                "country_code VARCHAR(2) NULL, "
+                "region_id INTEGER NULL REFERENCES regions(id), "
+                "run_id INTEGER NULL REFERENCES scrape_runs(id), "
+                "category_id INTEGER NULL REFERENCES categories(id), "
+                "recipe_id INTEGER NULL REFERENCES query_recipes(id), "
+                "recipe_version_id INTEGER NULL REFERENCES query_recipe_versions(id), "
+                "provider VARCHAR(64) NULL, "
+                "note TEXT NULL, "
+                "started_at TIMESTAMP WITH TIME ZONE NULL, "
+                "finished_at TIMESTAMP WITH TIME ZONE NULL, "
+                "created_at TIMESTAMP WITH TIME ZONE NOT NULL, "
+                "updated_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS source_jobs ("
+                "id INTEGER PRIMARY KEY, "
+                "source VARCHAR(32) NOT NULL DEFAULT 'overpass', "
+                "status VARCHAR(16) NOT NULL DEFAULT 'queued', "
+                "prompt_text TEXT NULL, "
+                "country_code VARCHAR(2) NULL, "
+                "region_id INTEGER NULL REFERENCES regions(id), "
+                "run_id INTEGER NULL REFERENCES scrape_runs(id), "
+                "category_id INTEGER NULL REFERENCES categories(id), "
+                "recipe_id INTEGER NULL REFERENCES query_recipes(id), "
+                "recipe_version_id INTEGER NULL REFERENCES query_recipe_versions(id), "
+                "provider VARCHAR(64) NULL, "
+                "note TEXT NULL, "
+                "started_at TIMESTAMP NULL, "
+                "finished_at TIMESTAMP NULL, "
+                "created_at TIMESTAMP NOT NULL, "
+                "updated_at TIMESTAMP NOT NULL"
+                ")"
+            )
+        statements.extend(
+            [
+                "CREATE INDEX IF NOT EXISTS ix_source_jobs_source ON source_jobs(source)",
+                "CREATE INDEX IF NOT EXISTS ix_source_jobs_status ON source_jobs(status)",
+                "CREATE INDEX IF NOT EXISTS ix_source_jobs_country_code ON source_jobs(country_code)",
+                "CREATE INDEX IF NOT EXISTS ix_source_jobs_region_id ON source_jobs(region_id)",
+                "CREATE INDEX IF NOT EXISTS ix_source_jobs_run_id ON source_jobs(run_id)",
+                "CREATE INDEX IF NOT EXISTS ix_source_jobs_category_id ON source_jobs(category_id)",
+                "CREATE INDEX IF NOT EXISTS ix_source_jobs_recipe_id ON source_jobs(recipe_id)",
+            ]
+        )
+
+    if "source_job_queries" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS source_job_queries ("
+                "id SERIAL PRIMARY KEY, "
+                "source_job_id INTEGER NOT NULL REFERENCES source_jobs(id), "
+                "status VARCHAR(16) NOT NULL DEFAULT 'queued', "
+                "query_text TEXT NOT NULL, "
+                "query_kind VARCHAR(32) NOT NULL, "
+                "raw_request JSONB NOT NULL DEFAULT '{}'::jsonb, "
+                "raw_response_excerpt TEXT NULL, "
+                "provider_request_id VARCHAR(128) NULL, "
+                "result_count INTEGER NOT NULL DEFAULT 0, "
+                "duration_ms INTEGER NULL, "
+                "created_at TIMESTAMP WITH TIME ZONE NOT NULL, "
+                "updated_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS source_job_queries ("
+                "id INTEGER PRIMARY KEY, "
+                "source_job_id INTEGER NOT NULL REFERENCES source_jobs(id), "
+                "status VARCHAR(16) NOT NULL DEFAULT 'queued', "
+                "query_text TEXT NOT NULL, "
+                "query_kind VARCHAR(32) NOT NULL, "
+                "raw_request JSON NOT NULL DEFAULT '{}', "
+                "raw_response_excerpt TEXT NULL, "
+                "provider_request_id VARCHAR(128) NULL, "
+                "result_count INTEGER NOT NULL DEFAULT 0, "
+                "duration_ms INTEGER NULL, "
+                "created_at TIMESTAMP NOT NULL, "
+                "updated_at TIMESTAMP NOT NULL"
+                ")"
+            )
+        statements.extend(
+            [
+                "CREATE INDEX IF NOT EXISTS ix_source_job_queries_source_job_id ON source_job_queries(source_job_id)",
+                "CREATE INDEX IF NOT EXISTS ix_source_job_queries_status ON source_job_queries(status)",
+                "CREATE INDEX IF NOT EXISTS ix_source_job_queries_query_kind ON source_job_queries(query_kind)",
+                "CREATE INDEX IF NOT EXISTS ix_source_job_queries_provider_request_id ON source_job_queries(provider_request_id)",
+            ]
+        )
+
+    if "source_records" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS source_records ("
+                "id SERIAL PRIMARY KEY, "
+                "source_job_id INTEGER NOT NULL REFERENCES source_jobs(id), "
+                "source_query_id INTEGER NULL REFERENCES source_job_queries(id), "
+                "source VARCHAR(32) NOT NULL DEFAULT 'overpass', "
+                "external_id VARCHAR(255) NOT NULL, "
+                "canonical_name VARCHAR(255) NOT NULL, "
+                "website_url VARCHAR(500) NULL, "
+                "phone_raw VARCHAR(255) NULL, "
+                "address_raw TEXT NULL, "
+                "city VARCHAR(128) NULL, "
+                "latitude VARCHAR(32) NULL, "
+                "longitude VARCHAR(32) NULL, "
+                "rating DOUBLE PRECISION NULL, "
+                "reviews_count INTEGER NULL, "
+                "dedupe_key VARCHAR(255) NULL, "
+                "merge_status VARCHAR(16) NOT NULL DEFAULT 'pending', "
+                "matched_company_id INTEGER NULL REFERENCES companies(id), "
+                "raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb, "
+                "created_at TIMESTAMP WITH TIME ZONE NOT NULL, "
+                "updated_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS source_records ("
+                "id INTEGER PRIMARY KEY, "
+                "source_job_id INTEGER NOT NULL REFERENCES source_jobs(id), "
+                "source_query_id INTEGER NULL REFERENCES source_job_queries(id), "
+                "source VARCHAR(32) NOT NULL DEFAULT 'overpass', "
+                "external_id VARCHAR(255) NOT NULL, "
+                "canonical_name VARCHAR(255) NOT NULL, "
+                "website_url VARCHAR(500) NULL, "
+                "phone_raw VARCHAR(255) NULL, "
+                "address_raw TEXT NULL, "
+                "city VARCHAR(128) NULL, "
+                "latitude VARCHAR(32) NULL, "
+                "longitude VARCHAR(32) NULL, "
+                "rating FLOAT NULL, "
+                "reviews_count INTEGER NULL, "
+                "dedupe_key VARCHAR(255) NULL, "
+                "merge_status VARCHAR(16) NOT NULL DEFAULT 'pending', "
+                "matched_company_id INTEGER NULL REFERENCES companies(id), "
+                "raw_payload JSON NOT NULL DEFAULT '{}', "
+                "created_at TIMESTAMP NOT NULL, "
+                "updated_at TIMESTAMP NOT NULL"
+                ")"
+            )
+        statements.extend(
+            [
+                "CREATE INDEX IF NOT EXISTS ix_source_records_source_job_id ON source_records(source_job_id)",
+                "CREATE INDEX IF NOT EXISTS ix_source_records_source_query_id ON source_records(source_query_id)",
+                "CREATE INDEX IF NOT EXISTS ix_source_records_source ON source_records(source)",
+                "CREATE INDEX IF NOT EXISTS ix_source_records_external_id ON source_records(external_id)",
+                "CREATE INDEX IF NOT EXISTS ix_source_records_city ON source_records(city)",
+                "CREATE INDEX IF NOT EXISTS ix_source_records_dedupe_key ON source_records(dedupe_key)",
+                "CREATE INDEX IF NOT EXISTS ix_source_records_merge_status ON source_records(merge_status)",
+                "CREATE INDEX IF NOT EXISTS ix_source_records_matched_company_id ON source_records(matched_company_id)",
+            ]
+        )
+
+    if "company_sources" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS company_sources ("
+                "id SERIAL PRIMARY KEY, "
+                "company_id INTEGER NOT NULL REFERENCES companies(id), "
+                "source VARCHAR(32) NOT NULL DEFAULT 'overpass', "
+                "external_id VARCHAR(255) NOT NULL, "
+                "source_job_id INTEGER NULL REFERENCES source_jobs(id), "
+                "source_record_id INTEGER NULL REFERENCES source_records(id), "
+                "confidence DOUBLE PRECISION NOT NULL DEFAULT 1.0, "
+                "is_primary BOOLEAN NOT NULL DEFAULT FALSE, "
+                "created_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS company_sources ("
+                "id INTEGER PRIMARY KEY, "
+                "company_id INTEGER NOT NULL REFERENCES companies(id), "
+                "source VARCHAR(32) NOT NULL DEFAULT 'overpass', "
+                "external_id VARCHAR(255) NOT NULL, "
+                "source_job_id INTEGER NULL REFERENCES source_jobs(id), "
+                "source_record_id INTEGER NULL REFERENCES source_records(id), "
+                "confidence FLOAT NOT NULL DEFAULT 1.0, "
+                "is_primary BOOLEAN NOT NULL DEFAULT 0, "
+                "created_at TIMESTAMP NOT NULL"
+                ")"
+            )
+        statements.extend(
+            [
+                "CREATE INDEX IF NOT EXISTS ix_company_sources_company_id ON company_sources(company_id)",
+                "CREATE INDEX IF NOT EXISTS ix_company_sources_source ON company_sources(source)",
+                "CREATE INDEX IF NOT EXISTS ix_company_sources_external_id ON company_sources(external_id)",
+                "CREATE INDEX IF NOT EXISTS ix_company_sources_source_job_id ON company_sources(source_job_id)",
+                "CREATE INDEX IF NOT EXISTS ix_company_sources_source_record_id ON company_sources(source_record_id)",
+                "CREATE INDEX IF NOT EXISTS ix_company_sources_is_primary ON company_sources(is_primary)",
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_company_source_external ON company_sources(company_id, source, external_id)",
+            ]
+        )
+
+    if not statements:
+        return
+
+    with engine.begin() as connection:
+        if dialect == "postgresql":
+            connection.execute(text("SELECT pg_advisory_xact_lock(2147483602)"))
+        for statement in statements:
+            connection.execute(text(statement))
+
+
 def ensure_recipe_schema(engine: Engine) -> None:
     tables = _table_names(engine)
     dialect = engine.dialect.name

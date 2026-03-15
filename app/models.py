@@ -90,6 +90,33 @@ class TaxonomyDraftStatus(str, Enum):
     REJECTED = "rejected"
 
 
+class DiscoverySource(str, Enum):
+    OVERPASS = "overpass"
+    GOOGLE_MAPS = "google_maps"
+
+
+class SourceJobStatus(str, Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class SourceJobQueryStatus(str, Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class SourceRecordMergeStatus(str, Enum):
+    PENDING = "pending"
+    MATCHED = "matched"
+    MERGED = "merged"
+    REJECTED = "rejected"
+
+
 RECIPE_SOURCE_STRATEGY_ENUM = SqlEnum(
     RecipeSourceStrategy,
     values_callable=lambda enum_cls: [member.value for member in enum_cls],
@@ -466,6 +493,106 @@ class QueryTaxonomyDraftVariantTemplate(Base):
     approved_template: Mapped["QueryRecipeVariantTemplate | None"] = relationship(foreign_keys=[approved_template_key])
 
 
+class SourceJob(Base):
+    __tablename__ = "source_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source: Mapped[DiscoverySource] = mapped_column(SqlEnum(DiscoverySource), default=DiscoverySource.OVERPASS, index=True)
+    status: Mapped[SourceJobStatus] = mapped_column(SqlEnum(SourceJobStatus), default=SourceJobStatus.QUEUED, index=True)
+    prompt_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    country_code: Mapped[str | None] = mapped_column(String(2), nullable=True, index=True)
+    region_id: Mapped[int | None] = mapped_column(ForeignKey("regions.id"), nullable=True, index=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("scrape_runs.id"), nullable=True, index=True)
+    category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"), nullable=True, index=True)
+    recipe_id: Mapped[int | None] = mapped_column(ForeignKey("query_recipes.id"), nullable=True, index=True)
+    recipe_version_id: Mapped[int | None] = mapped_column(ForeignKey("query_recipe_versions.id"), nullable=True, index=True)
+    provider: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    region: Mapped["Region | None"] = relationship(foreign_keys=[region_id])
+    run: Mapped["ScrapeRun | None"] = relationship(foreign_keys=[run_id])
+    category: Mapped["Category | None"] = relationship(foreign_keys=[category_id])
+    recipe: Mapped["QueryRecipe | None"] = relationship(foreign_keys=[recipe_id])
+    recipe_version: Mapped["QueryRecipeVersion | None"] = relationship(foreign_keys=[recipe_version_id])
+    queries: Mapped[list["SourceJobQuery"]] = relationship(back_populates="source_job", cascade="all, delete-orphan")
+    records: Mapped[list["SourceRecord"]] = relationship(back_populates="source_job", cascade="all, delete-orphan")
+
+
+class SourceJobQuery(Base):
+    __tablename__ = "source_job_queries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_job_id: Mapped[int] = mapped_column(ForeignKey("source_jobs.id"), index=True)
+    status: Mapped[SourceJobQueryStatus] = mapped_column(SqlEnum(SourceJobQueryStatus), default=SourceJobQueryStatus.QUEUED, index=True)
+    query_text: Mapped[str] = mapped_column(Text)
+    query_kind: Mapped[str] = mapped_column(String(32), index=True)
+    raw_request: Mapped[dict] = mapped_column(JSON, default=dict)
+    raw_response_excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider_request_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    result_count: Mapped[int] = mapped_column(Integer, default=0)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    source_job: Mapped["SourceJob"] = relationship(back_populates="queries")
+    records: Mapped[list["SourceRecord"]] = relationship(back_populates="source_query")
+
+
+class SourceRecord(Base):
+    __tablename__ = "source_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_job_id: Mapped[int] = mapped_column(ForeignKey("source_jobs.id"), index=True)
+    source_query_id: Mapped[int | None] = mapped_column(ForeignKey("source_job_queries.id"), nullable=True, index=True)
+    source: Mapped[DiscoverySource] = mapped_column(SqlEnum(DiscoverySource), default=DiscoverySource.OVERPASS, index=True)
+    external_id: Mapped[str] = mapped_column(String(255), index=True)
+    canonical_name: Mapped[str] = mapped_column(String(255), index=True)
+    website_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    phone_raw: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    address_raw: Mapped[str | None] = mapped_column(Text, nullable=True)
+    city: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    latitude: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    longitude: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    rating: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reviews_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    dedupe_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    merge_status: Mapped[SourceRecordMergeStatus] = mapped_column(SqlEnum(SourceRecordMergeStatus), default=SourceRecordMergeStatus.PENDING, index=True)
+    matched_company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id"), nullable=True, index=True)
+    raw_payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    source_job: Mapped["SourceJob"] = relationship(back_populates="records")
+    source_query: Mapped["SourceJobQuery | None"] = relationship(back_populates="records")
+    matched_company: Mapped["Company | None"] = relationship(foreign_keys=[matched_company_id])
+    company_links: Mapped[list["CompanySource"]] = relationship(back_populates="source_record")
+
+
+class CompanySource(Base):
+    __tablename__ = "company_sources"
+    __table_args__ = (
+        UniqueConstraint("company_id", "source", "external_id", name="uq_company_source_external"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    source: Mapped[DiscoverySource] = mapped_column(SqlEnum(DiscoverySource), default=DiscoverySource.OVERPASS, index=True)
+    external_id: Mapped[str] = mapped_column(String(255), index=True)
+    source_job_id: Mapped[int | None] = mapped_column(ForeignKey("source_jobs.id"), nullable=True, index=True)
+    source_record_id: Mapped[int | None] = mapped_column(ForeignKey("source_records.id"), nullable=True, index=True)
+    confidence: Mapped[float] = mapped_column(Float, default=1.0)
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+    company: Mapped["Company"] = relationship(back_populates="source_links")
+    source_job: Mapped["SourceJob | None"] = relationship(foreign_keys=[source_job_id])
+    source_record: Mapped["SourceRecord | None"] = relationship(back_populates="company_links", foreign_keys=[source_record_id])
+
+
 class QueryRecipeBenchmarkPrompt(Base):
     __tablename__ = "query_recipe_benchmark_prompts"
 
@@ -714,6 +841,7 @@ class Company(Base):
     contact_channels: Mapped[list["ContactChannel"]] = relationship(back_populates="company", cascade="all, delete-orphan")
     forms: Mapped[list["Form"]] = relationship(back_populates="company", cascade="all, delete-orphan")
     run_companies: Mapped[list["RunCompany"]] = relationship(back_populates="company", cascade="all, delete-orphan")
+    source_links: Mapped[list["CompanySource"]] = relationship(back_populates="company", cascade="all, delete-orphan")
 
 
 class CompanyCategory(Base):
