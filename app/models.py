@@ -281,6 +281,18 @@ class QueryRecipeRecommendationPolicy(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class QueryRecipeRecommendationPolicyAudit(Base):
+    __tablename__ = "query_recipe_recommendation_policy_audits"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    policy_key: Mapped[str] = mapped_column(String(64), index=True)
+    policy_label: Mapped[str] = mapped_column(String(128))
+    change_summary: Mapped[str] = mapped_column(String(255))
+    before_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    after_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
 class QueryRecipeVersion(Base):
     __tablename__ = "query_recipe_versions"
     __table_args__ = (

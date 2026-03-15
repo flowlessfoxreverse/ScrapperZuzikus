@@ -200,6 +200,33 @@
         <table>
           <thead>
             <tr>
+              <th>Changed</th>
+              <th>Policy</th>
+              <th>Summary</th>
+              <th>Before</th>
+              <th>After</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in recommendation_policy_audit_rows %}
+            <tr>
+              <td>{{ row.changed_at.strftime("%Y-%m-%d %H:%M") }}</td>
+              <td>
+                <strong>{{ row.policy_label }}</strong><br />
+                <span class="subtle">{{ row.policy_key }}</span>
+              </td>
+              <td>{{ row.change_summary }}</td>
+              <td><code>{{ row.before_json }}</code></td>
+              <td><code>{{ row.after_json }}</code></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5">No policy changes recorded yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <table>
+          <thead>
+            <tr>
               <th>Source Strategy</th>
               <th>Templates</th>
               <th>Active Recipes</th>

@@ -455,6 +455,40 @@ def ensure_recipe_schema(engine: Engine) -> None:
             "ON query_recipe_recommendation_policies(source_strategy)"
         )
 
+    if "query_recipe_recommendation_policy_audits" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_recipe_recommendation_policy_audits ("
+                "id SERIAL PRIMARY KEY, "
+                "policy_key VARCHAR(64) NOT NULL, "
+                "policy_label VARCHAR(128) NOT NULL, "
+                "change_summary VARCHAR(255) NOT NULL, "
+                "before_json JSONB NOT NULL DEFAULT '{}'::jsonb, "
+                "after_json JSONB NOT NULL DEFAULT '{}'::jsonb, "
+                "changed_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_recipe_recommendation_policy_audits ("
+                "id INTEGER PRIMARY KEY, "
+                "policy_key VARCHAR(64) NOT NULL, "
+                "policy_label VARCHAR(128) NOT NULL, "
+                "change_summary VARCHAR(255) NOT NULL, "
+                "before_json JSON NOT NULL DEFAULT '{}', "
+                "after_json JSON NOT NULL DEFAULT '{}', "
+                "changed_at TIMESTAMP NOT NULL"
+                ")"
+            )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_recipe_recommendation_policy_audits_policy_key "
+            "ON query_recipe_recommendation_policy_audits(policy_key)"
+        )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_recipe_recommendation_policy_audits_changed_at "
+            "ON query_recipe_recommendation_policy_audits(changed_at)"
+        )
+
     category_vertical = None
     if "vertical" in category_columns:
         try:

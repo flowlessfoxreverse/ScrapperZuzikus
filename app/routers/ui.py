@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import Category, Company, ContactChannel, ContactChannelType, Email, NicheCluster, Phone, ProxyEndpoint, ProxyKind, QueryRecipe, QueryRecipePlanVariantOutcome, QueryRecipeRecommendationPolicy, QueryRecipeValidation, QueryRecipeVariant, QueryRecipeVariantRunStat, QueryRecipeVariantTemplate, QueryRecipeVersion, RecipeAdapter, RecipeSourceStrategy, RecipeStatus, Region, RequestMetric, RunCategory, RunStatus, ScrapeRun, TaxonomyVertical, ValidationStatus
+from app.models import Category, Company, ContactChannel, ContactChannelType, Email, NicheCluster, Phone, ProxyEndpoint, ProxyKind, QueryRecipe, QueryRecipePlanVariantOutcome, QueryRecipeRecommendationPolicy, QueryRecipeRecommendationPolicyAudit, QueryRecipeValidation, QueryRecipeVariant, QueryRecipeVariantRunStat, QueryRecipeVariantTemplate, QueryRecipeVersion, RecipeAdapter, RecipeSourceStrategy, RecipeStatus, Region, RequestMetric, RunCategory, RunStatus, ScrapeRun, TaxonomyVertical, ValidationStatus
 from app.schemas import EmailRow
 from app.services.category_recipes import latest_recipe_version, sync_recipe_to_category, upsert_recipe_backed_category
 from app.services.host_suppression import normalize_host_key
@@ -302,6 +302,16 @@ class RecommendationPolicyRow:
     suppression_production_score_max: int
     suppression_production_runs_min: int
     is_active: bool
+
+
+@dataclass
+class RecommendationPolicyAuditRow:
+    policy_key: str
+    policy_label: str
+    change_summary: str
+    changed_at: datetime
+    before_json: dict[str, object]
+    after_json: dict[str, object]
 
 
 @dataclass
@@ -961,6 +971,25 @@ def build_recommendation_policy_rows(db: Session) -> list[RecommendationPolicyRo
             )
         )
     return result
+
+
+def build_recommendation_policy_audit_rows(db: Session, limit: int = 20) -> list[RecommendationPolicyAuditRow]:
+    audits = db.scalars(
+        select(QueryRecipeRecommendationPolicyAudit)
+        .order_by(QueryRecipeRecommendationPolicyAudit.changed_at.desc())
+        .limit(limit)
+    ).all()
+    return [
+        RecommendationPolicyAuditRow(
+            policy_key=audit.policy_key,
+            policy_label=audit.policy_label,
+            change_summary=audit.change_summary,
+            changed_at=audit.changed_at,
+            before_json=audit.before_json or {},
+            after_json=audit.after_json or {},
+        )
+        for audit in audits
+    ]
 
 
 def build_category_rows(db: Session) -> list[CategoryRow]:
@@ -1669,6 +1698,7 @@ def recipe_editor(
     strategy_rows, cluster_rows, market_rows, strategy_market_rows, top_variants = build_recipe_analytics(db)
     strategy_threshold_rows = build_strategy_threshold_rows()
     recommendation_policy_rows = build_recommendation_policy_rows(db)
+    recommendation_policy_audit_rows = build_recommendation_policy_audit_rows(db)
     if draft_prompt:
         try:
             plan = plan_recipe_prompt(
@@ -1757,6 +1787,7 @@ def recipe_editor(
             "recipe_source_strategies": list(RecipeSourceStrategy),
             "strategy_activation_thresholds": strategy_threshold_rows,
             "recommendation_policy_rows": recommendation_policy_rows,
+            "recommendation_policy_audit_rows": recommendation_policy_audit_rows,
             "activation_thresholds": {
                 "validation_score": settings.recipe_activation_min_validation_score,
                 "validation_runs": settings.recipe_activation_min_validation_runs,
@@ -2093,6 +2124,7 @@ def generate_recipe_draft_html(
     strategy_rows, cluster_rows, market_rows, strategy_market_rows, top_variants = build_recipe_analytics(db)
     strategy_threshold_rows = build_strategy_threshold_rows()
     recommendation_policy_rows = build_recommendation_policy_rows(db)
+    recommendation_policy_audit_rows = build_recommendation_policy_audit_rows(db)
     try:
         plan = plan_recipe_prompt(
             db,
@@ -2193,6 +2225,7 @@ def generate_recipe_draft_html(
             "top_variants": top_variants,
             "strategy_activation_thresholds": strategy_threshold_rows,
             "recommendation_policy_rows": recommendation_policy_rows,
+            "recommendation_policy_audit_rows": recommendation_policy_audit_rows,
             "activation_thresholds": {
                 "validation_score": settings.recipe_activation_min_validation_score,
                 "validation_runs": settings.recipe_activation_min_validation_runs,
@@ -2261,6 +2294,24 @@ def update_recommendation_policy_html(
     if policy is None:
         return RedirectResponse(url="/recipes?error=Recommendation%20policy%20not%20found.", status_code=303)
 
+    before_state = {
+        "is_active": policy.is_active,
+        "recommended_validation_score": policy.recommended_validation_score,
+        "recommended_validation_runs": policy.recommended_validation_runs,
+        "recommended_production_score": policy.recommended_production_score,
+        "recommended_production_runs": policy.recommended_production_runs,
+        "recommended_activation_count": policy.recommended_activation_count,
+        "trusted_validation_score": policy.trusted_validation_score,
+        "trusted_validation_runs": policy.trusted_validation_runs,
+        "trusted_production_score": policy.trusted_production_score,
+        "trusted_production_runs": policy.trusted_production_runs,
+        "trusted_activation_count": policy.trusted_activation_count,
+        "suppression_validation_score_max": policy.suppression_validation_score_max,
+        "suppression_validation_runs_min": policy.suppression_validation_runs_min,
+        "suppression_production_score_max": policy.suppression_production_score_max,
+        "suppression_production_runs_min": policy.suppression_production_runs_min,
+    }
+
     policy.label = label.strip() or policy.label
     policy.recommended_validation_score = max(0, min(100, recommended_validation_score))
     policy.recommended_validation_runs = max(0, recommended_validation_runs)
@@ -2277,6 +2328,35 @@ def update_recommendation_policy_html(
     policy.suppression_production_score_max = max(0, min(100, suppression_production_score_max))
     policy.suppression_production_runs_min = max(0, suppression_production_runs_min)
     policy.is_active = is_active.strip().lower() == "true"
+
+    after_state = {
+        "is_active": policy.is_active,
+        "recommended_validation_score": policy.recommended_validation_score,
+        "recommended_validation_runs": policy.recommended_validation_runs,
+        "recommended_production_score": policy.recommended_production_score,
+        "recommended_production_runs": policy.recommended_production_runs,
+        "recommended_activation_count": policy.recommended_activation_count,
+        "trusted_validation_score": policy.trusted_validation_score,
+        "trusted_validation_runs": policy.trusted_validation_runs,
+        "trusted_production_score": policy.trusted_production_score,
+        "trusted_production_runs": policy.trusted_production_runs,
+        "trusted_activation_count": policy.trusted_activation_count,
+        "suppression_validation_score_max": policy.suppression_validation_score_max,
+        "suppression_validation_runs_min": policy.suppression_validation_runs_min,
+        "suppression_production_score_max": policy.suppression_production_score_max,
+        "suppression_production_runs_min": policy.suppression_production_runs_min,
+    }
+    changed_fields = [key for key, value in after_state.items() if before_state.get(key) != value]
+    if changed_fields:
+        db.add(
+            QueryRecipeRecommendationPolicyAudit(
+                policy_key=policy.policy_key,
+                policy_label=policy.label,
+                change_summary="Updated " + ", ".join(changed_fields[:5]) + ("..." if len(changed_fields) > 5 else ""),
+                before_json=before_state,
+                after_json=after_state,
+            )
+        )
     db.commit()
     return RedirectResponse(
         url=f"/recipes?message={quote_plus(f'Updated recommendation policy {policy.label}.')}",
