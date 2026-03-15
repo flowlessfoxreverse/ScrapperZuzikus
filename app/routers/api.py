@@ -6,11 +6,22 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models import Category, Email, RecipeAdapter, RecipeSourceStrategy, RecipeStatus, Region, RunCategory, RunStatus, ScrapeRun, ValidationStatus
-from app.schemas import CategoryCreate, CategoryOut, EmailStatusUpdate, RegionCreate, RegionOut, RunCreate, RunOut
+from app.schemas import (
+    CategoryCreate,
+    CategoryOut,
+    EmailStatusUpdate,
+    GoogleMapsIngestRequest,
+    GoogleMapsIngestResponse,
+    RegionCreate,
+    RegionOut,
+    RunCreate,
+    RunOut,
+)
 from app.services.category_recipes import upsert_recipe_backed_category
 from app.services.overpass import fetch_status_payload
 from app.services.runs import find_active_run, request_run_cancellation
-from app.tasks import run_scrape
+from app.services.source_ingestion import ingest_google_maps_results
+from app.tasks import crawl_company, run_scrape
 
 
 router = APIRouter(prefix="/api", tags=["api"])
@@ -117,3 +128,41 @@ def update_email_status(email_id: int, payload: EmailStatusUpdate, db: Session =
 @router.get("/system/overpass-status", response_model=dict)
 def overpass_status() -> dict:
     return fetch_status_payload()
+
+
+@router.post("/source-jobs/google-maps", response_model=GoogleMapsIngestResponse)
+def ingest_google_maps_source_job(
+    payload: GoogleMapsIngestRequest,
+    db: Session = Depends(get_db),
+) -> GoogleMapsIngestResponse:
+    try:
+        summary = ingest_google_maps_results(
+            db,
+            region_id=payload.region_id,
+            results=[item.model_dump(exclude_none=True) for item in payload.results],
+            prompt_text=payload.prompt_text,
+            category_id=payload.category_id,
+            recipe_id=payload.recipe_id,
+            recipe_version_id=payload.recipe_version_id,
+            run_id=payload.run_id,
+            provider=payload.provider,
+            materialize_companies=payload.materialize_companies,
+            enqueue_crawl=payload.enqueue_crawl,
+        )
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if payload.enqueue_crawl and payload.run_id is not None:
+        for company_id in summary.queued_company_ids:
+            crawl_company.send(payload.run_id, company_id)
+
+    return GoogleMapsIngestResponse(
+        source_job_id=summary.source_job_id,
+        source_record_count=summary.source_record_count,
+        query_count=summary.query_count,
+        matched_company_count=summary.matched_company_count,
+        created_company_count=summary.created_company_count,
+        queued_company_count=summary.queued_company_count,
+    )

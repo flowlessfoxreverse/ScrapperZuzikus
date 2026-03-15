@@ -86,3 +86,39 @@ class CategoryCreate(BaseModel):
     cluster_slug: str | None = None
     osm_tags: list[dict[str, str]]
     search_terms: list[str]
+
+
+class GoogleMapsResultIn(BaseModel):
+    name: str | None = None
+    keyword: str | None = None
+    address: str | None = None
+    phone: str | None = None
+    website: str | None = None
+    rating: str | float | int | None = None
+    reviews: str | int | float | None = None
+    place_id: str | None = None
+    latitude: str | float | None = None
+    longitude: str | float | None = None
+    external_id: str | None = None
+
+
+class GoogleMapsIngestRequest(BaseModel):
+    region_id: int
+    results: list[GoogleMapsResultIn]
+    prompt_text: str | None = None
+    category_id: int | None = None
+    recipe_id: int | None = None
+    recipe_version_id: int | None = None
+    run_id: int | None = None
+    provider: str | None = "maps_scraper_v3"
+    materialize_companies: bool = False
+    enqueue_crawl: bool = False
+
+
+class GoogleMapsIngestResponse(BaseModel):
+    source_job_id: int
+    source_record_count: int
+    query_count: int
+    matched_company_count: int
+    created_company_count: int
+    queued_company_count: int
