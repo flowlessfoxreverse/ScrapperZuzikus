@@ -760,6 +760,18 @@ def ensure_recipe_schema(engine: Engine) -> None:
             "ON query_prompt_variant_decisions(variant_key)"
         )
 
+    for table_name in (
+        "query_recipe_variant_templates",
+        "query_recipe_versions",
+        "query_recipe_variants",
+    ):
+        if table_name in tables and "source_strategy" in columns_by_table.get(table_name, set()):
+            statements.append(
+                f"UPDATE {table_name} "
+                "SET source_strategy = LOWER(source_strategy) "
+                "WHERE source_strategy <> LOWER(source_strategy)"
+            )
+
     if not statements:
         return
 
