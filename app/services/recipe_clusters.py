@@ -12,6 +12,10 @@ from app.services.recipe_prompt_normalization import resolve_prompt_country_code
 from app.services.recipe_variants import prompt_fingerprint
 
 
+def _safe_int(value: int | None) -> int:
+    return int(value or 0)
+
+
 def _is_ambiguous(chosen: ClusterCandidate, alternates: list[ClusterCandidate]) -> bool:
     if not alternates:
         return False
@@ -61,23 +65,28 @@ def apply_cluster_decision_history(
         market_historical_seen_count = 0
         market_historical_selected_count = 0
         if row is not None:
-            bonus += min(row.times_selected, 5) * 3
-            historical_seen_count = row.times_seen
-            historical_selected_count = row.times_selected
-            ambiguity_count = row.ambiguity_count
+            row_times_seen = _safe_int(row.times_seen)
+            row_times_selected = _safe_int(row.times_selected)
+            row_ambiguity_count = _safe_int(row.ambiguity_count)
+            bonus += min(row_times_selected, 5) * 3
+            historical_seen_count = row_times_seen
+            historical_selected_count = row_times_selected
+            ambiguity_count = row_ambiguity_count
             rationale.append(
-                f"Historically selected {row.times_selected} of {row.times_seen} prompt run(s)."
+                f"Historically selected {row_times_selected} of {row_times_seen} prompt run(s)."
             )
-            if row.ambiguity_count:
+            if row_ambiguity_count:
                 rationale.append(
-                    f"This prompt was ambiguous across {row.ambiguity_count} prior run(s)."
+                    f"This prompt was ambiguous across {row_ambiguity_count} prior run(s)."
                 )
         if market_row is not None:
-            bonus += min(market_row.times_selected, 5) * 4
-            market_historical_seen_count = market_row.times_seen
-            market_historical_selected_count = market_row.times_selected
+            market_times_seen = _safe_int(market_row.times_seen)
+            market_times_selected = _safe_int(market_row.times_selected)
+            bonus += min(market_times_selected, 5) * 4
+            market_historical_seen_count = market_times_seen
+            market_historical_selected_count = market_times_selected
             rationale.append(
-                f"In {prompt_market_country}, this cluster was selected {market_row.times_selected} of {market_row.times_seen} similar prompt run(s)."
+                f"In {prompt_market_country}, this cluster was selected {market_times_selected} of {market_times_seen} similar prompt run(s)."
             )
         return replace(
             candidate,
@@ -135,9 +144,9 @@ def record_cluster_decision(
                 row.match_score = candidate.score
                 row.matched_aliases = list(candidate.matched_aliases)
                 row.rationale = candidate.rationale
-                row.times_seen = max(row.times_seen, 0) + 1
+                row.times_seen = _safe_int(row.times_seen) + 1
                 if candidate.cluster_slug == chosen.cluster_slug:
-                    row.times_selected = max(row.times_selected, 0) + 1
+                    row.times_selected = _safe_int(row.times_selected) + 1
                 if ambiguous:
-                    row.ambiguity_count = max(row.ambiguity_count, 0) + 1
+                    row.ambiguity_count = _safe_int(row.ambiguity_count) + 1
                 row.last_seen_at = now
