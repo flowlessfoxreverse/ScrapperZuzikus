@@ -84,6 +84,7 @@
               <th>Prompt Match</th>
               <th>Observed Validation</th>
               <th>Validation Runs</th>
+              <th>Cluster Baseline</th>
               <th>Rank Score</th>
               <th>Signals</th>
               <th>Action</th>
@@ -102,6 +103,13 @@
               <td>{{ variant.prompt_match_score }}</td>
               <td>{{ variant.observed_validation_score or "-" }}</td>
               <td>{{ variant.historical_validation_count or "-" }}</td>
+              <td>
+                {% if variant.cluster_validation_count %}
+                {{ variant.cluster_validation_score }}/{{ variant.cluster_validation_count }}
+                {% else %}
+                -
+                {% endif %}
+              </td>
               <td>{{ variant.fit_score }}</td>
               <td>{{ variant.fit_reasons|join(" ") }}</td>
               <td>
@@ -184,6 +192,16 @@
           <div class="stat-card">
             <span class="subtle">Validation Runs</span>
             <strong>{{ draft_proposal.historical_validation_count or "-" }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Cluster Baseline</span>
+            <strong>
+              {% if draft_proposal.cluster_validation_count %}
+              {{ draft_proposal.cluster_validation_score }}/{{ draft_proposal.cluster_validation_count }}
+              {% else %}
+              -
+              {% endif %}
+            </strong>
           </div>
           <div class="stat-card">
             <span class="subtle">Rank Score</span>

@@ -72,12 +72,22 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
         return proposals
 
     by_key: dict[str, list[QueryRecipeVariant]] = {}
+    by_cluster: dict[str, list[QueryRecipeVariant]] = {}
     for variant in session.scalars(
         select(QueryRecipeVariant).where(
             QueryRecipeVariant.variant_key.in_([proposal.variant_key for proposal in proposals])
         )
     ).all():
         by_key.setdefault(variant.variant_key, []).append(variant)
+    for variant in session.scalars(
+        select(QueryRecipeVariant).where(
+            QueryRecipeVariant.cluster_slug.in_(
+                [proposal.cluster_slug for proposal in proposals if proposal.cluster_slug]
+            )
+        )
+    ).all():
+        if variant.cluster_slug:
+            by_cluster.setdefault(variant.cluster_slug, []).append(variant)
 
     adjusted: list[DraftProposal] = []
     for proposal in proposals:
@@ -86,22 +96,42 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
         weighted_sum = sum(max(row.validation_count, 0) * max(row.observed_validation_score, 0) for row in history_rows)
         observed_score = round(weighted_sum / total_runs) if total_runs else 0
         validation_bonus = _validation_bonus(observed_score, total_runs)
+        cluster_rows = by_cluster.get(proposal.cluster_slug or "", [])
+        cluster_runs = sum(max(row.validation_count, 0) for row in cluster_rows)
+        cluster_weighted_sum = sum(
+            max(row.validation_count, 0) * max(row.observed_validation_score, 0) for row in cluster_rows
+        )
+        cluster_score = round(cluster_weighted_sum / cluster_runs) if cluster_runs else 0
+        cluster_bonus = round(cluster_score * 0.15 * (min(cluster_runs, 8) / 8)) if cluster_runs else 0
         fit_reasons = list(proposal.fit_reasons)
         if total_runs:
             fit_reasons.append(
                 f"Historical validation score {observed_score}/100 across {total_runs} validation run(s)."
+            )
+        if cluster_runs:
+            fit_reasons.append(
+                f"Cluster baseline {cluster_score}/100 across {cluster_runs} validation run(s)."
             )
         adjusted.append(
             replace(
                 proposal,
                 observed_validation_score=observed_score,
                 historical_validation_count=total_runs,
-                fit_score=proposal.template_score + proposal.prompt_match_score + validation_bonus,
+                cluster_validation_score=cluster_score,
+                cluster_validation_count=cluster_runs,
+                fit_score=proposal.template_score + proposal.prompt_match_score + validation_bonus + cluster_bonus,
                 fit_reasons=fit_reasons,
             )
         )
 
-    adjusted.sort(key=lambda item: (-item.fit_score, -item.observed_validation_score, item.label))
+    adjusted.sort(
+        key=lambda item: (
+            -item.fit_score,
+            -item.observed_validation_score,
+            -item.cluster_validation_score,
+            item.label,
+        )
+    )
     return adjusted
 
 

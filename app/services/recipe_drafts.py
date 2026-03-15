@@ -28,6 +28,8 @@ class DraftProposal:
     fit_reasons: list[str]
     observed_validation_score: int = 0
     historical_validation_count: int = 0
+    cluster_validation_score: int = 0
+    cluster_validation_count: int = 0
 
 
 @dataclass(frozen=True)
