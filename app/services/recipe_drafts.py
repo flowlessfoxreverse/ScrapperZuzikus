@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import QueryRecipeVariantTemplate, RecipeAdapter, RecipeSourceStrategy
-from app.services.recipe_variants import normalize_prompt_text
+from app.services.recipe_prompt_normalization import normalize_prompt_text
 
 
 @dataclass(frozen=True)
