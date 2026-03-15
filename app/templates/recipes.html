@@ -77,7 +77,6 @@
         <table>
           <thead>
             <tr>
-              <th>Select</th>
               <th>Variant</th>
               <th>Vertical</th>
               <th>Cluster</th>
@@ -92,14 +91,6 @@
             {% for variant in draft_variants %}
             <tr>
               <td>
-                <input
-                  type="checkbox"
-                  name="selected_variant_keys"
-                  value="{{ variant.variant_key }}"
-                  {% if draft_proposal and draft_proposal.variant_key == variant.variant_key %}checked{% endif %}
-                />
-              </td>
-              <td>
                 <strong>{{ variant.label }}</strong><br />
                 <span class="subtle"><code>{{ variant.slug }}</code></span>
               </td>
@@ -110,13 +101,35 @@
               <td>{{ variant.fit_score }}</td>
               <td>{{ variant.fit_reasons|join(" ") }}</td>
               <td>
-                <form action="/recipes/draft" method="post">
-                  <input type="hidden" name="prompt" value="{{ draft_prompt }}" />
-                  <input type="hidden" name="selected_variant_slug" value="{{ variant.variant_key }}" />
-                  <button type="submit" class="ghost-button small-button" {% if draft_proposal and draft_proposal.variant_key == variant.variant_key %}disabled{% endif %}>
+                <input
+                  id="variant-select-{{ variant.variant_key }}"
+                  type="checkbox"
+                  name="selected_variant_keys"
+                  value="{{ variant.variant_key }}"
+                  class="variant-selection"
+                  hidden
+                  {% if draft_proposal and draft_proposal.variant_key == variant.variant_key %}checked{% endif %}
+                />
+                <div class="hero-actions">
+                  <button
+                    type="submit"
+                    formaction="/recipes/draft"
+                    formmethod="post"
+                    name="selected_variant_slug"
+                    value="{{ variant.variant_key }}"
+                    class="ghost-button small-button"
+                    {% if draft_proposal and draft_proposal.variant_key == variant.variant_key %}disabled{% endif %}
+                  >
                     {% if draft_proposal and draft_proposal.variant_key == variant.variant_key %}Selected{% else %}Use Variant{% endif %}
                   </button>
-                </form>
+                  <button
+                    type="button"
+                    class="ghost-button small-button variant-toggle"
+                    data-target="variant-select-{{ variant.variant_key }}"
+                  >
+                    {% if draft_proposal and draft_proposal.variant_key == variant.variant_key %}In Batch{% else %}Add to Batch{% endif %}
+                  </button>
+                </div>
               </td>
             </tr>
             {% endfor %}
@@ -369,5 +382,22 @@
         </table>
       </section>
     </main>
+    <script>
+      document.querySelectorAll(".variant-toggle").forEach((button) => {
+        const targetId = button.dataset.target;
+        const checkbox = document.getElementById(targetId);
+        if (!checkbox) return;
+
+        const syncLabel = () => {
+          button.textContent = checkbox.checked ? "In Batch" : "Add to Batch";
+        };
+
+        syncLabel();
+        button.addEventListener("click", () => {
+          checkbox.checked = !checkbox.checked;
+          syncLabel();
+        });
+      });
+    </script>
   </body>
 </html>
