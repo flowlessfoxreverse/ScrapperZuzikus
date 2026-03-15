@@ -87,6 +87,93 @@ services:
     networks:
       - scrapper_net
 
+  email_validation_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m dramatiq --processes 1 --threads 4 app.tasks:redis_broker app.tasks --queues email_validation
+    env_file:
+      - .env
+    volumes:
+      - .:/workspace
+    depends_on:
+      - db
+      - redis
+    networks:
+      - scrapper_net
+
+  emailval_api:
+    build:
+      context: ./emailvalidator/emailvalidator
+      dockerfile: docker/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://emailval:${EMAILVAL_DB_PASSWORD:-emailval}@emailval_db:5432/emailval
+      REDIS_URL: redis://emailval_redis:6379/0
+      CELERY_BROKER_URL: redis://emailval_redis:6379/1
+      SMTP_HELO_HOSTNAME: ${EMAILVAL_SMTP_HELO_HOSTNAME:-mail.validator.example.com}
+      SMTP_FROM_ADDRESS: ${EMAILVAL_SMTP_FROM_ADDRESS:-probe@validator.example.com}
+      DEBUG: ${EMAILVAL_DEBUG:-false}
+    ports:
+      - "${EMAILVAL_HOST_PORT:-8002}:8000"
+    depends_on:
+      emailval_db:
+        condition: service_healthy
+      emailval_redis:
+        condition: service_healthy
+    networks:
+      - scrapper_net
+    restart: unless-stopped
+
+  emailval_worker:
+    build:
+      context: ./emailvalidator/emailvalidator
+      dockerfile: docker/Dockerfile
+    command: celery -A app.workers.tasks worker --loglevel=info --concurrency=${EMAILVAL_WORKER_CONCURRENCY:-4} --queues validation,retry
+    environment:
+      DATABASE_URL: postgresql+asyncpg://emailval:${EMAILVAL_DB_PASSWORD:-emailval}@emailval_db:5432/emailval
+      REDIS_URL: redis://emailval_redis:6379/0
+      CELERY_BROKER_URL: redis://emailval_redis:6379/1
+      SMTP_HELO_HOSTNAME: ${EMAILVAL_SMTP_HELO_HOSTNAME:-mail.validator.example.com}
+      SMTP_FROM_ADDRESS: ${EMAILVAL_SMTP_FROM_ADDRESS:-probe@validator.example.com}
+    depends_on:
+      emailval_db:
+        condition: service_healthy
+      emailval_redis:
+        condition: service_healthy
+    networks:
+      - scrapper_net
+    restart: unless-stopped
+
+  emailval_db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: emailval
+      POSTGRES_PASSWORD: ${EMAILVAL_DB_PASSWORD:-emailval}
+      POSTGRES_DB: emailval
+    volumes:
+      - emailval_pgdata:/var/lib/postgresql/data
+    networks:
+      - scrapper_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U emailval"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  emailval_redis:
+    image: redis:7-alpine
+    volumes:
+      - emailval_redis_data:/data
+    networks:
+      - scrapper_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   db:
     image: postgres:16-alpine
     environment:
@@ -141,6 +228,8 @@ services:
 volumes:
   pgdata:
   overpassdb:
+  emailval_pgdata:
+  emailval_redis_data:
 
 networks:
   scrapper_net:

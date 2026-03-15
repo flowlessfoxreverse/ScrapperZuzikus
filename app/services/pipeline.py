@@ -865,6 +865,9 @@ def execute_crawl(session: Session, run_id: int, company_id: int) -> None:
             browser_crawl_company.send(run_id, company_id)
             return
         mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.COMPLETED)
+        if settings.email_validator_url:
+            from app.tasks import validate_company_emails
+            validate_company_emails.send(company_id)
     except Exception as exc:
         session.rollback()
         run = session.get(ScrapeRun, run_id)
@@ -960,6 +963,9 @@ def execute_browser_crawl(session: Session, run_id: int, company_id: int) -> Non
             proxy_label=proxy.label if proxy else None,
         )
         mark_run_company_finished(session, run_id, company_id, RunCompanyStatus.COMPLETED)
+        if settings.email_validator_url:
+            from app.tasks import validate_company_emails
+            validate_company_emails.send(company_id)
     except Exception as exc:
         session.rollback()
         run = session.get(ScrapeRun, run_id)

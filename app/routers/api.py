@@ -10,6 +10,7 @@ from app.schemas import (
     CategoryCreate,
     CategoryOut,
     EmailStatusUpdate,
+    EmailValidationCallback,
     GoogleMapsIngestRequest,
     GoogleMapsIngestResponse,
     RegionCreate,
@@ -123,6 +124,54 @@ def update_email_status(email_id: int, payload: EmailStatusUpdate, db: Session =
     db.add(email)
     db.commit()
     return {"status": "ok", "validation_status": payload.validation_status.value}
+
+
+@router.post("/email-validation-results", response_model=dict[str, str])
+def receive_email_validation_result(
+    payload: EmailValidationCallback,
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    """
+    Callback endpoint called by the emailvalidator microservice when a
+    validation job completes.  Updates all Email rows that share the
+    validated email string (validation result is per-address, not per-company).
+    """
+    normalized = payload.email.lower().strip()
+
+    status_map = {
+        "valid":   ValidationStatus.VALID,
+        "invalid": ValidationStatus.INVALID,
+        "risky":   ValidationStatus.RISKY,
+        "unknown": ValidationStatus.UNKNOWN,
+    }
+    new_status = status_map.get(payload.status, ValidationStatus.UNKNOWN)
+
+    emails = db.scalars(select(Email).where(Email.email == normalized)).all()
+    for email in emails:
+        email.validation_status = new_status
+        meta = dict(email.technical_metadata or {})
+        meta["validator"] = {
+            "service": "emailvalidator",
+            "score": payload.score,
+            "status": payload.status,
+            "reasons": payload.reasons,
+            "detail": {
+                "syntax_valid": payload.syntax_valid,
+                "domain_exists": payload.domain_exists,
+                "mx_found": payload.mx_found,
+                "is_disposable": payload.is_disposable,
+                "is_role_based": payload.is_role_based,
+                "typo_suggestion": payload.typo_suggestion,
+                "smtp_verdict": payload.smtp_verdict,
+                "primary_mx": payload.primary_mx,
+            },
+            "validated_at": payload.validated_at or payload.completed_at,
+        }
+        email.technical_metadata = meta
+        db.add(email)
+
+    db.commit()
+    return {"status": "ok", "updated": str(len(emails))}
 
 
 @router.get("/system/overpass-status", response_model=dict)

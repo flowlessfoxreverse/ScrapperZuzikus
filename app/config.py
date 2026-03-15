@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     proxy_health_success_recovery: int = 5
     crawl_retry_attempts: int = 3
     crawl_retry_delay_seconds: int = 45
+    email_validator_url: str | None = None
+    email_validator_webhook_base_url: str | None = None
+    email_validator_skip_smtp: bool = False
     worker_processes: int = 1
     worker_threads: int = 1
     crawl_worker_processes: int = 1

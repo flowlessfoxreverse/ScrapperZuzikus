@@ -122,3 +122,26 @@ class GoogleMapsIngestResponse(BaseModel):
     matched_company_count: int
     created_company_count: int
     queued_company_count: int
+
+
+class EmailValidationCallback(BaseModel):
+    """
+    Payload sent by the emailvalidator microservice to
+    POST /api/email-validation-results when a validation job completes.
+    Mirrors the result dict produced by app.workers.tasks._run_pipeline.
+    """
+    email: str
+    status: str  # valid | invalid | risky | unknown
+    score: int = 0
+    reasons: list[str] = []
+    syntax_valid: bool = True
+    domain_exists: bool | None = None
+    mx_found: bool | None = None
+    is_disposable: bool | None = None
+    is_role_based: bool | None = None
+    typo_suggestion: str | None = None
+    smtp_verdict: str | None = None
+    primary_mx: str | None = None
+    validated_at: str | None = None
+    completed_at: str | None = None
+    request_id: str | None = None
