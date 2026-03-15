@@ -33,7 +33,12 @@ from app.services.recipe_prompt_variants import (
 )
 from app.services.taxonomy import list_active_clusters, list_active_verticals
 from app.services.recipe_validation import get_validation_quota_snapshot, validate_recipe_version
-from app.services.recipe_variants import prompt_fingerprint, prompt_variant_recipe_map, upsert_prompt_variants
+from app.services.recipe_variants import (
+    derive_recommendation_state,
+    prompt_fingerprint,
+    prompt_variant_recipe_map,
+    upsert_prompt_variants,
+)
 from app.services.region_catalog import country_catalog, upsert_country_with_subdivisions
 from app.services.runs import find_active_run, request_run_cancellation
 from app.tasks import run_scrape, sync_region_catalog_task
@@ -200,6 +205,9 @@ class RecipeRow:
     linked_category_active: bool
     source_variant_key: str | None
     source_variant_prompt: str | None
+    recommendation_state: str
+    recommendation_state_score: int
+    recommendation_reasons: list[str]
     created_at: datetime
 
 
@@ -808,6 +816,27 @@ def build_recipe_rows(db: Session) -> list[RecipeRow]:
             if version
             else RecipeLintResult(False, ["Recipe has no version."], [])
         )
+        recommendation_state = "experimental"
+        recommendation_state_score = 0
+        recommendation_reasons = ["No source variant is linked yet."]
+        if recipe.source_variant and version:
+            recommendation_state, recommendation_state_score, recommendation_reasons, _ = derive_recommendation_state(
+                source_strategy=version.source_strategy,
+                observed_validation_score=recipe.source_variant.observed_validation_score,
+                historical_validation_count=recipe.source_variant.validation_count,
+                production_score=recipe.source_variant.observed_production_score,
+                production_run_count=recipe.source_variant.production_run_count,
+                planner_selection_count=recipe.source_variant.planner_selection_count,
+                planner_draft_count=recipe.source_variant.planner_draft_count,
+                planner_activation_count=recipe.source_variant.planner_activation_count,
+                prompt_selection_count=recipe.source_variant.prompt_selection_count,
+                prompt_draft_count=recipe.source_variant.prompt_draft_count,
+                prompt_activation_count=recipe.source_variant.prompt_activation_count,
+                market_production_score=0,
+                market_production_run_count=0,
+                strategy_production_score=0,
+                strategy_production_run_count=0,
+            )
         rows.append(
             RecipeRow(
                 id=recipe.id,
@@ -851,6 +880,9 @@ def build_recipe_rows(db: Session) -> list[RecipeRow]:
                 linked_category_active=linked_category.is_active if linked_category else False,
                 source_variant_key=recipe.source_variant.variant_key if recipe.source_variant else None,
                 source_variant_prompt=recipe.source_variant.prompt_text if recipe.source_variant else None,
+                recommendation_state=recommendation_state,
+                recommendation_state_score=recommendation_state_score,
+                recommendation_reasons=recommendation_reasons,
                 created_at=recipe.created_at,
             )
         )

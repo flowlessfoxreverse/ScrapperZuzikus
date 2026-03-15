@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import re
 
 from sqlalchemy import select
@@ -52,6 +52,9 @@ class DraftProposal:
     market_production_run_count: int = 0
     strategy_production_score: int = 0
     strategy_production_run_count: int = 0
+    recommendation_state: str = "experimental"
+    recommendation_state_score: int = 0
+    recommendation_reasons: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

@@ -83,6 +83,9 @@ class PlannedVariant(BaseModel):
     market_production_run_count: int = 0
     strategy_production_score: int = 0
     strategy_production_run_count: int = 0
+    recommendation_state: str = "experimental"
+    recommendation_state_score: int = 0
+    recommendation_reasons: list[str] = Field(default_factory=list)
 
 
 class PlannedPromptPayload(BaseModel):
@@ -262,6 +265,9 @@ def _model_to_variant(variant: PlannedVariant) -> DraftProposal:
         market_production_run_count=variant.market_production_run_count,
         strategy_production_score=variant.strategy_production_score,
         strategy_production_run_count=variant.strategy_production_run_count,
+        recommendation_state=variant.recommendation_state,
+        recommendation_state_score=variant.recommendation_state_score,
+        recommendation_reasons=variant.recommendation_reasons,
     )
 
 
@@ -548,8 +554,8 @@ def plan_recipe_prompt(
     )
 
     draft_variants = [_model_to_variant(variant) for variant in payload.variants]
-    draft_variants = apply_variant_history(session, draft_variants)
     draft_variants = apply_prompt_variant_history(session, prompt_text, draft_variants)
+    draft_variants = apply_variant_history(session, draft_variants)
     if not draft_variants:
         raise ValueError("No recipe variants were generated for this prompt.")
 

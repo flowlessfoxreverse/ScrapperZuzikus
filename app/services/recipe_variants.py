@@ -9,6 +9,10 @@ from sqlalchemy.orm import Session
 from app.models import QueryRecipe, QueryRecipePlanVariantOutcome, QueryRecipeValidation, QueryRecipeVariant, QueryRecipeVariantRunStat, Region
 from app.services.recipe_drafts import DraftProposal
 from app.services.recipe_prompt_normalization import normalize_prompt_text, resolve_prompt_country_code
+from app.config import get_settings
+
+
+settings = get_settings()
 
 
 def prompt_fingerprint(prompt: str) -> str:
@@ -103,6 +107,162 @@ def _strategy_bonus_from_outcomes(score: int, run_count: int) -> int:
         return 0
     confidence_factor = min(run_count, 6) / 6
     return round(score * 0.2 * confidence_factor)
+
+
+def _source_strategy_thresholds(source_strategy) -> dict[str, int]:
+    thresholds = {
+        "validation_score": settings.recipe_activation_min_validation_score,
+        "validation_runs": settings.recipe_activation_min_validation_runs,
+        "production_score": settings.recipe_activation_min_production_score,
+        "production_runs": settings.recipe_activation_min_production_runs,
+    }
+    if source_strategy is None:
+        return thresholds
+
+    overrides = {
+        "overpass_discovery_enrich": {
+            "validation_score": 55,
+            "validation_runs": 1,
+            "production_score": 0,
+            "production_runs": 0,
+        },
+        "hybrid_discovery": {
+            "validation_score": 58,
+            "validation_runs": 1,
+            "production_score": 5,
+            "production_runs": 1,
+        },
+        "website_first": {
+            "validation_score": 52,
+            "validation_runs": 1,
+            "production_score": 10,
+            "production_runs": 1,
+        },
+        "browser_assisted_discovery": {
+            "validation_score": 65,
+            "validation_runs": 1,
+            "production_score": 15,
+            "production_runs": 1,
+        },
+        "directory_expansion": {
+            "validation_score": 60,
+            "validation_runs": 1,
+            "production_score": 10,
+            "production_runs": 1,
+        },
+    }
+    strategy_value = getattr(source_strategy, "value", str(source_strategy))
+    for key, value in overrides.get(strategy_value, {}).items():
+        thresholds[key] = max(thresholds[key], value)
+    return thresholds
+
+
+def derive_recommendation_state(
+    *,
+    source_strategy,
+    observed_validation_score: int,
+    historical_validation_count: int,
+    production_score: int,
+    production_run_count: int,
+    planner_selection_count: int,
+    planner_draft_count: int,
+    planner_activation_count: int,
+    prompt_selection_count: int,
+    prompt_draft_count: int,
+    prompt_activation_count: int,
+    market_production_score: int,
+    market_production_run_count: int,
+    strategy_production_score: int,
+    strategy_production_run_count: int,
+) -> tuple[str, int, list[str], int]:
+    thresholds = _source_strategy_thresholds(source_strategy)
+    reasons: list[str] = []
+    recommendation_score = 0
+    state = "experimental"
+
+    validation_ready = (
+        historical_validation_count >= thresholds["validation_runs"]
+        and observed_validation_score >= thresholds["validation_score"]
+    )
+    production_required = thresholds["production_runs"] > 0
+    production_ready = (
+        not production_required
+        or (
+            production_run_count >= thresholds["production_runs"]
+            and production_score >= thresholds["production_score"]
+        )
+    )
+    activation_signal = planner_activation_count + prompt_activation_count
+    draft_signal = planner_draft_count + prompt_draft_count
+    selection_signal = planner_selection_count + prompt_selection_count
+
+    if validation_ready:
+        recommendation_score += 30
+        reasons.append(
+            f"Validation clears the {thresholds['validation_score']}/100 floor for {getattr(source_strategy, 'value', source_strategy)}."
+        )
+    elif historical_validation_count:
+        gap = max(0, thresholds["validation_score"] - observed_validation_score)
+        reasons.append(f"Validation is still {gap} point(s) below the promotion floor.")
+    else:
+        reasons.append("No validation evidence yet.")
+
+    if production_run_count:
+        recommendation_score += min(production_score // 5, 20)
+        if production_ready:
+            reasons.append("Production results meet the current strategy gate.")
+        else:
+            reasons.append("Production results exist, but are not yet strong enough for promotion.")
+    elif production_required:
+        reasons.append("No production evidence yet for a strategy that requires it.")
+
+    if market_production_run_count:
+        recommendation_score += min(market_production_score // 8, 10)
+        reasons.append("Market-specific production evidence is available.")
+
+    if strategy_production_run_count:
+        recommendation_score += min(strategy_production_score // 10, 8)
+        reasons.append("Source-strategy performance supports this variant.")
+
+    if activation_signal:
+        recommendation_score += min(activation_signal * 6, 18)
+        reasons.append("Users have already activated this variant from planner output.")
+    elif draft_signal:
+        recommendation_score += min(draft_signal * 4, 12)
+        reasons.append("Users repeatedly turn this variant into draft recipes.")
+    elif selection_signal:
+        recommendation_score += min(selection_signal * 2, 8)
+        reasons.append("Users repeatedly select this variant during planning.")
+
+    if (
+        historical_validation_count >= max(2, thresholds["validation_runs"])
+        and observed_validation_score < max(35, thresholds["validation_score"] - 15)
+        and production_run_count >= max(1, thresholds["production_runs"])
+        and production_score < max(5, thresholds["production_score"] - 5)
+    ):
+        state = "suppressed"
+        recommendation_score = max(recommendation_score - 25, 0)
+        reasons.append("Repeated validation and production evidence suggest this variant is weak.")
+        return state, recommendation_score, reasons, -20
+
+    if (
+        validation_ready
+        and historical_validation_count >= max(2, thresholds["validation_runs"])
+        and production_ready
+        and production_run_count >= max(1, thresholds["production_runs"])
+        and (activation_signal >= 1 or draft_signal >= 2 or market_production_run_count >= 2)
+    ):
+        state = "trusted"
+        reasons.append("This variant has both strong evidence and repeated downstream adoption.")
+        return state, recommendation_score, reasons, 12
+
+    if validation_ready and (production_ready or activation_signal >= 1 or draft_signal >= 1):
+        state = "recommended"
+        reasons.append("This variant has enough evidence to recommend, but not yet enough to fully trust.")
+        return state, recommendation_score, reasons, 5
+
+    reasons.append("Keep this variant visible while more validation or production evidence accumulates.")
+    return state, recommendation_score, reasons, 0
 
 
 def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> list[DraftProposal]:
@@ -309,6 +469,25 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
                 f"{proposal.source_strategy.value} strategy yield {strategy_score}/100 across {strategy_runs} production run(s)"
                 + (f" in {prompt_market_country}." if prompt_market_country else ".")
             )
+        recommendation_state, recommendation_state_score, recommendation_reasons, recommendation_bonus = (
+            derive_recommendation_state(
+                source_strategy=proposal.source_strategy,
+                observed_validation_score=observed_score,
+                historical_validation_count=total_runs,
+                production_score=production_score,
+                production_run_count=production_runs,
+                planner_selection_count=int(planner_selection_count or 0),
+                planner_draft_count=int(planner_draft_count or 0),
+                planner_activation_count=int(planner_activation_count or 0),
+                prompt_selection_count=proposal.prompt_selection_count,
+                prompt_draft_count=proposal.prompt_draft_count,
+                prompt_activation_count=proposal.prompt_activation_count,
+                market_production_score=market_score,
+                market_production_run_count=market_runs,
+                strategy_production_score=strategy_score,
+                strategy_production_run_count=strategy_runs,
+            )
+        )
         adjusted.append(
             replace(
                 proposal,
@@ -328,14 +507,19 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
                 market_production_run_count=market_runs,
                 strategy_production_score=strategy_score,
                 strategy_production_run_count=strategy_runs,
-                fit_score=proposal.template_score + proposal.prompt_match_score + validation_bonus + cluster_bonus + adoption_bonus + planner_conversion_bonus + production_bonus + market_bonus + strategy_bonus,
+                fit_score=proposal.template_score + proposal.prompt_match_score + validation_bonus + cluster_bonus + adoption_bonus + planner_conversion_bonus + production_bonus + market_bonus + strategy_bonus + recommendation_bonus,
                 fit_reasons=fit_reasons,
+                recommendation_state=recommendation_state,
+                recommendation_state_score=recommendation_state_score,
+                recommendation_reasons=recommendation_reasons,
             )
         )
 
     adjusted.sort(
         key=lambda item: (
             -item.fit_score,
+            item.recommendation_state != "trusted",
+            item.recommendation_state == "suppressed",
             -item.planner_activation_count,
             -item.planner_draft_count,
             -item.market_production_score,

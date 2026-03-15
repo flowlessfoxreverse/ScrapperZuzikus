@@ -532,6 +532,8 @@
               <th>Validation Runs</th>
               <th>Production Yield</th>
               <th>Production Runs</th>
+              <th>State</th>
+              <th>State Score</th>
               <th>Market</th>
               <th>Market Yield</th>
               <th>Market Runs</th>
@@ -568,6 +570,8 @@
               <td>{{ variant.historical_validation_count or "-" }}</td>
               <td>{{ variant.production_score or "-" }}</td>
               <td>{{ variant.production_run_count or "-" }}</td>
+              <td><span class="badge {% if variant.recommendation_state == 'trusted' %}muted{% elif variant.recommendation_state == 'suppressed' %}warn{% endif %}" title="{{ variant.recommendation_reasons|join(' ') }}">{{ variant.recommendation_state }}</span></td>
+              <td>{{ variant.recommendation_state_score }}</td>
               <td>{{ variant.market_country_code or "-" }}</td>
               <td>{{ variant.market_production_score or "-" }}</td>
               <td>{{ variant.market_production_run_count or "-" }}</td>
@@ -752,12 +756,23 @@
             <span class="subtle">Rank Score</span>
             <strong>{{ draft_proposal.fit_score }}</strong>
           </div>
+          <div class="stat-card">
+            <span class="subtle">Recommendation</span>
+            <strong>{{ draft_proposal.recommendation_state }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">State Score</span>
+            <strong>{{ draft_proposal.recommendation_state_score }}</strong>
+          </div>
         </div>
         <ul>
           {% for reason in draft_proposal.rationale %}
           <li>{{ reason }}</li>
         {% endfor %}
         </ul>
+        {% if draft_proposal.recommendation_reasons %}
+        <p class="subtle">Recommendation reasons: {{ draft_proposal.recommendation_reasons|join(" ") }}</p>
+        {% endif %}
         {% if draft_proposal.fit_reasons %}
         <p class="subtle">Prompt-match reasons: {{ draft_proposal.fit_reasons|join(" ") }}</p>
         {% endif %}
@@ -902,6 +917,8 @@
               <th>Cache Expires</th>
               <th>Linked Category</th>
               <th>Source Variant</th>
+              <th>Recommendation</th>
+              <th>State Score</th>
               <th>Created</th>
               <th>Action</th>
             </tr>
@@ -965,6 +982,12 @@
                 -
                 {% endif %}
               </td>
+              <td title="{{ recipe.recommendation_reasons|join(' ') }}">
+                <span class="badge {% if recipe.recommendation_state == 'trusted' %}muted{% elif recipe.recommendation_state == 'suppressed' %}warn{% endif %}">
+                  {{ recipe.recommendation_state }}
+                </span>
+              </td>
+              <td>{{ recipe.recommendation_state_score }}</td>
               <td>{{ recipe.created_at.strftime("%Y-%m-%d") }}</td>
               <td>
                 <div class="hero-actions">
@@ -993,7 +1016,7 @@
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="28">No recipes yet.</td></tr>
+            <tr><td colspan="30">No recipes yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>
