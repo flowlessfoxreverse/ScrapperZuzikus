@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import Category, Company, ContactChannel, ContactChannelType, Email, NicheCluster, Phone, ProxyEndpoint, ProxyKind, QueryRecipe, QueryRecipeValidation, QueryRecipeVariant, QueryRecipeVariantTemplate, QueryRecipeVersion, RecipeAdapter, RecipeSourceStrategy, RecipeStatus, Region, RequestMetric, RunCategory, RunStatus, ScrapeRun, TaxonomyVertical, ValidationStatus
+from app.models import Category, Company, ContactChannel, ContactChannelType, Email, NicheCluster, Phone, ProxyEndpoint, ProxyKind, QueryRecipe, QueryRecipePlanVariantOutcome, QueryRecipeValidation, QueryRecipeVariant, QueryRecipeVariantTemplate, QueryRecipeVersion, RecipeAdapter, RecipeSourceStrategy, RecipeStatus, Region, RequestMetric, RunCategory, RunStatus, ScrapeRun, TaxonomyVertical, ValidationStatus
 from app.schemas import EmailRow
 from app.services.category_recipes import latest_recipe_version, sync_recipe_to_category, upsert_recipe_backed_category
 from app.services.host_suppression import normalize_host_key
@@ -268,6 +268,27 @@ class PlannerVariantCompareRow:
     heuristic_template_score: int | None
     heuristic_prompt_score: int | None
     score_delta: int | None
+    selected_historical_selected: int
+    selected_historical_drafted: int
+    selected_historical_activated: int
+    heuristic_historical_selected: int
+    heuristic_historical_drafted: int
+    heuristic_historical_activated: int
+
+
+@dataclass
+class PlannerConversionSummaryRow:
+    planner_label: str
+    provider: str
+    model_name: str
+    plan_count: int
+    variant_rows: int
+    selected_count: int
+    drafted_count: int
+    activated_count: int
+    selected_rate: int
+    drafted_rate: int
+    activated_rate: int
 
 
 def taxonomy_context(db: Session) -> tuple[list[TaxonomyVertical], list[NicheCluster]]:
@@ -1022,12 +1043,52 @@ def build_planner_info(plan) -> dict[str, object]:
 
 
 def build_variant_compare_rows(
+    db: Session,
+    selected_provider: str,
+    selected_model: str,
     selected_variants: list[DraftProposal],
+    heuristic_provider: str,
+    heuristic_model: str,
     heuristic_variants: list[DraftProposal],
 ) -> list[PlannerVariantCompareRow]:
     selected_by_key = {variant.variant_key: (index + 1, variant) for index, variant in enumerate(selected_variants)}
     heuristic_by_key = {variant.variant_key: (index + 1, variant) for index, variant in enumerate(heuristic_variants)}
     all_keys = set(selected_by_key) | set(heuristic_by_key)
+
+    selected_history = {
+        variant_key: (selected_count, drafted_count, activated_count)
+        for variant_key, selected_count, drafted_count, activated_count in db.execute(
+            select(
+                QueryRecipePlanVariantOutcome.variant_key,
+                func.count(case((QueryRecipePlanVariantOutcome.was_selected.is_(True), 1))).label("selected_count"),
+                func.count(case((QueryRecipePlanVariantOutcome.was_drafted.is_(True), 1))).label("drafted_count"),
+                func.count(case((QueryRecipePlanVariantOutcome.was_activated.is_(True), 1))).label("activated_count"),
+            )
+            .where(
+                QueryRecipePlanVariantOutcome.provider == selected_provider,
+                QueryRecipePlanVariantOutcome.model_name == selected_model,
+                QueryRecipePlanVariantOutcome.variant_key.in_(list(all_keys)),
+            )
+            .group_by(QueryRecipePlanVariantOutcome.variant_key)
+        ).all()
+    }
+    heuristic_history = {
+        variant_key: (selected_count, drafted_count, activated_count)
+        for variant_key, selected_count, drafted_count, activated_count in db.execute(
+            select(
+                QueryRecipePlanVariantOutcome.variant_key,
+                func.count(case((QueryRecipePlanVariantOutcome.was_selected.is_(True), 1))).label("selected_count"),
+                func.count(case((QueryRecipePlanVariantOutcome.was_drafted.is_(True), 1))).label("drafted_count"),
+                func.count(case((QueryRecipePlanVariantOutcome.was_activated.is_(True), 1))).label("activated_count"),
+            )
+            .where(
+                QueryRecipePlanVariantOutcome.provider == heuristic_provider,
+                QueryRecipePlanVariantOutcome.model_name == heuristic_model,
+                QueryRecipePlanVariantOutcome.variant_key.in_(list(all_keys)),
+            )
+            .group_by(QueryRecipePlanVariantOutcome.variant_key)
+        ).all()
+    }
 
     rows: list[PlannerVariantCompareRow] = []
     for key in all_keys:
@@ -1045,6 +1106,8 @@ def build_variant_compare_rows(
         score_delta = None
         if selected_variant is not None and heuristic_variant is not None:
             score_delta = selected_variant.fit_score - heuristic_variant.fit_score
+        selected_counts = selected_history.get(key, (0, 0, 0))
+        heuristic_counts = heuristic_history.get(key, (0, 0, 0))
 
         rows.append(
             PlannerVariantCompareRow(
@@ -1061,6 +1124,12 @@ def build_variant_compare_rows(
                 heuristic_template_score=heuristic_variant.template_score if heuristic_variant else None,
                 heuristic_prompt_score=heuristic_variant.prompt_match_score if heuristic_variant else None,
                 score_delta=score_delta,
+                selected_historical_selected=int(selected_counts[0] or 0),
+                selected_historical_drafted=int(selected_counts[1] or 0),
+                selected_historical_activated=int(selected_counts[2] or 0),
+                heuristic_historical_selected=int(heuristic_counts[0] or 0),
+                heuristic_historical_drafted=int(heuristic_counts[1] or 0),
+                heuristic_historical_activated=int(heuristic_counts[2] or 0),
             )
         )
 
@@ -1073,6 +1142,49 @@ def build_variant_compare_rows(
         )
     )
     return rows
+
+
+def build_planner_conversion_summary(
+    db: Session,
+    planner_label: str,
+    provider: str,
+    model_name: str,
+) -> PlannerConversionSummaryRow:
+    plan_count, variant_rows, selected_count, drafted_count, activated_count = db.execute(
+        select(
+            func.count(func.distinct(QueryRecipePlanVariantOutcome.plan_id)),
+            func.count(QueryRecipePlanVariantOutcome.id),
+            func.count(case((QueryRecipePlanVariantOutcome.was_selected.is_(True), 1))),
+            func.count(case((QueryRecipePlanVariantOutcome.was_drafted.is_(True), 1))),
+            func.count(case((QueryRecipePlanVariantOutcome.was_activated.is_(True), 1))),
+        ).where(
+            QueryRecipePlanVariantOutcome.provider == provider,
+            QueryRecipePlanVariantOutcome.model_name == model_name,
+        )
+    ).one()
+    row_count = int(variant_rows or 0)
+
+    def rate(value: int) -> int:
+        if row_count <= 0:
+            return 0
+        return round((value / row_count) * 100)
+
+    selected_total = int(selected_count or 0)
+    drafted_total = int(drafted_count or 0)
+    activated_total = int(activated_count or 0)
+    return PlannerConversionSummaryRow(
+        planner_label=planner_label,
+        provider=provider,
+        model_name=model_name,
+        plan_count=int(plan_count or 0),
+        variant_rows=row_count,
+        selected_count=selected_total,
+        drafted_count=drafted_total,
+        activated_count=activated_total,
+        selected_rate=rate(selected_total),
+        drafted_rate=rate(drafted_total),
+        activated_rate=rate(activated_total),
+    )
 
 
 def activation_gate_errors(recipe: QueryRecipe, version: QueryRecipeVersion) -> list[str]:
@@ -1379,6 +1491,7 @@ def recipe_editor(
     planner_info: dict[str, object] | None = None
     planner_compare_info: dict[str, object] | None = None
     planner_variant_compare_rows: list[PlannerVariantCompareRow] = []
+    planner_conversion_rows: list[PlannerConversionSummaryRow] = []
     verticals, clusters = taxonomy_context(db)
     strategy_rows, cluster_rows, top_variants = build_recipe_analytics(db)
     strategy_threshold_rows = build_strategy_threshold_rows()
@@ -1407,9 +1520,18 @@ def recipe_editor(
                 )
                 planner_compare_info = build_planner_info(compare_plan)
                 planner_variant_compare_rows = build_variant_compare_rows(
+                    db,
+                    plan.provider,
+                    plan.model_name,
                     plan.draft_variants,
+                    compare_plan.provider,
+                    compare_plan.model_name,
                     compare_plan.draft_variants,
                 )
+                planner_conversion_rows = [
+                    build_planner_conversion_summary(db, "Selected", plan.provider, plan.model_name),
+                    build_planner_conversion_summary(db, "Heuristic", compare_plan.provider, compare_plan.model_name),
+                ]
                 compare_saved_variants = upsert_prompt_variants(db, draft_prompt, compare_plan.draft_variants)
                 sync_plan_variant_outcomes(db, compare_plan, compare_saved_variants)
             db.commit()
@@ -1450,6 +1572,7 @@ def recipe_editor(
             "planner_info": planner_info,
             "planner_compare_info": planner_compare_info,
             "planner_variant_compare_rows": planner_variant_compare_rows,
+            "planner_conversion_rows": planner_conversion_rows,
             "cluster_choice": cluster_choice,
             "alternate_clusters": alternate_clusters,
             "strategy_rows": strategy_rows,
@@ -1788,6 +1911,7 @@ def generate_recipe_draft_html(
     planner_info: dict[str, object] | None = None
     planner_compare_info: dict[str, object] | None = None
     planner_variant_compare_rows: list[PlannerVariantCompareRow] = []
+    planner_conversion_rows: list[PlannerConversionSummaryRow] = []
     verticals, clusters = taxonomy_context(db)
     strategy_rows, cluster_rows, top_variants = build_recipe_analytics(db)
     strategy_threshold_rows = build_strategy_threshold_rows()
@@ -1815,9 +1939,18 @@ def generate_recipe_draft_html(
             )
             planner_compare_info = build_planner_info(compare_plan)
             planner_variant_compare_rows = build_variant_compare_rows(
+                db,
+                plan.provider,
+                plan.model_name,
                 plan.draft_variants,
+                compare_plan.provider,
+                compare_plan.model_name,
                 compare_plan.draft_variants,
             )
+            planner_conversion_rows = [
+                build_planner_conversion_summary(db, "Selected", plan.provider, plan.model_name),
+                build_planner_conversion_summary(db, "Heuristic", compare_plan.provider, compare_plan.model_name),
+            ]
             compare_saved_variants = upsert_prompt_variants(db, prompt, compare_plan.draft_variants)
             sync_plan_variant_outcomes(db, compare_plan, compare_saved_variants)
         record_cluster_decision(db, prompt, cluster_choice, alternate_clusters)
@@ -1872,6 +2005,7 @@ def generate_recipe_draft_html(
             "planner_info": planner_info,
             "planner_compare_info": planner_compare_info,
             "planner_variant_compare_rows": planner_variant_compare_rows,
+            "planner_conversion_rows": planner_conversion_rows,
             "cluster_choice": cluster_choice,
             "alternate_clusters": alternate_clusters,
             "strategy_rows": strategy_rows,

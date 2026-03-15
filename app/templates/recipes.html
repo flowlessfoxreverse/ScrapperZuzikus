@@ -284,6 +284,38 @@
             </tr>
           </tbody>
         </table>
+        {% if planner_conversion_rows %}
+        <table>
+          <thead>
+            <tr>
+              <th>Planner</th>
+              <th>Plans</th>
+              <th>Variant Rows</th>
+              <th>Selections</th>
+              <th>Drafts</th>
+              <th>Activations</th>
+              <th>Select Rate</th>
+              <th>Draft Rate</th>
+              <th>Activation Rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in planner_conversion_rows %}
+            <tr>
+              <td><strong>{{ row.planner_label }}</strong><br /><span class="subtle">{{ row.provider }} / {{ row.model_name }}</span></td>
+              <td>{{ row.plan_count }}</td>
+              <td>{{ row.variant_rows }}</td>
+              <td>{{ row.selected_count }}</td>
+              <td>{{ row.drafted_count }}</td>
+              <td>{{ row.activated_count }}</td>
+              <td>{{ row.selected_rate }}%</td>
+              <td>{{ row.drafted_rate }}%</td>
+              <td>{{ row.activated_rate }}%</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% endif %}
         {% if planner_variant_compare_rows %}
         <table>
           <thead>
@@ -297,6 +329,8 @@
               <th>Heuristic Rank</th>
               <th>Heuristic Score</th>
               <th>Heuristic Split</th>
+              <th>Selected Conversions</th>
+              <th>Heuristic Conversions</th>
               <th>Delta</th>
             </tr>
           </thead>
@@ -332,6 +366,8 @@
                 -
                 {% endif %}
               </td>
+              <td>S{{ row.selected_historical_selected }} / D{{ row.selected_historical_drafted }} / A{{ row.selected_historical_activated }}</td>
+              <td>S{{ row.heuristic_historical_selected }} / D{{ row.heuristic_historical_drafted }} / A{{ row.heuristic_historical_activated }}</td>
               <td>
                 {% if row.score_delta is not none %}
                 {% if row.score_delta > 0 %}+{% endif %}{{ row.score_delta }}
