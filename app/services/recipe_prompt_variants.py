@@ -6,7 +6,12 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import QueryPromptVariantDecision, QueryRecipe, QueryRecipeVariant
+from app.models import (
+    QueryPromptVariantDecision,
+    QueryRecipe,
+    QueryRecipePlanVariantOutcome,
+    QueryRecipeVariant,
+)
 from app.services.recipe_drafts import DraftProposal
 from app.services.recipe_variants import prompt_fingerprint
 
@@ -165,4 +170,120 @@ def record_prompt_variant_activation(session: Session, recipe: QueryRecipe) -> N
     row.source_variant_id = variant.id
     row.activated_count = max(row.activated_count, 0) + 1
     row.last_activated_at = now
+    row.updated_at = now
+
+
+def sync_plan_variant_outcomes(
+    session: Session,
+    plan,
+    variants_by_key: dict[str, QueryRecipeVariant],
+) -> None:
+    plan_id = getattr(plan, "plan_id", None)
+    if not plan_id:
+        return
+
+    proposals = list(getattr(plan, "draft_variants", []) or [])
+    if not proposals:
+        return
+
+    keys = [proposal.variant_key for proposal in proposals]
+    existing = {
+        row.variant_key: row
+        for row in session.scalars(
+            select(QueryRecipePlanVariantOutcome).where(
+                QueryRecipePlanVariantOutcome.plan_id == plan_id,
+                QueryRecipePlanVariantOutcome.variant_key.in_(keys),
+            )
+        ).all()
+    }
+    now = datetime.now(timezone.utc)
+    for rank_position, proposal in enumerate(proposals, start=1):
+        variant = variants_by_key.get(proposal.variant_key)
+        row = existing.get(proposal.variant_key)
+        if row is None:
+            row = QueryRecipePlanVariantOutcome(
+                plan_id=plan_id,
+                prompt_fingerprint=prompt_fingerprint(plan.prompt),
+                requested_provider=plan.requested_provider,
+                provider=plan.provider,
+                model_name=plan.model_name,
+                vertical=proposal.vertical,
+                cluster_slug=proposal.cluster_slug,
+                variant_key=proposal.variant_key,
+                source_variant_id=variant.id if variant is not None else None,
+                variant_label=proposal.label,
+            )
+            session.add(row)
+        row.prompt_fingerprint = prompt_fingerprint(plan.prompt)
+        row.requested_provider = plan.requested_provider
+        row.provider = plan.provider
+        row.model_name = plan.model_name
+        row.vertical = proposal.vertical
+        row.cluster_slug = proposal.cluster_slug
+        row.source_variant_id = variant.id if variant is not None else None
+        row.variant_label = proposal.label
+        row.rank_position = rank_position
+        row.template_score = proposal.template_score
+        row.prompt_match_score = proposal.prompt_match_score
+        row.rank_score = proposal.fit_score
+        row.updated_at = now
+
+
+def record_plan_variant_decisions(
+    session: Session,
+    plan_id: int | None,
+    *,
+    selected_variant_keys: list[str] | None = None,
+    drafted_variant_keys: list[str] | None = None,
+) -> None:
+    if not plan_id:
+        return
+
+    selected_keys = set(selected_variant_keys or [])
+    drafted_keys = set(drafted_variant_keys or [])
+    affected_keys = selected_keys | drafted_keys
+    if not affected_keys:
+        return
+
+    rows = {
+        row.variant_key: row
+        for row in session.scalars(
+            select(QueryRecipePlanVariantOutcome).where(
+                QueryRecipePlanVariantOutcome.plan_id == plan_id,
+                QueryRecipePlanVariantOutcome.variant_key.in_(list(affected_keys)),
+            )
+        ).all()
+    }
+    now = datetime.now(timezone.utc)
+    for variant_key in affected_keys:
+        row = rows.get(variant_key)
+        if row is None:
+            continue
+        if variant_key in selected_keys:
+            row.was_selected = True
+            row.selected_at = now
+        if variant_key in drafted_keys:
+            row.was_drafted = True
+            row.drafted_at = now
+        row.updated_at = now
+
+
+def record_plan_variant_activation(session: Session, recipe: QueryRecipe) -> None:
+    variant = recipe.source_variant
+    plan = recipe.source_plan
+    if variant is None or plan is None:
+        return
+
+    row = session.scalar(
+        select(QueryRecipePlanVariantOutcome).where(
+            QueryRecipePlanVariantOutcome.plan_id == plan.id,
+            QueryRecipePlanVariantOutcome.variant_key == variant.variant_key,
+        )
+    )
+    if row is None:
+        return
+
+    now = datetime.now(timezone.utc)
+    row.was_activated = True
+    row.activated_at = now
     row.updated_at = now

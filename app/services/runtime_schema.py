@@ -300,6 +300,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 "vertical VARCHAR(64) NOT NULL, "
                 "cluster_slug VARCHAR(64) NULL, "
                 "source_variant_id INTEGER NULL, "
+                "source_plan_id INTEGER NULL, "
                 "status VARCHAR(10) NOT NULL DEFAULT 'draft', "
                 "is_platform_template BOOLEAN NOT NULL DEFAULT TRUE, "
                 "created_at TIMESTAMP WITH TIME ZONE NOT NULL, "
@@ -316,6 +317,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 "vertical VARCHAR(64) NOT NULL, "
                 "cluster_slug VARCHAR(64) NULL, "
                 "source_variant_id INTEGER NULL, "
+                "source_plan_id INTEGER NULL, "
                 "status VARCHAR(10) NOT NULL DEFAULT 'draft', "
                 "is_platform_template BOOLEAN NOT NULL DEFAULT 1, "
                 "created_at TIMESTAMP NOT NULL, "
@@ -332,6 +334,8 @@ def ensure_recipe_schema(engine: Engine) -> None:
             statements.append("ALTER TABLE query_recipes ADD COLUMN cluster_slug VARCHAR(64) NULL")
         if "source_variant_id" not in recipe_columns:
             statements.append("ALTER TABLE query_recipes ADD COLUMN source_variant_id INTEGER NULL")
+        if "source_plan_id" not in recipe_columns:
+            statements.append("ALTER TABLE query_recipes ADD COLUMN source_plan_id INTEGER NULL")
         recipe_vertical = recipe_columns.get("vertical")
         recipe_vertical_length = getattr(recipe_vertical.get("type"), "length", None) if recipe_vertical else None
         if dialect == "postgresql" and recipe_vertical_length is not None and recipe_vertical_length < 64:
@@ -524,6 +528,76 @@ def ensure_recipe_schema(engine: Engine) -> None:
         statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_plans_cache_key ON query_recipe_plans(cache_key)")
         statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_plans_prompt_fingerprint ON query_recipe_plans(prompt_fingerprint)")
         statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_plans_created_at ON query_recipe_plans(created_at)")
+
+    if "query_recipe_plan_variant_outcomes" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_recipe_plan_variant_outcomes ("
+                "id SERIAL PRIMARY KEY, "
+                "plan_id INTEGER NOT NULL REFERENCES query_recipe_plans(id), "
+                "prompt_fingerprint VARCHAR(64) NOT NULL, "
+                "requested_provider VARCHAR(32) NOT NULL, "
+                "provider VARCHAR(32) NOT NULL, "
+                "model_name VARCHAR(64) NOT NULL, "
+                "vertical VARCHAR(64) NOT NULL, "
+                "cluster_slug VARCHAR(64) NULL, "
+                "variant_key VARCHAR(96) NOT NULL, "
+                "source_variant_id INTEGER NULL, "
+                "variant_label VARCHAR(128) NOT NULL, "
+                "rank_position INTEGER NOT NULL DEFAULT 0, "
+                "template_score INTEGER NOT NULL DEFAULT 0, "
+                "prompt_match_score INTEGER NOT NULL DEFAULT 0, "
+                "rank_score INTEGER NOT NULL DEFAULT 0, "
+                "was_selected BOOLEAN NOT NULL DEFAULT FALSE, "
+                "was_drafted BOOLEAN NOT NULL DEFAULT FALSE, "
+                "was_activated BOOLEAN NOT NULL DEFAULT FALSE, "
+                "selected_at TIMESTAMP WITH TIME ZONE NULL, "
+                "drafted_at TIMESTAMP WITH TIME ZONE NULL, "
+                "activated_at TIMESTAMP WITH TIME ZONE NULL, "
+                "created_at TIMESTAMP WITH TIME ZONE NOT NULL, "
+                "updated_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_recipe_plan_variant_outcomes ("
+                "id INTEGER PRIMARY KEY, "
+                "plan_id INTEGER NOT NULL REFERENCES query_recipe_plans(id), "
+                "prompt_fingerprint VARCHAR(64) NOT NULL, "
+                "requested_provider VARCHAR(32) NOT NULL, "
+                "provider VARCHAR(32) NOT NULL, "
+                "model_name VARCHAR(64) NOT NULL, "
+                "vertical VARCHAR(64) NOT NULL, "
+                "cluster_slug VARCHAR(64) NULL, "
+                "variant_key VARCHAR(96) NOT NULL, "
+                "source_variant_id INTEGER NULL, "
+                "variant_label VARCHAR(128) NOT NULL, "
+                "rank_position INTEGER NOT NULL DEFAULT 0, "
+                "template_score INTEGER NOT NULL DEFAULT 0, "
+                "prompt_match_score INTEGER NOT NULL DEFAULT 0, "
+                "rank_score INTEGER NOT NULL DEFAULT 0, "
+                "was_selected BOOLEAN NOT NULL DEFAULT 0, "
+                "was_drafted BOOLEAN NOT NULL DEFAULT 0, "
+                "was_activated BOOLEAN NOT NULL DEFAULT 0, "
+                "selected_at TIMESTAMP NULL, "
+                "drafted_at TIMESTAMP NULL, "
+                "activated_at TIMESTAMP NULL, "
+                "created_at TIMESTAMP NOT NULL, "
+                "updated_at TIMESTAMP NOT NULL"
+                ")"
+            )
+        statements.append(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_recipe_plan_variant_outcome "
+            "ON query_recipe_plan_variant_outcomes(plan_id, variant_key)"
+        )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_recipe_plan_variant_outcomes_plan_id "
+            "ON query_recipe_plan_variant_outcomes(plan_id)"
+        )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_recipe_plan_variant_outcomes_variant_key "
+            "ON query_recipe_plan_variant_outcomes(variant_key)"
+        )
 
     if "query_recipe_variants" not in tables:
         if dialect == "postgresql":

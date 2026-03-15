@@ -433,6 +433,7 @@
           <input type="hidden" name="planner_provider" value="{{ planner_provider }}" />
           <input type="hidden" name="planner_model" value="{{ planner_model }}" />
           <input type="hidden" name="compare_with_heuristic" value="{{ 'true' if compare_with_heuristic else 'false' }}" />
+          <input type="hidden" name="plan_id" value="{{ planner_info.plan_id if planner_info else '' }}" />
           <div class="hero-actions">
             <button type="submit">Create Selected Draft Recipes</button>
           </div>
@@ -663,6 +664,9 @@
           <span>Editable recipe payload before sampled validation</span>
         </div>
         <form action="/recipes" method="post" class="run-form">
+          <input type="hidden" name="draft_prompt" value="{{ draft_prompt or '' }}" />
+          <input type="hidden" name="source_variant_key" value="{{ draft_proposal.variant_key if draft_proposal else '' }}" />
+          <input type="hidden" name="source_plan_id" value="{{ planner_info.plan_id if planner_info else '' }}" />
           <label>
             <span>Slug</span>
             <input type="text" name="slug" placeholder="motorbike-tours" value="{{ draft_proposal.slug if draft_proposal else '' }}" required />

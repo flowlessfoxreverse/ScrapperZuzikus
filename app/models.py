@@ -211,6 +211,7 @@ class QueryRecipe(Base):
     vertical: Mapped[str] = mapped_column(String(64), ForeignKey("taxonomy_verticals.slug"), index=True)
     cluster_slug: Mapped[str | None] = mapped_column(String(64), ForeignKey("niche_clusters.slug"), nullable=True, index=True)
     source_variant_id: Mapped[int | None] = mapped_column(ForeignKey("query_recipe_variants.id"), nullable=True, index=True)
+    source_plan_id: Mapped[int | None] = mapped_column(ForeignKey("query_recipe_plans.id"), nullable=True, index=True)
     status: Mapped[RecipeStatus] = mapped_column(SqlEnum(RecipeStatus), default=RecipeStatus.DRAFT, index=True)
     is_platform_template: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -224,6 +225,7 @@ class QueryRecipe(Base):
     vertical_ref: Mapped["TaxonomyVertical | None"] = relationship(foreign_keys=[vertical])
     cluster_ref: Mapped["NicheCluster | None"] = relationship(foreign_keys=[cluster_slug])
     source_variant: Mapped["QueryRecipeVariant | None"] = relationship(foreign_keys=[source_variant_id])
+    source_plan: Mapped["QueryRecipePlan | None"] = relationship(foreign_keys=[source_plan_id])
 
 
 class QueryRecipeVariantTemplate(Base):
@@ -317,6 +319,42 @@ class QueryRecipePlan(Base):
     error_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class QueryRecipePlanVariantOutcome(Base):
+    __tablename__ = "query_recipe_plan_variant_outcomes"
+    __table_args__ = (
+        UniqueConstraint("plan_id", "variant_key", name="uq_recipe_plan_variant_outcome"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    plan_id: Mapped[int] = mapped_column(ForeignKey("query_recipe_plans.id"), index=True)
+    prompt_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    requested_provider: Mapped[str] = mapped_column(String(32), index=True)
+    provider: Mapped[str] = mapped_column(String(32), index=True)
+    model_name: Mapped[str] = mapped_column(String(64))
+    vertical: Mapped[str] = mapped_column(String(64), ForeignKey("taxonomy_verticals.slug"), index=True)
+    cluster_slug: Mapped[str | None] = mapped_column(String(64), ForeignKey("niche_clusters.slug"), nullable=True, index=True)
+    variant_key: Mapped[str] = mapped_column(String(96), index=True)
+    source_variant_id: Mapped[int | None] = mapped_column(ForeignKey("query_recipe_variants.id"), nullable=True, index=True)
+    variant_label: Mapped[str] = mapped_column(String(128))
+    rank_position: Mapped[int] = mapped_column(Integer, default=0)
+    template_score: Mapped[int] = mapped_column(Integer, default=0)
+    prompt_match_score: Mapped[int] = mapped_column(Integer, default=0)
+    rank_score: Mapped[int] = mapped_column(Integer, default=0)
+    was_selected: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    was_drafted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    was_activated: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    selected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    drafted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    plan: Mapped["QueryRecipePlan"] = relationship(foreign_keys=[plan_id])
+    vertical_ref: Mapped["TaxonomyVertical | None"] = relationship(foreign_keys=[vertical])
+    cluster_ref: Mapped["NicheCluster | None"] = relationship(foreign_keys=[cluster_slug])
+    source_variant: Mapped["QueryRecipeVariant | None"] = relationship(foreign_keys=[source_variant_id])
 
 
 class QueryRecipeVariant(Base):

@@ -24,10 +24,16 @@ from app.services.recipe_clusters import record_cluster_decision
 from app.services.recipe_drafts import ClusterCandidate, DraftProposal
 from app.services.recipe_lint import RecipeLintResult, lint_recipe_content, parse_tag_block
 from app.services.recipe_planner import plan_recipe_prompt
-from app.services.recipe_prompt_variants import record_prompt_variant_activation, record_prompt_variant_decisions
+from app.services.recipe_prompt_variants import (
+    record_plan_variant_activation,
+    record_plan_variant_decisions,
+    record_prompt_variant_activation,
+    record_prompt_variant_decisions,
+    sync_plan_variant_outcomes,
+)
 from app.services.taxonomy import list_active_clusters, list_active_verticals
 from app.services.recipe_validation import get_validation_quota_snapshot, validate_recipe_version
-from app.services.recipe_variants import prompt_variant_recipe_map, upsert_prompt_variants
+from app.services.recipe_variants import prompt_fingerprint, prompt_variant_recipe_map, upsert_prompt_variants
 from app.services.region_catalog import country_catalog, upsert_country_with_subdivisions
 from app.services.runs import find_active_run, request_run_cancellation
 from app.tasks import run_scrape, sync_region_catalog_task
@@ -1390,7 +1396,8 @@ def recipe_editor(
             draft_variants = plan.draft_variants
             draft_proposal = plan.draft_proposal
             planner_info = build_planner_info(plan)
-            upsert_prompt_variants(db, draft_prompt, draft_variants)
+            saved_variants = upsert_prompt_variants(db, draft_prompt, draft_variants)
+            sync_plan_variant_outcomes(db, plan, saved_variants)
             if compare_with_heuristic and plan.requested_provider != "heuristic":
                 compare_plan = plan_recipe_prompt(
                     db,
@@ -1403,7 +1410,8 @@ def recipe_editor(
                     plan.draft_variants,
                     compare_plan.draft_variants,
                 )
-                upsert_prompt_variants(db, draft_prompt, compare_plan.draft_variants)
+                compare_saved_variants = upsert_prompt_variants(db, draft_prompt, compare_plan.draft_variants)
+                sync_plan_variant_outcomes(db, compare_plan, compare_saved_variants)
             db.commit()
             draft_lint = lint_recipe_content(
                 osm_tags=draft_proposal.osm_tags,
@@ -1545,6 +1553,9 @@ def create_recipe_html(
     search_terms: str = Form(""),
     website_keywords: str = Form(""),
     language_hints: str = Form(""),
+    draft_prompt: str = Form(""),
+    source_variant_key: str = Form(""),
+    source_plan_id: str = Form(""),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
     normalized_slug = slug.strip().lower()
@@ -1554,6 +1565,15 @@ def create_recipe_html(
     if tag_errors or exclude_errors:
         joined = "; ".join(tag_errors + exclude_errors)
         return RedirectResponse(url=f"/recipes?error={quote_plus(joined[:200])}", status_code=303)
+    normalized_source_plan_id = int(source_plan_id) if source_plan_id.strip().isdigit() else None
+    source_variant = None
+    if draft_prompt.strip() and source_variant_key.strip():
+        source_variant = db.scalar(
+            select(QueryRecipeVariant).where(
+                QueryRecipeVariant.prompt_fingerprint == prompt_fingerprint(draft_prompt),
+                QueryRecipeVariant.variant_key == source_variant_key.strip(),
+            )
+        )
     if existing is None:
         recipe = QueryRecipe(
             slug=normalized_slug,
@@ -1561,6 +1581,8 @@ def create_recipe_html(
             description=description.strip() or None,
             vertical=vertical,
             cluster_slug=cluster_slug.strip() or None,
+            source_variant_id=source_variant.id if source_variant is not None else None,
+            source_plan_id=normalized_source_plan_id,
             status=RecipeStatus.DRAFT,
             is_platform_template=True,
         )
@@ -1584,6 +1606,20 @@ def create_recipe_html(
                 notes="Draft recipe created from the recipes console.",
             )
         )
+        if draft_prompt.strip() and source_variant is not None:
+            record_prompt_variant_decisions(
+                db,
+                draft_prompt,
+                {source_variant.variant_key: source_variant},
+                selected_variant_keys=[source_variant.variant_key],
+                drafted_variant_keys=[source_variant.variant_key],
+            )
+            record_plan_variant_decisions(
+                db,
+                normalized_source_plan_id,
+                selected_variant_keys=[source_variant.variant_key],
+                drafted_variant_keys=[source_variant.variant_key],
+            )
         db.commit()
     return RedirectResponse(url="/recipes", status_code=303)
 
@@ -1595,6 +1631,7 @@ def create_recipe_variants_html(
     planner_provider: str | None = Form(None),
     planner_model: str | None = Form(None),
     compare_with_heuristic: bool = Form(False),
+    plan_id: int | None = Form(None),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
     try:
@@ -1608,6 +1645,7 @@ def create_recipe_variants_html(
     except (ValueError, RuntimeError) as exc:
         return RedirectResponse(url=f"/recipes?error={quote_plus(str(exc)[:200])}", status_code=303)
     saved_variants = upsert_prompt_variants(db, prompt, proposals)
+    sync_plan_variant_outcomes(db, plan, saved_variants)
 
     if not selected_variant_keys:
         db.commit()
@@ -1653,6 +1691,7 @@ def create_recipe_variants_html(
             vertical=proposal.vertical,
             cluster_slug=proposal.cluster_slug,
             source_variant_id=saved_variants[proposal.variant_key].id,
+            source_plan_id=plan_id or plan.plan_id,
             status=RecipeStatus.DRAFT,
             is_platform_template=True,
         )
@@ -1680,6 +1719,12 @@ def create_recipe_variants_html(
         db,
         prompt,
         saved_variants,
+        selected_variant_keys=[proposal.variant_key for proposal in selected],
+        drafted_variant_keys=drafted_variant_keys,
+    )
+    record_plan_variant_decisions(
+        db,
+        plan_id or plan.plan_id,
         selected_variant_keys=[proposal.variant_key for proposal in selected],
         drafted_variant_keys=drafted_variant_keys,
     )
@@ -1731,6 +1776,7 @@ def generate_recipe_draft_html(
     planner_provider: str | None = Form(None),
     planner_model: str | None = Form(None),
     compare_with_heuristic: bool = Form(False),
+    plan_id: int | None = Form(None),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     draft_proposal = None
@@ -1759,6 +1805,7 @@ def generate_recipe_draft_html(
         draft_proposal = plan.draft_proposal
         planner_info = build_planner_info(plan)
         saved_variants = upsert_prompt_variants(db, prompt, draft_variants)
+        sync_plan_variant_outcomes(db, plan, saved_variants)
         if compare_with_heuristic and plan.requested_provider != "heuristic":
             compare_plan = plan_recipe_prompt(
                 db,
@@ -1771,13 +1818,19 @@ def generate_recipe_draft_html(
                 plan.draft_variants,
                 compare_plan.draft_variants,
             )
-            upsert_prompt_variants(db, prompt, compare_plan.draft_variants)
+            compare_saved_variants = upsert_prompt_variants(db, prompt, compare_plan.draft_variants)
+            sync_plan_variant_outcomes(db, compare_plan, compare_saved_variants)
         record_cluster_decision(db, prompt, cluster_choice, alternate_clusters)
         if selected_variant_slug:
             record_prompt_variant_decisions(
                 db,
                 prompt,
                 saved_variants,
+                selected_variant_keys=[draft_proposal.variant_key],
+            )
+            record_plan_variant_decisions(
+                db,
+                plan_id or plan.plan_id,
                 selected_variant_keys=[draft_proposal.variant_key],
             )
         db.commit()
@@ -1903,6 +1956,7 @@ def promote_recipe_html(
                 status_code=303,
             )
         record_prompt_variant_activation(db, recipe)
+        record_plan_variant_activation(db, recipe)
         sync_recipe_to_category(db, recipe, version)
 
     recipe.status = target_status
