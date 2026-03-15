@@ -190,6 +190,25 @@
             <span>Prompt</span>
             <textarea name="prompt" rows="4" placeholder="Example: scooter and ATV rental businesses in Thailand with strong website contact signals">{{ draft_prompt }}</textarea>
           </label>
+          <label>
+            <span>Planner Provider</span>
+            <select name="planner_provider">
+              {% for provider in planner_provider_options %}
+              <option value="{{ provider }}" {% if planner_provider == provider %}selected{% endif %}>{{ provider }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            <span>Planner Model</span>
+            <input type="text" name="planner_model" value="{{ planner_model }}" placeholder="Model override" />
+          </label>
+          <label>
+            <span>Compare Against Heuristic</span>
+            <select name="compare_with_heuristic">
+              <option value="false" {% if not compare_with_heuristic %}selected{% endif %}>Off</option>
+              <option value="true" {% if compare_with_heuristic %}selected{% endif %}>On</option>
+            </select>
+          </label>
           <div class="hero-actions">
             <button type="submit">Generate Draft</button>
           </div>
@@ -227,6 +246,44 @@
         {% if planner_info.used_fallback and planner_info.fallback_reason %}
         <p class="subtle">Fallback used: {{ planner_info.fallback_reason }}</p>
         {% endif %}
+        {% endif %}
+        {% if planner_compare_info %}
+        <table>
+          <thead>
+            <tr>
+              <th>Planner</th>
+              <th>Provider</th>
+              <th>Model</th>
+              <th>Cluster</th>
+              <th>Cluster Score</th>
+              <th>Variants</th>
+              <th>Default Variant</th>
+              <th>Top Suggestions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Selected</td>
+              <td>{{ planner_info.provider }}</td>
+              <td>{{ planner_info.model_name }}</td>
+              <td>{{ planner_info.cluster_slug }}</td>
+              <td>{{ planner_info.cluster_score }}</td>
+              <td>{{ planner_info.variant_count }}</td>
+              <td><code>{{ planner_info.default_variant_key }}</code></td>
+              <td>{{ planner_info.top_variants|join(", ") }}</td>
+            </tr>
+            <tr>
+              <td>Heuristic</td>
+              <td>{{ planner_compare_info.provider }}</td>
+              <td>{{ planner_compare_info.model_name }}</td>
+              <td>{{ planner_compare_info.cluster_slug }}</td>
+              <td>{{ planner_compare_info.cluster_score }}</td>
+              <td>{{ planner_compare_info.variant_count }}</td>
+              <td><code>{{ planner_compare_info.default_variant_key }}</code></td>
+              <td>{{ planner_compare_info.top_variants|join(", ") }}</td>
+            </tr>
+          </tbody>
+        </table>
         {% endif %}
       </section>
 
@@ -313,6 +370,9 @@
         </div>
         <form action="/recipes/bulk-from-prompt" method="post">
           <input type="hidden" name="prompt" value="{{ draft_prompt }}" />
+          <input type="hidden" name="planner_provider" value="{{ planner_provider }}" />
+          <input type="hidden" name="planner_model" value="{{ planner_model }}" />
+          <input type="hidden" name="compare_with_heuristic" value="{{ 'true' if compare_with_heuristic else 'false' }}" />
           <div class="hero-actions">
             <button type="submit">Create Selected Draft Recipes</button>
           </div>

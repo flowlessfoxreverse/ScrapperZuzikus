@@ -92,6 +92,7 @@ class PlannedPromptPayload(BaseModel):
 class RecipePromptPlanResult:
     prompt: str
     requested_provider: str
+    requested_model: str
     provider: str
     model_name: str
     planner_version: str
@@ -110,14 +111,24 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _provider_name() -> str:
-    return settings.recipe_planner_provider.strip().lower() or "heuristic"
+def _provider_name(requested_provider: str | None = None) -> str:
+    value = requested_provider if requested_provider is not None else settings.recipe_planner_provider
+    return value.strip().lower() or "heuristic"
 
 
-def _planner_cache_key(prompt: str, requested_provider: str) -> str:
+def _provider_model(requested_provider: str, requested_model: str | None = None) -> str:
+    if requested_model and requested_model.strip():
+        return requested_model.strip()
+    if requested_provider == "openai":
+        return settings.recipe_planner_openai_model
+    return settings.recipe_planner_model
+
+
+def _planner_cache_key(prompt: str, requested_provider: str, requested_model: str) -> str:
     payload = {
         "prompt_fingerprint": prompt_fingerprint(prompt),
         "requested_provider": requested_provider,
+        "requested_model": requested_model,
         "planner_version": PLANNER_VERSION,
     }
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -238,13 +249,13 @@ def _model_to_variant(variant: PlannedVariant) -> DraftProposal:
     )
 
 
-def _run_heuristic_provider(session: Session, prompt: str) -> tuple[PlannedPromptPayload, str]:
+def _run_heuristic_provider(session: Session, prompt: str, requested_model: str) -> tuple[PlannedPromptPayload, str]:
     cluster_choice, alternate_clusters = analyze_prompt_clusters(prompt)
     variants = build_draft_variants_from_prompt(prompt, session=session)
     payload = PlannedPromptPayload(
         prompt=prompt,
         provider="heuristic",
-        model_name=settings.recipe_planner_model,
+        model_name=requested_model,
         planner_version=PLANNER_VERSION,
         cluster_choice=_cluster_to_model(cluster_choice),
         alternate_clusters=[_cluster_to_model(candidate) for candidate in alternate_clusters],
@@ -324,7 +335,7 @@ def _openai_system_prompt(context_text: str) -> str:
     )
 
 
-def _run_openai_provider(session: Session, prompt: str) -> tuple[PlannedPromptPayload, str, str, bool, str | None, str]:
+def _run_openai_provider(session: Session, prompt: str, requested_model: str) -> tuple[PlannedPromptPayload, str, str, bool, str | None, str]:
     api_key = settings.recipe_planner_openai_api_key
     if not api_key:
         raise RuntimeError("OpenAI planner is configured but RECIPE_PLANNER_OPENAI_API_KEY is not set.")
@@ -336,7 +347,7 @@ def _run_openai_provider(session: Session, prompt: str) -> tuple[PlannedPromptPa
 
     client = OpenAI(api_key=api_key, timeout=settings.recipe_planner_timeout_seconds)
     response = client.responses.parse(
-        model=settings.recipe_planner_openai_model,
+        model=requested_model,
         input=[
             {
                 "role": "system",
@@ -364,35 +375,37 @@ def _run_openai_provider(session: Session, prompt: str) -> tuple[PlannedPromptPa
         raise RuntimeError("OpenAI planner returned no parsed output.")
     parsed.prompt = prompt
     parsed.provider = "openai"
-    parsed.model_name = settings.recipe_planner_openai_model
+    parsed.model_name = requested_model
     parsed.planner_version = PLANNER_VERSION
     raw_response = response.model_dump_json() if hasattr(response, "model_dump_json") else json.dumps(parsed.model_dump(mode="json"), sort_keys=True)
-    return parsed, "openai", settings.recipe_planner_openai_model, False, None, raw_response
+    return parsed, "openai", requested_model, False, None, raw_response
 
 
-def _run_provider(session: Session, prompt: str, requested_provider: str) -> tuple[PlannedPromptPayload, str, str, bool, str | None, str]:
+def _run_provider(session: Session, prompt: str, requested_provider: str, requested_model: str) -> tuple[PlannedPromptPayload, str, str, bool, str | None, str]:
     if requested_provider == "heuristic":
-        payload, raw_response = _run_heuristic_provider(session, prompt)
-        return payload, "heuristic", settings.recipe_planner_model, False, None, raw_response
+        payload, raw_response = _run_heuristic_provider(session, prompt, requested_model)
+        return payload, "heuristic", requested_model, False, None, raw_response
     if requested_provider == "openai":
         try:
-            return _run_openai_provider(session, prompt)
+            return _run_openai_provider(session, prompt, requested_model)
         except Exception as exc:
-            payload, raw_response = _run_heuristic_provider(session, prompt)
+            heuristic_model = _provider_model("heuristic")
+            payload, raw_response = _run_heuristic_provider(session, prompt, heuristic_model)
             payload.provider = "heuristic"
             return (
                 payload,
                 "heuristic",
-                settings.recipe_planner_model,
+                heuristic_model,
                 True,
                 f"OpenAI planner fallback: {exc}",
                 raw_response,
             )
 
     fallback_reason = f"Planner provider '{requested_provider}' is not configured yet; used heuristic fallback."
-    payload, raw_response = _run_heuristic_provider(session, prompt)
+    heuristic_model = _provider_model("heuristic")
+    payload, raw_response = _run_heuristic_provider(session, prompt, heuristic_model)
     payload.provider = "heuristic"
-    return payload, "heuristic", settings.recipe_planner_model, True, fallback_reason, raw_response
+    return payload, "heuristic", heuristic_model, True, fallback_reason, raw_response
 
 
 def _persist_plan(
@@ -460,13 +473,16 @@ def plan_recipe_prompt(
     prompt: str,
     *,
     selected_variant_slug: str | None = None,
+    requested_provider: str | None = None,
+    requested_model: str | None = None,
 ) -> RecipePromptPlanResult:
     prompt_text = prompt.strip()
     if not prompt_text:
         raise ValueError("Prompt is required.")
 
-    requested_provider = _provider_name()
-    cache_key = _planner_cache_key(prompt_text, requested_provider)
+    requested_provider = _provider_name(requested_provider)
+    requested_model = _provider_model(requested_provider, requested_model)
+    cache_key = _planner_cache_key(prompt_text, requested_provider, requested_model)
     cached = _get_cached_plan(session, cache_key)
     if cached is not None:
         payload = PlannedPromptPayload.model_validate(cached.parsed_output)
@@ -481,7 +497,7 @@ def plan_recipe_prompt(
         try:
             _check_quota(session, requested_provider)
             payload, actual_provider, model_name, used_fallback, fallback_reason, raw_response = _run_provider(
-                session, prompt_text, requested_provider
+                session, prompt_text, requested_provider, requested_model
             )
             _increment_quota(session, requested_provider)
             persisted = _persist_plan(
@@ -529,6 +545,7 @@ def plan_recipe_prompt(
     return RecipePromptPlanResult(
         prompt=prompt_text,
         requested_provider=requested_provider,
+        requested_model=requested_model,
         provider=actual_provider,
         model_name=model_name,
         planner_version=PLANNER_VERSION,

@@ -37,6 +37,7 @@ templates = Jinja2Templates(directory="app/templates")
 router = APIRouter(tags=["ui"])
 RECENT_RUNS_PAGE_SIZE = 25
 settings = get_settings()
+RECIPE_PLANNER_PROVIDER_OPTIONS = ("heuristic", "openai")
 
 
 @dataclass
@@ -977,6 +978,26 @@ def build_strategy_threshold_rows() -> list[dict[str, object]]:
     ]
 
 
+def build_planner_info(plan) -> dict[str, object]:
+    return {
+        "requested_provider": plan.requested_provider,
+        "requested_model": plan.requested_model,
+        "provider": plan.provider,
+        "model_name": plan.model_name,
+        "planner_version": plan.planner_version,
+        "cache_hit": plan.cache_hit,
+        "cache_expires_at": plan.cache_expires_at,
+        "used_fallback": plan.used_fallback,
+        "fallback_reason": plan.fallback_reason,
+        "plan_id": plan.plan_id,
+        "variant_count": len(plan.draft_variants),
+        "default_variant_key": plan.draft_proposal.variant_key,
+        "top_variants": [variant.label for variant in plan.draft_variants[:3]],
+        "cluster_slug": plan.cluster_choice.cluster_slug,
+        "cluster_score": plan.cluster_choice.score,
+    }
+
+
 def activation_gate_errors(recipe: QueryRecipe, version: QueryRecipeVersion) -> list[str]:
     errors: list[str] = []
     thresholds = source_strategy_thresholds(version.source_strategy)
@@ -1268,6 +1289,9 @@ def recipe_editor(
     error: str | None = None,
     draft_prompt: str | None = None,
     draft_variant_slug: str | None = None,
+    planner_provider: str | None = None,
+    planner_model: str | None = None,
+    compare_with_heuristic: bool = False,
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     draft_proposal = None
@@ -1276,28 +1300,34 @@ def recipe_editor(
     cluster_choice: ClusterCandidate | None = None
     alternate_clusters: list[ClusterCandidate] = []
     planner_info: dict[str, object] | None = None
+    planner_compare_info: dict[str, object] | None = None
     verticals, clusters = taxonomy_context(db)
     strategy_rows, cluster_rows, top_variants = build_recipe_analytics(db)
     strategy_threshold_rows = build_strategy_threshold_rows()
     if draft_prompt:
         try:
-            plan = plan_recipe_prompt(db, draft_prompt, selected_variant_slug=draft_variant_slug)
+            plan = plan_recipe_prompt(
+                db,
+                draft_prompt,
+                selected_variant_slug=draft_variant_slug,
+                requested_provider=planner_provider,
+                requested_model=planner_model,
+            )
             cluster_choice = plan.cluster_choice
             alternate_clusters = plan.alternate_clusters
             draft_variants = plan.draft_variants
             draft_proposal = plan.draft_proposal
-            planner_info = {
-                "requested_provider": plan.requested_provider,
-                "provider": plan.provider,
-                "model_name": plan.model_name,
-                "planner_version": plan.planner_version,
-                "cache_hit": plan.cache_hit,
-                "cache_expires_at": plan.cache_expires_at,
-                "used_fallback": plan.used_fallback,
-                "fallback_reason": plan.fallback_reason,
-                "plan_id": plan.plan_id,
-            }
+            planner_info = build_planner_info(plan)
             upsert_prompt_variants(db, draft_prompt, draft_variants)
+            if compare_with_heuristic and plan.requested_provider != "heuristic":
+                compare_plan = plan_recipe_prompt(
+                    db,
+                    draft_prompt,
+                    selected_variant_slug=draft_variant_slug,
+                    requested_provider="heuristic",
+                )
+                planner_compare_info = build_planner_info(compare_plan)
+                upsert_prompt_variants(db, draft_prompt, compare_plan.draft_variants)
             db.commit()
             draft_lint = lint_recipe_content(
                 osm_tags=draft_proposal.osm_tags,
@@ -1323,7 +1353,18 @@ def recipe_editor(
             "variant_recipe_map": prompt_variant_recipe_map(db, draft_prompt or "") if draft_prompt else {},
             "draft_lint": draft_lint,
             "draft_prompt": draft_prompt or "",
+            "planner_provider": plan.requested_provider if draft_prompt and not error else (planner_provider or settings.recipe_planner_provider),
+            "planner_model": plan.requested_model if draft_prompt and not error else (
+                planner_model or (
+                    settings.recipe_planner_openai_model
+                    if (planner_provider or settings.recipe_planner_provider).strip().lower() == "openai"
+                    else settings.recipe_planner_model
+                )
+            ),
+            "planner_provider_options": RECIPE_PLANNER_PROVIDER_OPTIONS,
+            "compare_with_heuristic": compare_with_heuristic,
             "planner_info": planner_info,
+            "planner_compare_info": planner_compare_info,
             "cluster_choice": cluster_choice,
             "alternate_clusters": alternate_clusters,
             "strategy_rows": strategy_rows,
@@ -1474,10 +1515,18 @@ def create_recipe_html(
 def create_recipe_variants_html(
     prompt: str = Form(...),
     selected_variant_keys: list[str] = Form([]),
+    planner_provider: str | None = Form(None),
+    planner_model: str | None = Form(None),
+    compare_with_heuristic: bool = Form(False),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
     try:
-        plan = plan_recipe_prompt(db, prompt)
+        plan = plan_recipe_prompt(
+            db,
+            prompt,
+            requested_provider=planner_provider,
+            requested_model=planner_model,
+        )
         proposals = plan.draft_variants
     except (ValueError, RuntimeError) as exc:
         return RedirectResponse(url=f"/recipes?error={quote_plus(str(exc)[:200])}", status_code=303)
@@ -1485,12 +1534,32 @@ def create_recipe_variants_html(
 
     if not selected_variant_keys:
         db.commit()
-        return RedirectResponse(url="/recipes?error=Select%20at%20least%20one%20variant.", status_code=303)
+        return RedirectResponse(
+            url=(
+                "/recipes?"
+                f"error=Select%20at%20least%20one%20variant."
+                f"&draft_prompt={quote_plus(prompt)}"
+                f"&planner_provider={quote_plus(plan.requested_provider)}"
+                f"&planner_model={quote_plus(plan.requested_model)}"
+                f"&compare_with_heuristic={'true' if compare_with_heuristic else 'false'}"
+            ),
+            status_code=303,
+        )
 
     selected = [proposal for proposal in proposals if proposal.variant_key in set(selected_variant_keys)]
     if not selected:
         db.commit()
-        return RedirectResponse(url="/recipes?error=Selected%20variants%20were%20not%20found.", status_code=303)
+        return RedirectResponse(
+            url=(
+                "/recipes?"
+                f"error=Selected%20variants%20were%20not%20found."
+                f"&draft_prompt={quote_plus(prompt)}"
+                f"&planner_provider={quote_plus(plan.requested_provider)}"
+                f"&planner_model={quote_plus(plan.requested_model)}"
+                f"&compare_with_heuristic={'true' if compare_with_heuristic else 'false'}"
+            ),
+            status_code=303,
+        )
 
     created = 0
     skipped: list[str] = []
@@ -1544,10 +1613,37 @@ def create_recipe_variants_html(
         message = f"Created {created} draft recipes. Skipped existing slugs: {', '.join(skipped[:5])}"
         if len(skipped) > 5:
             message += f" and {len(skipped) - 5} more."
-        return RedirectResponse(url=f"/recipes?message={quote_plus(message)}", status_code=303)
+        return RedirectResponse(
+            url=(
+                f"/recipes?message={quote_plus(message)}"
+                f"&draft_prompt={quote_plus(prompt)}"
+                f"&planner_provider={quote_plus(plan.requested_provider)}"
+                f"&planner_model={quote_plus(plan.requested_model)}"
+                f"&compare_with_heuristic={'true' if compare_with_heuristic else 'false'}"
+            ),
+            status_code=303,
+        )
     if created:
-        return RedirectResponse(url=f"/recipes?message={quote_plus(f'Created {created} draft recipes.')}", status_code=303)
-    return RedirectResponse(url=f"/recipes?error={quote_plus('All selected variants already exist.')}", status_code=303)
+        return RedirectResponse(
+            url=(
+                f"/recipes?message={quote_plus(f'Created {created} draft recipes.')}"
+                f"&draft_prompt={quote_plus(prompt)}"
+                f"&planner_provider={quote_plus(plan.requested_provider)}"
+                f"&planner_model={quote_plus(plan.requested_model)}"
+                f"&compare_with_heuristic={'true' if compare_with_heuristic else 'false'}"
+            ),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=(
+            f"/recipes?error={quote_plus('All selected variants already exist.')}"
+            f"&draft_prompt={quote_plus(prompt)}"
+            f"&planner_provider={quote_plus(plan.requested_provider)}"
+            f"&planner_model={quote_plus(plan.requested_model)}"
+            f"&compare_with_heuristic={'true' if compare_with_heuristic else 'false'}"
+        ),
+        status_code=303,
+    )
 
 
 @router.post("/recipes/draft", response_class=HTMLResponse)
@@ -1555,6 +1651,9 @@ def generate_recipe_draft_html(
     request: Request,
     prompt: str = Form(...),
     selected_variant_slug: str = Form(""),
+    planner_provider: str | None = Form(None),
+    planner_model: str | None = Form(None),
+    compare_with_heuristic: bool = Form(False),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     draft_proposal = None
@@ -1564,27 +1663,33 @@ def generate_recipe_draft_html(
     cluster_choice: ClusterCandidate | None = None
     alternate_clusters: list[ClusterCandidate] = []
     planner_info: dict[str, object] | None = None
+    planner_compare_info: dict[str, object] | None = None
     verticals, clusters = taxonomy_context(db)
     strategy_rows, cluster_rows, top_variants = build_recipe_analytics(db)
     strategy_threshold_rows = build_strategy_threshold_rows()
     try:
-        plan = plan_recipe_prompt(db, prompt, selected_variant_slug=selected_variant_slug or None)
+        plan = plan_recipe_prompt(
+            db,
+            prompt,
+            selected_variant_slug=selected_variant_slug or None,
+            requested_provider=planner_provider,
+            requested_model=planner_model,
+        )
         cluster_choice = plan.cluster_choice
         alternate_clusters = plan.alternate_clusters
         draft_variants = plan.draft_variants
         draft_proposal = plan.draft_proposal
-        planner_info = {
-            "requested_provider": plan.requested_provider,
-            "provider": plan.provider,
-            "model_name": plan.model_name,
-            "planner_version": plan.planner_version,
-            "cache_hit": plan.cache_hit,
-            "cache_expires_at": plan.cache_expires_at,
-            "used_fallback": plan.used_fallback,
-            "fallback_reason": plan.fallback_reason,
-            "plan_id": plan.plan_id,
-        }
+        planner_info = build_planner_info(plan)
         saved_variants = upsert_prompt_variants(db, prompt, draft_variants)
+        if compare_with_heuristic and plan.requested_provider != "heuristic":
+            compare_plan = plan_recipe_prompt(
+                db,
+                prompt,
+                selected_variant_slug=selected_variant_slug or None,
+                requested_provider="heuristic",
+            )
+            planner_compare_info = build_planner_info(compare_plan)
+            upsert_prompt_variants(db, prompt, compare_plan.draft_variants)
         record_cluster_decision(db, prompt, cluster_choice, alternate_clusters)
         if selected_variant_slug:
             record_prompt_variant_decisions(
@@ -1619,7 +1724,18 @@ def generate_recipe_draft_html(
             "variant_recipe_map": prompt_variant_recipe_map(db, prompt),
             "draft_lint": draft_lint,
             "draft_prompt": prompt,
+            "planner_provider": planner_info["requested_provider"] if planner_info else (planner_provider or settings.recipe_planner_provider),
+            "planner_model": planner_info["requested_model"] if planner_info else (
+                planner_model or (
+                    settings.recipe_planner_openai_model
+                    if (planner_provider or settings.recipe_planner_provider).strip().lower() == "openai"
+                    else settings.recipe_planner_model
+                )
+            ),
+            "planner_provider_options": RECIPE_PLANNER_PROVIDER_OPTIONS,
+            "compare_with_heuristic": compare_with_heuristic,
             "planner_info": planner_info,
+            "planner_compare_info": planner_compare_info,
             "cluster_choice": cluster_choice,
             "alternate_clusters": alternate_clusters,
             "strategy_rows": strategy_rows,
