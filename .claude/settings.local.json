@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ssh -o StrictHostKeyChecking=no root@94.130.162.176 \"find / -name ''docker-compose.yml'' -o -name ''docker-compose.yaml'' 2>/dev/null | grep -i n8n; docker ps -a | grep -i n8n\")",
+      "Bash(ssh -o StrictHostKeyChecking=no root@94.130.162.176 \"cat /root/n8n/docker-compose.yml\")",
+      "Bash(ssh -o StrictHostKeyChecking=no root@94.130.162.176 \"ps aux | grep xray; systemctl status xray 2>/dev/null | head -20; ls /etc/xray/ 2>/dev/null; ls /usr/local/etc/xray/ 2>/dev/null\")",
+      "Bash(ssh -o StrictHostKeyChecking=no root@94.130.162.176 \"ls /app/; cat /app/bin/config.json 2>/dev/null | python3 -m json.tool 2>/dev/null || cat /app/bin/config.json\")",
+      "Bash(ssh -o StrictHostKeyChecking=no root@94.130.162.176 \"docker ps -a; docker inspect n8n-npm-1 2>/dev/null | python3 -c ''import json,sys; d=json.load\\(sys.stdin\\); print\\(d[0][\"\"HostConfig\"\"][\"\"PortBindings\"\"]\\)'' 2>/dev/null\")",
+      "Bash(ssh -o StrictHostKeyChecking=no root@94.130.162.176 \"docker inspect 93afcceb53cf | python3 -c ''import json,sys; d=json.load\\(sys.stdin\\)[0]; print\\(\"\"Ports:\"\", d[\"\"HostConfig\"\"][\"\"PortBindings\"\"]\\); print\\(\"\"Network:\"\", list\\(d[\"\"NetworkSettings\"\"][\"\"Networks\"\"].keys\\(\\)\\)\\)''\")",
+      "Bash(ssh -o StrictHostKeyChecking=no root@94.130.162.176 \"cp /root/n8n/docker-compose.yml /root/n8n/docker-compose.yml.bak && echo ''Backup created''\")",
+      "Bash(ssh -o StrictHostKeyChecking=no root@94.130.162.176 \"cd /root/n8n && sed ''s/\"\"443:443\"\"/\"\"8443:443\"\"/'' docker-compose.yml > docker-compose.yml.new && cat docker-compose.yml.new\")",
+      "Bash(ssh -o StrictHostKeyChecking=no root@94.130.162.176 \"cd /root/n8n && mv docker-compose.yml.new docker-compose.yml && docker compose up -d 2>&1\")",
+      "Bash(ssh -o StrictHostKeyChecking=no root@94.130.162.176 \"docker exec n8n-npm-1 sh -c ''which node && node -e \"\"const bcrypt=require\\(\\\\\"\"bcryptjs\\\\\"\"\\); bcrypt.hash\\(\\\\\"\"Uhbujhmtd1\\\\\"\", 10\\).then\\(h=>console.log\\(h\\)\\)\"\"''\")",
+      "Bash(ssh -o StrictHostKeyChecking=no root@94.130.162.176 \"docker exec n8n-npm-1 sh -c ''find /app -name \"\"*.js\"\" | xargs grep -l \"\"bcrypt\"\" 2>/dev/null | head -5''\")",
+      "Bash(ssh -o StrictHostKeyChecking=no root@94.130.162.176 \"docker exec n8n-npm-1 node -e \"\"const bcrypt=require\\(''/app/node_modules/bcrypt''\\); bcrypt.hash\\(''Uhbujhmtd1'', 10\\).then\\(h=>console.log\\(h\\)\\)\"\"\")",
+      "Bash(ssh -o StrictHostKeyChecking=no root@94.130.162.176 \"docker exec n8n-npm-1 node -e \"\"const knex=require\\(''/app/node_modules/knex''\\)\\({client:''sqlite3'',connection:{filename:''/data/database.sqlite''},useNullAsDefault:true}\\); knex\\(''user''\\).where\\({email:''geehadman@gmail.com''}\\).update\\({password:''$2b$10$nXfrZUF98QFGHLBn4beKNue9oz6g35YmbHjjZMtYF4dgArZaPjmJi''}\\).then\\(r=>console.log\\(''Updated rows:'',r\\)\\).finally\\(\\(\\)=>knex.destroy\\(\\)\\)\"\"\")",
+      "Bash(ssh -o:*)",
+      "Bash(ssh -o StrictHostKeyChecking=no root@94.130.162.176 \"docker exec n8n-npm-1 node -e \"\"const knex=require\\(''/app/node_modules/knex''\\)\\({client:''sqlite3'',connection:{filename:''/data/database.sqlite''},useNullAsDefault:true}\\); knex.raw\\(\\\\\"\"SELECT name FROM sqlite_master WHERE type=''table''\\\\\"\"\\).then\\(r=>console.log\\(r\\)\\).finally\\(\\(\\)=>knex.destroy\\(\\)\\)\"\"\")",
+      "Bash(ssh root@94.130.162.176 \"mkdir -p /opt/woodpecker /opt/zot/data /opt/zot/config && openssl rand -hex 32\")",
+      "Bash(ssh root@94.130.162.176 \"htpasswd -nbB Zotadmin ''OBoubOvud8tsid''\")"
+    ]
+  }
+}
