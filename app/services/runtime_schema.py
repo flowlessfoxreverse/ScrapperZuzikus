@@ -873,6 +873,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 "id SERIAL PRIMARY KEY, "
                 "prompt_text TEXT NOT NULL, "
                 "prompt_fingerprint VARCHAR(64) NOT NULL, "
+                "market_country_code VARCHAR(2) NULL, "
                 "vertical VARCHAR(64) NOT NULL, "
                 "cluster_slug VARCHAR(64) NOT NULL, "
                 "match_score INTEGER NOT NULL DEFAULT 0, "
@@ -891,6 +892,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 "id INTEGER PRIMARY KEY, "
                 "prompt_text TEXT NOT NULL, "
                 "prompt_fingerprint VARCHAR(64) NOT NULL, "
+                "market_country_code VARCHAR(2) NULL, "
                 "vertical VARCHAR(64) NOT NULL, "
                 "cluster_slug VARCHAR(64) NOT NULL, "
                 "match_score INTEGER NOT NULL DEFAULT 0, "
@@ -905,7 +907,44 @@ def ensure_recipe_schema(engine: Engine) -> None:
             )
         statements.append(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_prompt_cluster_decision "
-            "ON query_prompt_cluster_decisions(prompt_fingerprint, cluster_slug)"
+            + (
+                "ON query_prompt_cluster_decisions(prompt_fingerprint, cluster_slug, COALESCE(market_country_code, ''))"
+                if dialect == "postgresql"
+                else "ON query_prompt_cluster_decisions(prompt_fingerprint, cluster_slug, market_country_code)"
+            )
+        )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_prompt_cluster_decisions_prompt_fingerprint "
+            "ON query_prompt_cluster_decisions(prompt_fingerprint)"
+        )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_prompt_cluster_decisions_market_country_code "
+            "ON query_prompt_cluster_decisions(market_country_code)"
+        )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_prompt_cluster_decisions_cluster_slug "
+            "ON query_prompt_cluster_decisions(cluster_slug)"
+        )
+    else:
+        cluster_columns = columns_by_table.get("query_prompt_cluster_decisions", set())
+        if "market_country_code" not in cluster_columns:
+            if dialect == "postgresql":
+                statements.append(
+                    "ALTER TABLE query_prompt_cluster_decisions ADD COLUMN IF NOT EXISTS market_country_code VARCHAR(2) NULL"
+                )
+            else:
+                statements.append(
+                    "ALTER TABLE query_prompt_cluster_decisions ADD COLUMN market_country_code VARCHAR(2) NULL"
+                )
+        if dialect == "postgresql":
+            statements.append("DROP INDEX IF EXISTS uq_prompt_cluster_decision")
+            statements.append(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_prompt_cluster_decision "
+                "ON query_prompt_cluster_decisions(prompt_fingerprint, cluster_slug, COALESCE(market_country_code, ''))"
+            )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_prompt_cluster_decisions_market_country_code "
+            "ON query_prompt_cluster_decisions(market_country_code)"
         )
         statements.append(
             "CREATE INDEX IF NOT EXISTS ix_query_prompt_cluster_decisions_prompt_fingerprint "

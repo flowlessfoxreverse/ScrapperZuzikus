@@ -41,6 +41,12 @@ class PlannedClusterCandidate(BaseModel):
     score: int
     matched_aliases: list[str] = Field(default_factory=list)
     rationale: list[str] = Field(default_factory=list)
+    market_country_code: str | None = None
+    historical_seen_count: int = 0
+    historical_selected_count: int = 0
+    market_historical_seen_count: int = 0
+    market_historical_selected_count: int = 0
+    ambiguity_count: int = 0
 
 
 class PlannedVariant(BaseModel):
@@ -217,6 +223,12 @@ def _cluster_to_model(candidate: ClusterCandidate) -> PlannedClusterCandidate:
         score=candidate.score,
         matched_aliases=list(candidate.matched_aliases),
         rationale=list(candidate.rationale),
+        market_country_code=candidate.market_country_code,
+        historical_seen_count=candidate.historical_seen_count,
+        historical_selected_count=candidate.historical_selected_count,
+        market_historical_seen_count=candidate.market_historical_seen_count,
+        market_historical_selected_count=candidate.market_historical_selected_count,
+        ambiguity_count=candidate.ambiguity_count,
     )
 
 
@@ -231,6 +243,12 @@ def _model_to_cluster(candidate: PlannedClusterCandidate) -> ClusterCandidate:
         score=candidate.score,
         matched_aliases=tuple(candidate.matched_aliases),
         rationale=list(candidate.rationale),
+        market_country_code=candidate.market_country_code,
+        historical_seen_count=candidate.historical_seen_count,
+        historical_selected_count=candidate.historical_selected_count,
+        market_historical_seen_count=candidate.market_historical_seen_count,
+        market_historical_selected_count=candidate.market_historical_selected_count,
+        ambiguity_count=candidate.ambiguity_count,
     )
 
 

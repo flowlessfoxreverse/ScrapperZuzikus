@@ -695,6 +695,16 @@
             </strong>
           </div>
           <div class="stat-card">
+            <span class="subtle">Market Selection</span>
+            <strong>
+              {% if cluster_choice.market_country_code and cluster_choice.market_historical_seen_count %}
+              {{ cluster_choice.market_historical_selected_count }}/{{ cluster_choice.market_historical_seen_count }}
+              {% else %}
+              -
+              {% endif %}
+            </strong>
+          </div>
+          <div class="stat-card">
             <span class="subtle">Ambiguity Runs</span>
             <strong>{{ cluster_choice.ambiguity_count or "-" }}</strong>
           </div>
@@ -709,6 +719,7 @@
               <th>Match Score</th>
               <th>Matched Terms</th>
               <th>Historical Selection</th>
+              <th>Market Selection</th>
               <th>Ambiguity Runs</th>
               <th>Why It Was Not Chosen</th>
             </tr>
@@ -723,6 +734,13 @@
               <td>
                 {% if cluster.historical_seen_count %}
                 {{ cluster.historical_selected_count }}/{{ cluster.historical_seen_count }}
+                {% else %}
+                -
+                {% endif %}
+              </td>
+              <td>
+                {% if cluster.market_country_code and cluster.market_historical_seen_count %}
+                {{ cluster.market_historical_selected_count }}/{{ cluster.market_historical_seen_count }}
                 {% else %}
                 -
                 {% endif %}
