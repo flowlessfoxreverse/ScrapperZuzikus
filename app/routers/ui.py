@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import Category, Company, ContactChannel, ContactChannelType, Email, NicheCluster, Phone, ProxyEndpoint, ProxyKind, QueryRecipe, QueryRecipeValidation, QueryRecipeVariant, QueryRecipeVersion, RecipeAdapter, RecipeStatus, Region, RequestMetric, RunCategory, RunStatus, ScrapeRun, TaxonomyVertical, ValidationStatus
+from app.models import Category, Company, ContactChannel, ContactChannelType, Email, NicheCluster, Phone, ProxyEndpoint, ProxyKind, QueryRecipe, QueryRecipeValidation, QueryRecipeVariant, QueryRecipeVariantTemplate, QueryRecipeVersion, RecipeAdapter, RecipeSourceStrategy, RecipeStatus, Region, RequestMetric, RunCategory, RunStatus, ScrapeRun, TaxonomyVertical, ValidationStatus
 from app.schemas import EmailRow
 from app.services.category_recipes import latest_recipe_version, sync_recipe_to_category, upsert_recipe_backed_category
 from app.services.host_suppression import normalize_host_key
@@ -163,6 +163,10 @@ class RecipeRow:
     slug: str
     label: str
     vertical: str
+    cluster_slug: str | None
+    source_strategy: str | None
+    sub_intent: str | None
+    source_template_key: str | None
     status: str
     adapter: str | None
     version_number: int | None
@@ -203,8 +207,42 @@ class CategoryRow:
     linked_recipe_slug: str | None
     linked_recipe_status: str | None
     linked_recipe_adapter: str | None
+    linked_recipe_source_strategy: str | None
     linked_recipe_version: int | None
     linked_recipe_template: bool
+
+
+@dataclass
+class RecipeStrategyAnalyticsRow:
+    source_strategy: str
+    template_count: int
+    active_recipe_count: int
+    variant_count: int
+    avg_validation_score: int
+    avg_production_score: int
+    avg_rank_score: int
+
+
+@dataclass
+class RecipeClusterAnalyticsRow:
+    cluster_slug: str
+    variant_count: int
+    active_recipe_count: int
+    avg_validation_score: int
+    avg_production_score: int
+    avg_rank_score: int
+
+
+@dataclass
+class RecipeTopVariantRow:
+    label: str
+    cluster_slug: str | None
+    source_strategy: str
+    template_key: str | None
+    rank_score: int
+    validation_score: int
+    production_score: int
+    production_runs: int
 
 
 def taxonomy_context(db: Session) -> tuple[list[TaxonomyVertical], list[NicheCluster]]:
@@ -714,6 +752,10 @@ def build_recipe_rows(db: Session) -> list[RecipeRow]:
                 slug=recipe.slug,
                 label=recipe.label,
                 vertical=recipe.vertical,
+                cluster_slug=recipe.cluster_slug,
+                source_strategy=version.source_strategy.value if version else None,
+                sub_intent=recipe.source_variant.sub_intent if recipe.source_variant else None,
+                source_template_key=recipe.source_variant.template_key if recipe.source_variant else None,
                 status=recipe.status.value,
                 adapter=version.adapter.value if version else None,
                 version_number=version.version_number if version else None,
@@ -773,11 +815,140 @@ def build_category_rows(db: Session) -> list[CategoryRow]:
                 linked_recipe_slug=recipe.slug if recipe else None,
                 linked_recipe_status=recipe.status.value if recipe else None,
                 linked_recipe_adapter=version.adapter.value if version else None,
+                linked_recipe_source_strategy=version.source_strategy.value if version else None,
                 linked_recipe_version=version.version_number if version else None,
                 linked_recipe_template=recipe.is_platform_template if recipe else False,
             )
         )
     return rows
+
+
+def build_recipe_analytics(
+    db: Session,
+) -> tuple[list[RecipeStrategyAnalyticsRow], list[RecipeClusterAnalyticsRow], list[RecipeTopVariantRow]]:
+    strategy_rows_raw = db.execute(
+        select(
+            QueryRecipeVariant.source_strategy,
+            func.count(QueryRecipeVariant.id),
+            func.avg(QueryRecipeVariant.observed_validation_score),
+            func.avg(QueryRecipeVariant.observed_production_score),
+            func.avg(QueryRecipeVariant.rank_score),
+        )
+        .group_by(QueryRecipeVariant.source_strategy)
+        .order_by(QueryRecipeVariant.source_strategy)
+    ).all()
+    active_recipe_counts_by_strategy = {
+        source_strategy: count_value
+        for source_strategy, count_value in db.execute(
+            select(QueryRecipeVersion.source_strategy, func.count(QueryRecipe.id))
+            .select_from(QueryRecipe)
+            .join(QueryRecipeVersion, QueryRecipeVersion.recipe_id == QueryRecipe.id)
+            .where(QueryRecipe.status == RecipeStatus.ACTIVE)
+            .group_by(QueryRecipeVersion.source_strategy)
+        ).all()
+    }
+    template_counts_by_strategy = {
+        source_strategy: count_value
+        for source_strategy, count_value in db.execute(
+            select(QueryRecipeVariantTemplate.source_strategy, func.count(QueryRecipeVariantTemplate.id))
+            .where(QueryRecipeVariantTemplate.is_active.is_(True))
+            .group_by(QueryRecipeVariantTemplate.source_strategy)
+        ).all()
+    }
+    strategy_rows = [
+        RecipeStrategyAnalyticsRow(
+            source_strategy=source_strategy.value if isinstance(source_strategy, RecipeSourceStrategy) else str(source_strategy),
+            template_count=template_counts_by_strategy.get(source_strategy, 0),
+            active_recipe_count=active_recipe_counts_by_strategy.get(source_strategy, 0),
+            variant_count=int(variant_count or 0),
+            avg_validation_score=round(avg_validation or 0),
+            avg_production_score=round(avg_production or 0),
+            avg_rank_score=round(avg_rank or 0),
+        )
+        for source_strategy, variant_count, avg_validation, avg_production, avg_rank in strategy_rows_raw
+    ]
+
+    cluster_rows = [
+        RecipeClusterAnalyticsRow(
+            cluster_slug=cluster_slug or "-",
+            variant_count=int(variant_count or 0),
+            active_recipe_count=int(active_recipe_count or 0),
+            avg_validation_score=round(avg_validation or 0),
+            avg_production_score=round(avg_production or 0),
+            avg_rank_score=round(avg_rank or 0),
+        )
+        for cluster_slug, variant_count, active_recipe_count, avg_validation, avg_production, avg_rank in db.execute(
+            select(
+                QueryRecipeVariant.cluster_slug,
+                func.count(QueryRecipeVariant.id),
+                func.count(QueryRecipe.id),
+                func.avg(QueryRecipeVariant.observed_validation_score),
+                func.avg(QueryRecipeVariant.observed_production_score),
+                func.avg(QueryRecipeVariant.rank_score),
+            )
+            .select_from(QueryRecipeVariant)
+            .outerjoin(QueryRecipe, QueryRecipe.source_variant_id == QueryRecipeVariant.id)
+            .group_by(QueryRecipeVariant.cluster_slug)
+            .order_by(desc(func.avg(QueryRecipeVariant.observed_production_score)), QueryRecipeVariant.cluster_slug)
+        ).all()
+        if cluster_slug
+    ]
+
+    top_variants = [
+        RecipeTopVariantRow(
+            label=variant.label,
+            cluster_slug=variant.cluster_slug,
+            source_strategy=variant.source_strategy.value,
+            template_key=variant.template_key,
+            rank_score=variant.rank_score,
+            validation_score=variant.observed_validation_score,
+            production_score=variant.observed_production_score,
+            production_runs=variant.production_run_count,
+        )
+        for variant in db.scalars(
+            select(QueryRecipeVariant)
+            .order_by(
+                desc(QueryRecipeVariant.observed_production_score),
+                desc(QueryRecipeVariant.observed_validation_score),
+                desc(QueryRecipeVariant.rank_score),
+            )
+            .limit(8)
+        ).all()
+    ]
+
+    return strategy_rows, cluster_rows[:8], top_variants
+
+
+def activation_gate_errors(recipe: QueryRecipe, version: QueryRecipeVersion) -> list[str]:
+    errors: list[str] = []
+    latest_validation = version.validations[0] if version.validations else None
+    if latest_validation is None:
+        errors.append("No validation run exists yet.")
+        return errors
+    if latest_validation.status != RecipeStatus.VALIDATED:
+        errors.append("Latest validation did not reach validated status.")
+    if (latest_validation.score or 0) < settings.recipe_activation_min_validation_score:
+        errors.append(
+            f"Validation score must be at least {settings.recipe_activation_min_validation_score}."
+        )
+    if len(version.validations) < settings.recipe_activation_min_validation_runs:
+        errors.append(
+            f"At least {settings.recipe_activation_min_validation_runs} validation run(s) are required."
+        )
+    if settings.recipe_activation_min_production_runs > 0:
+        variant = recipe.source_variant
+        if variant is None:
+            errors.append("Recipe has no source variant to evaluate production readiness.")
+        else:
+            if variant.production_run_count < settings.recipe_activation_min_production_runs:
+                errors.append(
+                    f"At least {settings.recipe_activation_min_production_runs} production run(s) are required."
+                )
+            if variant.observed_production_score < settings.recipe_activation_min_production_score:
+                errors.append(
+                    f"Production yield must be at least {settings.recipe_activation_min_production_score}."
+                )
+    return errors
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -1046,11 +1217,12 @@ def recipe_editor(
     cluster_choice: ClusterCandidate | None = None
     alternate_clusters: list[ClusterCandidate] = []
     verticals, clusters = taxonomy_context(db)
+    strategy_rows, cluster_rows, top_variants = build_recipe_analytics(db)
     if draft_prompt:
         try:
             cluster_choice, alternate_clusters = analyze_prompt_clusters(draft_prompt)
             cluster_choice, alternate_clusters = apply_cluster_decision_history(db, draft_prompt, cluster_choice, alternate_clusters)
-            draft_variants, draft_proposal = select_draft_variant(draft_prompt, draft_variant_slug)
+            draft_variants, draft_proposal = select_draft_variant(draft_prompt, draft_variant_slug, session=db)
             draft_variants = apply_variant_history(db, draft_variants)
             draft_variants = apply_prompt_variant_history(db, draft_prompt, draft_variants)
             draft_proposal = next(
@@ -1085,6 +1257,16 @@ def recipe_editor(
             "draft_prompt": draft_prompt or "",
             "cluster_choice": cluster_choice,
             "alternate_clusters": alternate_clusters,
+            "strategy_rows": strategy_rows,
+            "cluster_rows": cluster_rows,
+            "top_variants": top_variants,
+            "recipe_source_strategies": list(RecipeSourceStrategy),
+            "activation_thresholds": {
+                "validation_score": settings.recipe_activation_min_validation_score,
+                "validation_runs": settings.recipe_activation_min_validation_runs,
+                "production_score": settings.recipe_activation_min_production_score,
+                "production_runs": settings.recipe_activation_min_production_runs,
+            },
         },
     )
 
@@ -1169,6 +1351,7 @@ def create_recipe_html(
     cluster_slug: str = Form(""),
     description: str = Form(""),
     adapter: RecipeAdapter = Form(RecipeAdapter.OVERPASS_PUBLIC),
+    source_strategy: RecipeSourceStrategy = Form(RecipeSourceStrategy.OVERPASS_DISCOVERY_ENRICH),
     osm_tags: str = Form(""),
     exclude_tags: str = Form(""),
     search_terms: str = Form(""),
@@ -1204,6 +1387,7 @@ def create_recipe_html(
                 version_number=1,
                 status=RecipeStatus.DRAFT,
                 adapter=adapter,
+                source_strategy=source_strategy,
                 osm_tags=tag_pairs,
                 exclude_tags=exclude_pairs,
                 search_terms=term_list,
@@ -1223,7 +1407,7 @@ def create_recipe_variants_html(
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
     try:
-        proposals = apply_variant_history(db, build_draft_variants_from_prompt(prompt))
+        proposals = apply_variant_history(db, build_draft_variants_from_prompt(prompt, session=db))
         proposals = apply_prompt_variant_history(db, prompt, proposals)
     except ValueError as exc:
         return RedirectResponse(url=f"/recipes?error={quote_plus(str(exc)[:200])}", status_code=303)
@@ -1264,6 +1448,7 @@ def create_recipe_variants_html(
                 version_number=1,
                 status=RecipeStatus.DRAFT,
                 adapter=proposal.adapter,
+                source_strategy=proposal.source_strategy,
                 osm_tags=proposal.osm_tags,
                 exclude_tags=proposal.exclude_tags,
                 search_terms=proposal.search_terms,
@@ -1309,10 +1494,11 @@ def generate_recipe_draft_html(
     cluster_choice: ClusterCandidate | None = None
     alternate_clusters: list[ClusterCandidate] = []
     verticals, clusters = taxonomy_context(db)
+    strategy_rows, cluster_rows, top_variants = build_recipe_analytics(db)
     try:
         cluster_choice, alternate_clusters = analyze_prompt_clusters(prompt)
         cluster_choice, alternate_clusters = apply_cluster_decision_history(db, prompt, cluster_choice, alternate_clusters)
-        draft_variants, draft_proposal = select_draft_variant(prompt, selected_variant_slug or None)
+        draft_variants, draft_proposal = select_draft_variant(prompt, selected_variant_slug or None, session=db)
         draft_variants = apply_variant_history(db, draft_variants)
         draft_variants = apply_prompt_variant_history(db, prompt, draft_variants)
         draft_proposal = next(
@@ -1345,6 +1531,7 @@ def generate_recipe_draft_html(
             "verticals": verticals,
             "clusters": clusters,
             "recipe_adapters": list(RecipeAdapter),
+            "recipe_source_strategies": list(RecipeSourceStrategy),
             "validation_quota": get_validation_quota_snapshot(db),
             "message": None,
             "error": error,
@@ -1355,6 +1542,15 @@ def generate_recipe_draft_html(
             "draft_prompt": prompt,
             "cluster_choice": cluster_choice,
             "alternate_clusters": alternate_clusters,
+            "strategy_rows": strategy_rows,
+            "cluster_rows": cluster_rows,
+            "top_variants": top_variants,
+            "activation_thresholds": {
+                "validation_score": settings.recipe_activation_min_validation_score,
+                "validation_runs": settings.recipe_activation_min_validation_runs,
+                "production_score": settings.recipe_activation_min_production_score,
+                "production_runs": settings.recipe_activation_min_production_runs,
+            },
         },
     )
 
@@ -1420,10 +1616,10 @@ def promote_recipe_html(
         return RedirectResponse(url="/recipes?error=Unsupported%20recipe%20transition.", status_code=303)
 
     if target_status == RecipeStatus.ACTIVE:
-        latest_validation = version.validations[0] if version.validations else None
-        if latest_validation is None or latest_validation.status != RecipeStatus.VALIDATED:
+        gate_errors = activation_gate_errors(recipe, version)
+        if gate_errors:
             return RedirectResponse(
-                url="/recipes?error=Recipe%20must%20be%20validated%20before%20activation.",
+                url=f"/recipes?error={quote_plus('Cannot activate recipe: ' + '; '.join(gate_errors)[:200])}",
                 status_code=303,
             )
         record_prompt_variant_activation(db, recipe)
@@ -1525,6 +1721,7 @@ def create_category_html(
         search_terms=terms,
         description=f"Recipe created from category editor for {label.strip()}.",
         adapter=RecipeAdapter.OVERPASS_LOCAL,
+        source_strategy=RecipeSourceStrategy.OVERPASS_DISCOVERY_ENRICH,
         notes="Created or updated from category editor.",
         recipe_status=RecipeStatus.ACTIVE,
     )

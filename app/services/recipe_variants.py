@@ -44,6 +44,9 @@ def upsert_prompt_variants(session: Session, prompt: str, proposals: list[DraftP
         variant.label = proposal.label
         variant.vertical = proposal.vertical
         variant.cluster_slug = proposal.cluster_slug
+        variant.template_key = proposal.template_key
+        variant.sub_intent = proposal.sub_intent
+        variant.source_strategy = proposal.source_strategy
         variant.template_score = proposal.template_score
         variant.prompt_match_score = proposal.prompt_match_score
         variant.rank_score = proposal.fit_score

@@ -1,6 +1,7 @@
 from sqlalchemy.exc import IntegrityError
 
-from app.models import Category, QueryRecipe, QueryRecipeVersion, RecipeAdapter, RecipeStatus, Region
+from app.models import Category, QueryRecipe, QueryRecipeVariantTemplate, QueryRecipeVersion, RecipeAdapter, RecipeSourceStrategy, RecipeStatus, Region
+from app.services.recipe_drafts import all_curated_variant_templates
 from app.services.taxonomy import seed_taxonomy
 
 
@@ -90,6 +91,8 @@ def _latest_recipe_version(recipe: QueryRecipe) -> QueryRecipeVersion | None:
 def seed_defaults(session) -> None:
     seed_taxonomy(session)
     session.commit()
+    _seed_recipe_variant_templates(session)
+    session.commit()
 
     for region_data in DEFAULT_REGIONS:
         region = session.query(Region).filter(Region.code == region_data["code"]).one_or_none()
@@ -131,6 +134,7 @@ def seed_defaults(session) -> None:
                         version_number=1,
                         status=RecipeStatus.ACTIVE,
                         adapter=RecipeAdapter.OVERPASS_LOCAL,
+                        source_strategy=RecipeSourceStrategy.OVERPASS_DISCOVERY_ENRICH,
                         osm_tags=category.osm_tags,
                         search_terms=category.search_terms,
                         website_keywords=category.search_terms,
@@ -183,3 +187,36 @@ def seed_defaults(session) -> None:
         category.seeded_recipe_id = recipe.id
         session.add(category)
         session.commit()
+
+
+def _seed_recipe_variant_templates(session) -> None:
+    for sort_order, template in enumerate(all_curated_variant_templates(), start=1):
+        row = session.query(QueryRecipeVariantTemplate).filter(
+            QueryRecipeVariantTemplate.key == template.key
+        ).one_or_none()
+        if row is None:
+            row = QueryRecipeVariantTemplate(
+                key=template.key,
+                label=template.label,
+                vertical=template.vertical,
+                cluster_slug=template.cluster_slug or None,
+                sub_intent=template.sub_intent,
+            )
+            session.add(row)
+            session.flush()
+        row.label = template.label
+        row.vertical = template.vertical
+        row.cluster_slug = template.cluster_slug or None
+        row.sub_intent = template.sub_intent
+        row.source_strategy = template.source_strategy
+        row.aliases = list(template.aliases)
+        row.osm_tags = [dict(item) for item in template.osm_tags]
+        row.exclude_tags = [dict(item) for item in template.exclude_tags]
+        row.search_terms = list(template.search_terms)
+        row.website_keywords = list(template.website_keywords)
+        row.language_hints = list(template.language_hints)
+        row.rationale = list(template.rationale)
+        row.template_score = template.priority
+        row.sort_order = sort_order
+        row.is_active = True
+        session.add(row)

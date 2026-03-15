@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     recipe_validation_cache_hours: int = 24
     recipe_validation_daily_cap: int = 250
     recipe_validation_sample_regions: int = 3
+    recipe_activation_min_validation_score: int = 55
+    recipe_activation_min_validation_runs: int = 1
+    recipe_activation_min_production_score: int = 0
+    recipe_activation_min_production_runs: int = 0
     overpass_data_path: str = "/overpassdb"
     overpass_daily_query_cap: int = 0
     overpass_connect_retries: int = 4

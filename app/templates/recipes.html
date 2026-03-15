@@ -49,6 +49,115 @@
 
       <section class="panel">
         <div class="section-heading">
+          <h2>Recipe Analytics</h2>
+          <span>How source strategy, clusters, and variants are performing across the platform</span>
+        </div>
+        <div class="country-summary">
+          <div class="stat-card">
+            <span class="subtle">Activation Validation Floor</span>
+            <strong>{{ activation_thresholds.validation_score }}/100</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Activation Validation Runs</span>
+            <strong>{{ activation_thresholds.validation_runs }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Activation Production Floor</span>
+            <strong>{{ activation_thresholds.production_score }}/100</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Activation Production Runs</span>
+            <strong>{{ activation_thresholds.production_runs }}</strong>
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Source Strategy</th>
+              <th>Templates</th>
+              <th>Active Recipes</th>
+              <th>Variants</th>
+              <th>Avg Validation</th>
+              <th>Avg Production</th>
+              <th>Avg Rank</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in strategy_rows %}
+            <tr>
+              <td>{{ row.source_strategy }}</td>
+              <td>{{ row.template_count }}</td>
+              <td>{{ row.active_recipe_count }}</td>
+              <td>{{ row.variant_count }}</td>
+              <td>{{ row.avg_validation_score }}</td>
+              <td>{{ row.avg_production_score }}</td>
+              <td>{{ row.avg_rank_score }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7">No strategy analytics yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <table>
+          <thead>
+            <tr>
+              <th>Cluster</th>
+              <th>Variants</th>
+              <th>Active Recipes</th>
+              <th>Avg Validation</th>
+              <th>Avg Production</th>
+              <th>Avg Rank</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in cluster_rows %}
+            <tr>
+              <td>{{ row.cluster_slug }}</td>
+              <td>{{ row.variant_count }}</td>
+              <td>{{ row.active_recipe_count }}</td>
+              <td>{{ row.avg_validation_score }}</td>
+              <td>{{ row.avg_production_score }}</td>
+              <td>{{ row.avg_rank_score }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6">No cluster analytics yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <table>
+          <thead>
+            <tr>
+              <th>Top Variant</th>
+              <th>Cluster</th>
+              <th>Source Strategy</th>
+              <th>Template</th>
+              <th>Rank</th>
+              <th>Validation</th>
+              <th>Production</th>
+              <th>Prod Runs</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in top_variants %}
+            <tr>
+              <td>{{ row.label }}</td>
+              <td>{{ row.cluster_slug or "-" }}</td>
+              <td>{{ row.source_strategy }}</td>
+              <td><code>{{ row.template_key or "-" }}</code></td>
+              <td>{{ row.rank_score }}</td>
+              <td>{{ row.validation_score }}</td>
+              <td>{{ row.production_score }}</td>
+              <td>{{ row.production_runs }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="8">No top-variant analytics yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
           <h2>Generate Draft From Prompt</h2>
           <span>Natural-language input to editable recipe proposal</span>
         </div>
@@ -155,6 +264,9 @@
               <th>Variant</th>
               <th>Vertical</th>
               <th>Cluster</th>
+              <th>Sub-intent</th>
+              <th>Source Strategy</th>
+              <th>Template</th>
               <th>Template Score</th>
               <th>Prompt Match</th>
               <th>Observed Validation</th>
@@ -180,6 +292,9 @@
               </td>
               <td>{{ variant.vertical }}</td>
               <td>{{ variant.cluster_slug or "-" }}</td>
+              <td>{{ variant.sub_intent }}</td>
+              <td>{{ variant.source_strategy.value }}</td>
+              <td><code>{{ variant.template_key }}</code></td>
               <td>{{ variant.template_score }}</td>
               <td>{{ variant.prompt_match_score }}</td>
               <td>{{ variant.observed_validation_score or "-" }}</td>
@@ -261,8 +376,20 @@
             <strong>{{ draft_proposal.cluster_slug or "-" }}</strong>
           </div>
           <div class="stat-card">
+            <span class="subtle">Sub-intent</span>
+            <strong>{{ draft_proposal.sub_intent }}</strong>
+          </div>
+          <div class="stat-card">
             <span class="subtle">Adapter</span>
             <strong>{{ draft_proposal.adapter.value }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Source Strategy</span>
+            <strong>{{ draft_proposal.source_strategy.value }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Template</span>
+            <strong><code>{{ draft_proposal.template_key }}</code></strong>
           </div>
           <div class="stat-card">
             <span class="subtle">Template Score</span>
@@ -391,6 +518,14 @@
               {% endfor %}
             </select>
           </label>
+          <label>
+            <span>Source Strategy</span>
+            <select name="source_strategy">
+              {% for strategy in recipe_source_strategies %}
+              <option value="{{ strategy.value }}" {% if draft_proposal and draft_proposal.source_strategy == strategy %}selected{% endif %}>{{ strategy.value }}</option>
+              {% endfor %}
+            </select>
+          </label>
           <label class="full-width">
             <span>Description</span>
             <textarea name="description" rows="4" placeholder="What should this recipe discover, and what makes a result valid?">{{ draft_proposal.description if draft_proposal else '' }}</textarea>
@@ -434,6 +569,10 @@
               <th>Label</th>
               <th>Slug</th>
               <th>Vertical</th>
+              <th>Cluster</th>
+              <th>Source Strategy</th>
+              <th>Sub-intent</th>
+              <th>Template</th>
               <th>Status</th>
               <th>Latest Version</th>
               <th>Adapter</th>
@@ -463,6 +602,10 @@
               <td>{{ recipe.label }}</td>
               <td><code>{{ recipe.slug }}</code></td>
               <td>{{ recipe.vertical }}</td>
+              <td>{{ recipe.cluster_slug or "-" }}</td>
+              <td>{{ recipe.source_strategy or "-" }}</td>
+              <td>{{ recipe.sub_intent or "-" }}</td>
+              <td><code>{{ recipe.source_template_key or "-" }}</code></td>
               <td><span class="badge muted">{{ recipe.status }}</span></td>
               <td>{{ recipe.version_number or "-" }}</td>
               <td>{{ recipe.adapter or "-" }}</td>
@@ -540,7 +683,7 @@
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="24">No recipes yet.</td></tr>
+            <tr><td colspan="28">No recipes yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>

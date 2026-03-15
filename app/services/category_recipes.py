@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Category, QueryRecipe, QueryRecipeVersion, RecipeAdapter, RecipeStatus
+from app.models import Category, QueryRecipe, QueryRecipeVersion, RecipeAdapter, RecipeSourceStrategy, RecipeStatus
 
 
 @dataclass
@@ -92,6 +92,7 @@ def upsert_recipe_backed_category(
     search_terms: list[str],
     description: str | None,
     adapter: RecipeAdapter,
+    source_strategy: RecipeSourceStrategy,
     notes: str,
     recipe_status: RecipeStatus = RecipeStatus.ACTIVE,
 ) -> tuple[Category, QueryRecipe, QueryRecipeVersion]:
@@ -125,6 +126,7 @@ def upsert_recipe_backed_category(
         version_number=next_version_number,
         status=recipe_status,
         adapter=adapter,
+        source_strategy=source_strategy,
         osm_tags=osm_tags,
         exclude_tags=[],
         search_terms=search_terms,

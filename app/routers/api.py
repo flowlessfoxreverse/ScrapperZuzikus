@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import Category, Email, RecipeAdapter, RecipeStatus, Region, RunCategory, RunStatus, ScrapeRun, ValidationStatus
+from app.models import Category, Email, RecipeAdapter, RecipeSourceStrategy, RecipeStatus, Region, RunCategory, RunStatus, ScrapeRun, ValidationStatus
 from app.schemas import CategoryCreate, CategoryOut, EmailStatusUpdate, RegionCreate, RegionOut, RunCreate, RunOut
 from app.services.category_recipes import upsert_recipe_backed_category
 from app.services.overpass import fetch_status_payload
@@ -52,6 +52,7 @@ def create_category(payload: CategoryCreate, db: Session = Depends(get_db)) -> C
         search_terms=payload.search_terms,
         description=f"Recipe created from API category sync for {payload.label}.",
         adapter=RecipeAdapter.OVERPASS_LOCAL,
+        source_strategy=RecipeSourceStrategy.OVERPASS_DISCOVERY_ENRICH,
         notes="Created or updated from the categories API.",
         recipe_status=RecipeStatus.ACTIVE,
     )

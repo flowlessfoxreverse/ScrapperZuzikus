@@ -337,6 +337,58 @@ def ensure_recipe_schema(engine: Engine) -> None:
         if dialect == "postgresql" and recipe_vertical_length is not None and recipe_vertical_length < 64:
             statements.append("ALTER TABLE query_recipes ALTER COLUMN vertical TYPE VARCHAR(64)")
 
+    if "query_recipe_variant_templates" not in tables:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_recipe_variant_templates ("
+                "id SERIAL PRIMARY KEY, "
+                "key VARCHAR(96) NOT NULL UNIQUE, "
+                "label VARCHAR(128) NOT NULL, "
+                "vertical VARCHAR(64) NOT NULL, "
+                "cluster_slug VARCHAR(64) NULL, "
+                "sub_intent VARCHAR(96) NOT NULL, "
+                "source_strategy VARCHAR(32) NOT NULL DEFAULT 'overpass_discovery_enrich', "
+                "aliases JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "osm_tags JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "exclude_tags JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "search_terms JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "website_keywords JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "language_hints JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "rationale JSONB NOT NULL DEFAULT '[]'::jsonb, "
+                "template_score INTEGER NOT NULL DEFAULT 0, "
+                "sort_order INTEGER NOT NULL DEFAULT 0, "
+                "is_active BOOLEAN NOT NULL DEFAULT TRUE, "
+                "created_at TIMESTAMP WITH TIME ZONE NOT NULL, "
+                "updated_at TIMESTAMP WITH TIME ZONE NOT NULL"
+                ")"
+            )
+        else:
+            statements.append(
+                "CREATE TABLE IF NOT EXISTS query_recipe_variant_templates ("
+                "id INTEGER PRIMARY KEY, "
+                "key VARCHAR(96) NOT NULL UNIQUE, "
+                "label VARCHAR(128) NOT NULL, "
+                "vertical VARCHAR(64) NOT NULL, "
+                "cluster_slug VARCHAR(64) NULL, "
+                "sub_intent VARCHAR(96) NOT NULL, "
+                "source_strategy VARCHAR(32) NOT NULL DEFAULT 'overpass_discovery_enrich', "
+                "aliases JSON NOT NULL DEFAULT '[]', "
+                "osm_tags JSON NOT NULL DEFAULT '[]', "
+                "exclude_tags JSON NOT NULL DEFAULT '[]', "
+                "search_terms JSON NOT NULL DEFAULT '[]', "
+                "website_keywords JSON NOT NULL DEFAULT '[]', "
+                "language_hints JSON NOT NULL DEFAULT '[]', "
+                "rationale JSON NOT NULL DEFAULT '[]', "
+                "template_score INTEGER NOT NULL DEFAULT 0, "
+                "sort_order INTEGER NOT NULL DEFAULT 0, "
+                "is_active BOOLEAN NOT NULL DEFAULT 1, "
+                "created_at TIMESTAMP NOT NULL, "
+                "updated_at TIMESTAMP NOT NULL"
+                ")"
+            )
+        statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_variant_templates_key ON query_recipe_variant_templates(key)")
+        statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_variant_templates_cluster_slug ON query_recipe_variant_templates(cluster_slug)")
+
     category_vertical = None
     if "vertical" in category_columns:
         try:
@@ -356,6 +408,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 "version_number INTEGER NOT NULL DEFAULT 1, "
                 "status VARCHAR(10) NOT NULL DEFAULT 'draft', "
                 "adapter VARCHAR(16) NOT NULL DEFAULT 'overpass_public', "
+                "source_strategy VARCHAR(32) NOT NULL DEFAULT 'overpass_discovery_enrich', "
                 "osm_tags JSONB NOT NULL DEFAULT '[]'::jsonb, "
                 "exclude_tags JSONB NOT NULL DEFAULT '[]'::jsonb, "
                 "search_terms JSONB NOT NULL DEFAULT '[]'::jsonb, "
@@ -373,6 +426,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 "version_number INTEGER NOT NULL DEFAULT 1, "
                 "status VARCHAR(10) NOT NULL DEFAULT 'draft', "
                 "adapter VARCHAR(16) NOT NULL DEFAULT 'overpass_public', "
+                "source_strategy VARCHAR(32) NOT NULL DEFAULT 'overpass_discovery_enrich', "
                 "osm_tags JSON NOT NULL DEFAULT '[]', "
                 "exclude_tags JSON NOT NULL DEFAULT '[]', "
                 "search_terms JSON NOT NULL DEFAULT '[]', "
@@ -385,6 +439,12 @@ def ensure_recipe_schema(engine: Engine) -> None:
         statements.append(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_recipe_version_number ON query_recipe_versions(recipe_id, version_number)"
         )
+    else:
+        version_columns = columns_by_table.get("query_recipe_versions", set())
+        if "source_strategy" not in version_columns:
+            statements.append(
+                "ALTER TABLE query_recipe_versions ADD COLUMN source_strategy VARCHAR(32) NOT NULL DEFAULT 'overpass_discovery_enrich'"
+            )
 
     if "query_recipe_validations" not in tables:
         if dialect == "postgresql":
@@ -430,6 +490,9 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 "label VARCHAR(128) NOT NULL, "
                 "vertical VARCHAR(64) NOT NULL, "
                 "cluster_slug VARCHAR(64) NULL, "
+                "template_key VARCHAR(96) NULL, "
+                "sub_intent VARCHAR(96) NULL, "
+                "source_strategy VARCHAR(32) NOT NULL DEFAULT 'overpass_discovery_enrich', "
                 "provenance VARCHAR(32) NOT NULL DEFAULT 'curated_prompt', "
                 "template_score INTEGER NOT NULL DEFAULT 0, "
                 "prompt_match_score INTEGER NOT NULL DEFAULT 0, "
@@ -463,6 +526,9 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 "label VARCHAR(128) NOT NULL, "
                 "vertical VARCHAR(64) NOT NULL, "
                 "cluster_slug VARCHAR(64) NULL, "
+                "template_key VARCHAR(96) NULL, "
+                "sub_intent VARCHAR(96) NULL, "
+                "source_strategy VARCHAR(32) NOT NULL DEFAULT 'overpass_discovery_enrich', "
                 "provenance VARCHAR(32) NOT NULL DEFAULT 'curated_prompt', "
                 "template_score INTEGER NOT NULL DEFAULT 0, "
                 "prompt_match_score INTEGER NOT NULL DEFAULT 0, "
@@ -493,6 +559,9 @@ def ensure_recipe_schema(engine: Engine) -> None:
     else:
         variant_columns = columns_by_table.get("query_recipe_variants", set())
         variant_additions = {
+            "template_key": "VARCHAR(96) NULL",
+            "sub_intent": "VARCHAR(96) NULL",
+            "source_strategy": "VARCHAR(32) NOT NULL DEFAULT 'overpass_discovery_enrich'",
             "validation_count": "INTEGER NOT NULL DEFAULT 0",
             "observed_validation_score": "INTEGER NOT NULL DEFAULT 0",
             "production_run_count": "INTEGER NOT NULL DEFAULT 0",
@@ -514,6 +583,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
             if column_name not in variant_columns:
                 statements.append(f"ALTER TABLE query_recipe_variants ADD COLUMN {column_name} {column_def}")
         statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_variants_slug ON query_recipe_variants(slug)")
+        statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_variants_template_key ON query_recipe_variants(template_key)")
 
     if "query_prompt_cluster_decisions" not in tables:
         if dialect == "postgresql":
