@@ -20,7 +20,7 @@ from app.services.category_recipes import latest_recipe_version, sync_recipe_to_
 from app.services.host_suppression import normalize_host_key
 from app.services.overpass import fetch_status
 from app.services.proxy_pool import active_proxy_count, effective_proxy_capacity, lease_counts, list_proxies, release_proxy, upsert_proxy
-from app.services.recipe_drafts import DraftProposal, build_draft_variants_from_prompt, select_draft_variant
+from app.services.recipe_drafts import ClusterCandidate, DraftProposal, analyze_prompt_clusters, build_draft_variants_from_prompt, select_draft_variant
 from app.services.recipe_lint import RecipeLintResult, lint_recipe_content, parse_tag_block
 from app.services.taxonomy import list_active_clusters, list_active_verticals
 from app.services.recipe_validation import get_validation_quota_snapshot, validate_recipe_version
@@ -1027,9 +1027,12 @@ def recipe_editor(
     draft_proposal = None
     draft_variants: list[DraftProposal] = []
     draft_lint = None
+    cluster_choice: ClusterCandidate | None = None
+    alternate_clusters: list[ClusterCandidate] = []
     verticals, clusters = taxonomy_context(db)
     if draft_prompt:
         try:
+            cluster_choice, alternate_clusters = analyze_prompt_clusters(draft_prompt)
             draft_variants, draft_proposal = select_draft_variant(draft_prompt, draft_variant_slug)
             draft_variants = apply_variant_history(db, draft_variants)
             draft_proposal = next(
@@ -1062,6 +1065,8 @@ def recipe_editor(
             "variant_recipe_map": prompt_variant_recipe_map(db, draft_prompt or "") if draft_prompt else {},
             "draft_lint": draft_lint,
             "draft_prompt": draft_prompt or "",
+            "cluster_choice": cluster_choice,
+            "alternate_clusters": alternate_clusters,
         },
     )
 
@@ -1272,8 +1277,11 @@ def generate_recipe_draft_html(
     draft_variants: list[DraftProposal] = []
     error = None
     draft_lint = None
+    cluster_choice: ClusterCandidate | None = None
+    alternate_clusters: list[ClusterCandidate] = []
     verticals, clusters = taxonomy_context(db)
     try:
+        cluster_choice, alternate_clusters = analyze_prompt_clusters(prompt)
         draft_variants, draft_proposal = select_draft_variant(prompt, selected_variant_slug or None)
         draft_variants = apply_variant_history(db, draft_variants)
         draft_proposal = next(
@@ -1306,6 +1314,8 @@ def generate_recipe_draft_html(
             "variant_recipe_map": prompt_variant_recipe_map(db, prompt),
             "draft_lint": draft_lint,
             "draft_prompt": prompt,
+            "cluster_choice": cluster_choice,
+            "alternate_clusters": alternate_clusters,
         },
     )
 

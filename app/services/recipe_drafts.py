@@ -33,6 +33,15 @@ class DraftProposal:
 
 
 @dataclass(frozen=True)
+class ClusterCandidate:
+    vertical: str
+    cluster_slug: str
+    score: int
+    matched_aliases: tuple[str, ...]
+    rationale: list[str]
+
+
+@dataclass(frozen=True)
 class VariantTemplate:
     key: str
     label: str
@@ -140,19 +149,54 @@ def _language_hints_for_prompt(normalized: str) -> list[str]:
     return ["en"]
 
 
-def _match_cluster(normalized: str) -> tuple[str, str, list[str]]:
-    scored: list[tuple[int, dict[str, object]]] = []
+def _rank_clusters(normalized: str) -> list[ClusterCandidate]:
+    scored: list[ClusterCandidate] = []
     for hint in PROMPT_CLUSTER_HINTS:
-        hits = sum(1 for phrase in hint["aliases"] if phrase in normalized)
-        if hits:
-            scored.append((hits, hint))
+        matched_aliases = tuple(phrase for phrase in hint["aliases"] if phrase in normalized)
+        if matched_aliases:
+            score = (len(matched_aliases) * 100) + max(len(alias) for alias in matched_aliases)
+            scored.append(
+                ClusterCandidate(
+                    vertical=str(hint["vertical"]),
+                    cluster_slug=str(hint["cluster_slug"]),
+                    score=score,
+                    matched_aliases=matched_aliases,
+                    rationale=[
+                        str(hint["rationale"]),
+                        f"Matched aliases: {', '.join(matched_aliases[:4])}.",
+                    ],
+                )
+            )
     if scored:
-        best = max(scored, key=lambda item: item[0])[1]
-        return best["vertical"], best["cluster_slug"], [best["rationale"]]
-    return "tourism", "tour_operators", [
-        "No strong cluster match was found, so the draft falls back to a broad tourism baseline.",
-        "Review the generated variants before validation.",
+        return sorted(
+            scored,
+            key=lambda item: (-item.score, item.cluster_slug),
+        )
+    return [
+        ClusterCandidate(
+            vertical="tourism",
+            cluster_slug="tour_operators",
+            score=0,
+            matched_aliases=(),
+            rationale=[
+                "No strong cluster match was found, so the draft falls back to a broad tourism baseline.",
+                "Review the generated variants before validation.",
+            ],
+        )
     ]
+
+
+def analyze_prompt_clusters(prompt: str) -> tuple[ClusterCandidate, list[ClusterCandidate]]:
+    normalized = " ".join(prompt.strip().lower().split())
+    if not normalized:
+        raise ValueError("Prompt cannot be empty.")
+    ranked = _rank_clusters(normalized)
+    return ranked[0], ranked[1:]
+
+
+def _match_cluster(normalized: str) -> tuple[str, str, list[str]]:
+    chosen = _rank_clusters(normalized)[0]
+    return chosen.vertical, chosen.cluster_slug, chosen.rationale
 
 
 def _variant_score(template: VariantTemplate, normalized: str, location_hint: str | None) -> tuple[int, int, int, list[str]]:

@@ -64,6 +64,57 @@
       </section>
 
       {% if draft_variants %}
+      {% if cluster_choice %}
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Cluster Decision</h2>
+          <span>Why this prompt mapped to the current variant pool</span>
+        </div>
+        <div class="country-summary">
+          <div class="stat-card">
+            <span class="subtle">Chosen Vertical</span>
+            <strong>{{ cluster_choice.vertical }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Chosen Cluster</span>
+            <strong>{{ cluster_choice.cluster_slug }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Cluster Match Score</span>
+            <strong>{{ cluster_choice.score }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Matched Terms</span>
+            <strong>{{ cluster_choice.matched_aliases|join(", ") if cluster_choice.matched_aliases else "-" }}</strong>
+          </div>
+        </div>
+        <p class="subtle">{{ cluster_choice.rationale|join(" ") }}</p>
+        {% if alternate_clusters %}
+        <table>
+          <thead>
+            <tr>
+              <th>Alternate Cluster</th>
+              <th>Vertical</th>
+              <th>Match Score</th>
+              <th>Matched Terms</th>
+              <th>Why It Was Not Chosen</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for cluster in alternate_clusters %}
+            <tr>
+              <td><strong>{{ cluster.cluster_slug }}</strong></td>
+              <td>{{ cluster.vertical }}</td>
+              <td>{{ cluster.score }}</td>
+              <td>{{ cluster.matched_aliases|join(", ") if cluster.matched_aliases else "-" }}</td>
+              <td>{{ cluster.rationale|join(" ") }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% endif %}
+      </section>
+      {% endif %}
       <section class="panel">
         <div class="section-heading">
           <h2>Generated Variants</h2>
