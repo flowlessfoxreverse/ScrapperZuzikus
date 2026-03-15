@@ -14,11 +14,11 @@ from app.models import (
     NicheCluster,
     QueryRecipeVariantTemplate,
     QueryTaxonomyDraftCluster,
-    QueryTaxonomyDraftStatus,
     QueryTaxonomyDraftVariantTemplate,
     QueryTaxonomyDraftVertical,
     QueryTaxonomyGeneration,
     RecipeSourceStrategy,
+    TaxonomyDraftStatus,
     TaxonomyVertical,
 )
 from app.services.taxonomy import upsert_cluster, upsert_variant_template, upsert_vertical
@@ -367,7 +367,7 @@ def generate_taxonomy_drafts(
                 label=draft.label,
                 description=draft.description,
                 rationale=draft.rationale,
-                status=QueryTaxonomyDraftStatus.DRAFT,
+                status=TaxonomyDraftStatus.DRAFT,
             )
         )
 
@@ -384,7 +384,7 @@ def generate_taxonomy_drafts(
                 label=draft.label,
                 description=draft.description,
                 rationale=draft.rationale,
-                status=QueryTaxonomyDraftStatus.DRAFT,
+                status=TaxonomyDraftStatus.DRAFT,
             )
         )
 
@@ -410,7 +410,7 @@ def generate_taxonomy_drafts(
                 language_hints=draft.language_hints,
                 rationale=draft.rationale,
                 template_score=draft.template_score,
-                status=QueryTaxonomyDraftStatus.DRAFT,
+                status=TaxonomyDraftStatus.DRAFT,
             )
         )
     session.flush()
@@ -510,7 +510,7 @@ def reject_taxonomy_generation(session: Session, generation_id: int) -> None:
     for model in (QueryTaxonomyDraftVertical, QueryTaxonomyDraftCluster, QueryTaxonomyDraftVariantTemplate):
         rows = session.scalars(select(model).where(model.generation_id == generation_id)).all()
         for row in rows:
-            row.status = QueryTaxonomyDraftStatus.REJECTED
+            row.status = TaxonomyDraftStatus.REJECTED
             session.add(row)
     generation.status = "rejected"
     generation.updated_at = datetime.now(timezone.utc)
