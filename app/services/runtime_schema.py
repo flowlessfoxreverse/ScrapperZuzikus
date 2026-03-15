@@ -488,6 +488,17 @@ def ensure_recipe_schema(engine: Engine) -> None:
             "CREATE INDEX IF NOT EXISTS ix_query_recipe_recommendation_policy_audits_changed_at "
             "ON query_recipe_recommendation_policy_audits(changed_at)"
         )
+    elif "performance_snapshot_json" not in {column["name"] for column in inspector.get_columns("query_recipe_recommendation_policy_audits")}:
+        if dialect == "postgresql":
+            statements.append(
+                "ALTER TABLE query_recipe_recommendation_policy_audits "
+                "ADD COLUMN IF NOT EXISTS performance_snapshot_json JSONB NOT NULL DEFAULT '{}'::jsonb"
+            )
+        else:
+            statements.append(
+                "ALTER TABLE query_recipe_recommendation_policy_audits "
+                "ADD COLUMN performance_snapshot_json JSON NOT NULL DEFAULT '{}'"
+            )
 
     category_vertical = None
     if "vertical" in category_columns:

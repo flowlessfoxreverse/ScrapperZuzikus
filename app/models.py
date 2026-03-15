@@ -290,6 +290,7 @@ class QueryRecipeRecommendationPolicyAudit(Base):
     change_summary: Mapped[str] = mapped_column(String(255))
     before_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     after_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    performance_snapshot_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 

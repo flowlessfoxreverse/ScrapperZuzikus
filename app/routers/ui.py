@@ -312,6 +312,9 @@ class RecommendationPolicyAuditRow:
     changed_at: datetime
     before_json: dict[str, object]
     after_json: dict[str, object]
+    snapshot_json: dict[str, object]
+    current_json: dict[str, object]
+    delta_parts: list[str]
 
 
 @dataclass
@@ -973,12 +976,78 @@ def build_recommendation_policy_rows(db: Session) -> list[RecommendationPolicyRo
     return result
 
 
+def recommendation_policy_performance_snapshot(
+    db: Session,
+    policy: QueryRecipeRecommendationPolicy,
+) -> dict[str, object]:
+    variant_query = select(QueryRecipeVariant)
+    if policy.source_strategy is not None:
+        variant_query = variant_query.where(QueryRecipeVariant.source_strategy == policy.source_strategy)
+    variants = db.scalars(variant_query).all()
+    if not variants:
+        return {
+            "variant_count": 0,
+            "avg_validation_score": 0,
+            "avg_production_score": 0,
+            "avg_rank_score": 0,
+            "trusted_count": 0,
+            "recommended_count": 0,
+            "suppressed_count": 0,
+        }
+
+    validation_scores = [max(0, variant.observed_validation_score or 0) for variant in variants]
+    production_scores = [max(0, variant.observed_production_score or 0) for variant in variants]
+    rank_scores = [max(0, variant.rank_score or 0) for variant in variants]
+    trusted_count = 0
+    recommended_count = 0
+    suppressed_count = 0
+    for variant in variants:
+        recommendation = derive_recommendation_state(
+            source_strategy=policy,
+            observed_validation_score=max(0, variant.observed_validation_score or 0),
+            historical_validation_count=max(0, variant.validation_count or 0),
+            production_score=max(0, variant.observed_production_score or 0),
+            production_run_count=max(0, variant.production_run_count or 0),
+            planner_selection_count=max(0, variant.planner_selection_count or 0),
+            planner_draft_count=max(0, variant.planner_draft_count or 0),
+            planner_activation_count=max(0, variant.planner_activation_count or 0),
+            prompt_selection_count=max(0, variant.prompt_selection_count or 0),
+            prompt_draft_count=max(0, variant.prompt_draft_count or 0),
+            prompt_activation_count=max(0, variant.prompt_activation_count or 0),
+            market_production_score=max(0, variant.market_production_score or 0),
+            market_production_run_count=max(0, variant.market_production_run_count or 0),
+            strategy_production_score=max(0, variant.strategy_production_score or 0),
+            strategy_production_run_count=max(0, variant.strategy_production_run_count or 0),
+        )
+        if recommendation.state == "trusted":
+            trusted_count += 1
+        elif recommendation.state == "recommended":
+            recommended_count += 1
+        elif recommendation.state == "suppressed":
+            suppressed_count += 1
+
+    return {
+        "variant_count": len(variants),
+        "avg_validation_score": round(sum(validation_scores) / len(validation_scores)),
+        "avg_production_score": round(sum(production_scores) / len(production_scores)),
+        "avg_rank_score": round(sum(rank_scores) / len(rank_scores)),
+        "trusted_count": trusted_count,
+        "recommended_count": recommended_count,
+        "suppressed_count": suppressed_count,
+    }
+
+
 def build_recommendation_policy_audit_rows(db: Session, limit: int = 20) -> list[RecommendationPolicyAuditRow]:
+    policy_rows = recommendation_policy_map(db)
     audits = db.scalars(
         select(QueryRecipeRecommendationPolicyAudit)
         .order_by(QueryRecipeRecommendationPolicyAudit.changed_at.desc())
         .limit(limit)
     ).all()
+    current_snapshots = {
+        policy_key: recommendation_policy_performance_snapshot(db, policy)
+        for policy_key, policy in policy_rows.items()
+    }
     return [
         RecommendationPolicyAuditRow(
             policy_key=audit.policy_key,
@@ -987,6 +1056,12 @@ def build_recommendation_policy_audit_rows(db: Session, limit: int = 20) -> list
             changed_at=audit.changed_at,
             before_json=audit.before_json or {},
             after_json=audit.after_json or {},
+            snapshot_json=audit.performance_snapshot_json or {},
+            current_json=current_snapshots.get(audit.policy_key, {}),
+            delta_parts=[
+                f"{key} {current_snapshots.get(audit.policy_key, {}).get(key, 0) - int((audit.performance_snapshot_json or {}).get(key, 0)):+d}"
+                for key in ("avg_validation_score", "avg_production_score", "avg_rank_score", "trusted_count", "recommended_count", "suppressed_count")
+            ],
         )
         for audit in audits
     ]
@@ -2348,6 +2423,7 @@ def update_recommendation_policy_html(
     }
     changed_fields = [key for key, value in after_state.items() if before_state.get(key) != value]
     if changed_fields:
+        snapshot = recommendation_policy_performance_snapshot(db, policy)
         db.add(
             QueryRecipeRecommendationPolicyAudit(
                 policy_key=policy.policy_key,
@@ -2355,6 +2431,7 @@ def update_recommendation_policy_html(
                 change_summary="Updated " + ", ".join(changed_fields[:5]) + ("..." if len(changed_fields) > 5 else ""),
                 before_json=before_state,
                 after_json=after_state,
+                performance_snapshot_json=snapshot,
             )
         )
     db.commit()

@@ -203,8 +203,10 @@
               <th>Changed</th>
               <th>Policy</th>
               <th>Summary</th>
-              <th>Before</th>
-              <th>After</th>
+              <th>Thresholds</th>
+              <th>Snapshot At Change</th>
+              <th>Current</th>
+              <th>Delta</th>
             </tr>
           </thead>
           <tbody>
@@ -216,11 +218,16 @@
                 <span class="subtle">{{ row.policy_key }}</span>
               </td>
               <td>{{ row.change_summary }}</td>
-              <td><code>{{ row.before_json }}</code></td>
-              <td><code>{{ row.after_json }}</code></td>
+              <td>
+                <div class="subtle">Before: <code>{{ row.before_json }}</code></div>
+                <div class="subtle">After: <code>{{ row.after_json }}</code></div>
+              </td>
+              <td><code>{{ row.snapshot_json }}</code></td>
+              <td><code>{{ row.current_json }}</code></td>
+              <td>{{ row.delta_parts|join(", ") }}</td>
             </tr>
             {% else %}
-            <tr><td colspan="5">No policy changes recorded yet.</td></tr>
+            <tr><td colspan="7">No policy changes recorded yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>
