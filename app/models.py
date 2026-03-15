@@ -84,6 +84,13 @@ class RecipeSourceStrategy(str, Enum):
     DIRECTORY_EXPANSION = "directory_expansion"
 
 
+RECIPE_SOURCE_STRATEGY_ENUM = SqlEnum(
+    RecipeSourceStrategy,
+    values_callable=lambda enum_cls: [member.value for member in enum_cls],
+    native_enum=False,
+)
+
+
 class TaxonomyVertical(Base):
     __tablename__ = "taxonomy_verticals"
 
@@ -228,7 +235,7 @@ class QueryRecipeVariantTemplate(Base):
     vertical: Mapped[str] = mapped_column(String(64), ForeignKey("taxonomy_verticals.slug"), index=True)
     cluster_slug: Mapped[str | None] = mapped_column(String(64), ForeignKey("niche_clusters.slug"), nullable=True, index=True)
     sub_intent: Mapped[str] = mapped_column(String(96), index=True)
-    source_strategy: Mapped[RecipeSourceStrategy] = mapped_column(SqlEnum(RecipeSourceStrategy), default=RecipeSourceStrategy.OVERPASS_DISCOVERY_ENRICH, index=True)
+    source_strategy: Mapped[RecipeSourceStrategy] = mapped_column(RECIPE_SOURCE_STRATEGY_ENUM, default=RecipeSourceStrategy.OVERPASS_DISCOVERY_ENRICH, index=True)
     aliases: Mapped[list[str]] = mapped_column(JSON, default=list)
     osm_tags: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
     exclude_tags: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
@@ -257,7 +264,7 @@ class QueryRecipeVersion(Base):
     version_number: Mapped[int] = mapped_column(Integer, default=1)
     status: Mapped[RecipeStatus] = mapped_column(SqlEnum(RecipeStatus), default=RecipeStatus.DRAFT, index=True)
     adapter: Mapped[RecipeAdapter] = mapped_column(SqlEnum(RecipeAdapter), default=RecipeAdapter.OVERPASS_PUBLIC, index=True)
-    source_strategy: Mapped[RecipeSourceStrategy] = mapped_column(SqlEnum(RecipeSourceStrategy), default=RecipeSourceStrategy.OVERPASS_DISCOVERY_ENRICH, index=True)
+    source_strategy: Mapped[RecipeSourceStrategy] = mapped_column(RECIPE_SOURCE_STRATEGY_ENUM, default=RecipeSourceStrategy.OVERPASS_DISCOVERY_ENRICH, index=True)
     osm_tags: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
     exclude_tags: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
     search_terms: Mapped[list[str]] = mapped_column(JSON, default=list)
@@ -307,7 +314,7 @@ class QueryRecipeVariant(Base):
     cluster_slug: Mapped[str | None] = mapped_column(String(64), ForeignKey("niche_clusters.slug"), nullable=True, index=True)
     template_key: Mapped[str | None] = mapped_column(String(96), nullable=True, index=True)
     sub_intent: Mapped[str | None] = mapped_column(String(96), nullable=True, index=True)
-    source_strategy: Mapped[RecipeSourceStrategy] = mapped_column(SqlEnum(RecipeSourceStrategy), default=RecipeSourceStrategy.OVERPASS_DISCOVERY_ENRICH, index=True)
+    source_strategy: Mapped[RecipeSourceStrategy] = mapped_column(RECIPE_SOURCE_STRATEGY_ENUM, default=RecipeSourceStrategy.OVERPASS_DISCOVERY_ENRICH, index=True)
     provenance: Mapped[str] = mapped_column(String(32), default="curated_prompt", index=True)
     template_score: Mapped[int] = mapped_column(Integer, default=0)
     prompt_match_score: Mapped[int] = mapped_column(Integer, default=0)
