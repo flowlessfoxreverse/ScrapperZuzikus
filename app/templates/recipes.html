@@ -240,6 +240,35 @@
         <table>
           <thead>
             <tr>
+              <th>Policy</th>
+              <th>Current State Mix</th>
+              <th>Suggested Thresholds</th>
+              <th>Simulated State Mix</th>
+              <th>Projected Delta</th>
+              <th>Recommendation</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in recommendation_policy_simulation_rows %}
+            <tr>
+              <td>
+                <strong>{{ row.policy_label }}</strong><br />
+                <span class="subtle">{{ row.policy_key }}</span>
+              </td>
+              <td><code>{{ row.current_state_mix }}</code></td>
+              <td><code>{{ row.suggested_thresholds }}</code></td>
+              <td><code>{{ row.simulated_state_mix }}</code></td>
+              <td>{{ row.impact_parts|join(", ") }}</td>
+              <td>{{ row.summary }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6">No policy simulations available yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <table>
+          <thead>
+            <tr>
               <th>Source Strategy</th>
               <th>Templates</th>
               <th>Active Recipes</th>

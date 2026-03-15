@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from statistics import median
+from types import SimpleNamespace
 from urllib.parse import quote_plus
 from urllib.parse import urlparse
 import re
@@ -302,6 +304,17 @@ class RecommendationPolicyRow:
     suppression_production_score_max: int
     suppression_production_runs_min: int
     is_active: bool
+
+
+@dataclass
+class RecommendationPolicySimulationRow:
+    policy_key: str
+    policy_label: str
+    current_state_mix: dict[str, int]
+    simulated_state_mix: dict[str, int]
+    suggested_thresholds: dict[str, int]
+    impact_parts: list[str]
+    summary: str
 
 
 @dataclass
@@ -979,6 +992,48 @@ def build_recommendation_policy_rows(db: Session) -> list[RecommendationPolicyRo
     return result
 
 
+def _percentile_int(values: list[int], percentile: float) -> int:
+    if not values:
+        return 0
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return int(ordered[0])
+    position = max(0, min(len(ordered) - 1, round((len(ordered) - 1) * percentile)))
+    return int(ordered[position])
+
+
+def recommendation_policy_state_distribution(
+    variants: list[QueryRecipeVariant],
+    policy: QueryRecipeRecommendationPolicy,
+) -> dict[str, int]:
+    counts = {
+        "trusted": 0,
+        "recommended": 0,
+        "experimental": 0,
+        "suppressed": 0,
+    }
+    for variant in variants:
+        recommendation = derive_recommendation_state(
+            source_strategy=policy,
+            observed_validation_score=max(0, variant.observed_validation_score or 0),
+            historical_validation_count=max(0, variant.validation_count or 0),
+            production_score=max(0, variant.observed_production_score or 0),
+            production_run_count=max(0, variant.production_run_count or 0),
+            planner_selection_count=max(0, variant.planner_selection_count or 0),
+            planner_draft_count=max(0, variant.planner_draft_count or 0),
+            planner_activation_count=max(0, variant.planner_activation_count or 0),
+            prompt_selection_count=max(0, variant.prompt_selection_count or 0),
+            prompt_draft_count=max(0, variant.prompt_draft_count or 0),
+            prompt_activation_count=max(0, variant.prompt_activation_count or 0),
+            market_production_score=max(0, variant.market_production_score or 0),
+            market_production_run_count=max(0, variant.market_production_run_count or 0),
+            strategy_production_score=max(0, variant.strategy_production_score or 0),
+            strategy_production_run_count=max(0, variant.strategy_production_run_count or 0),
+        )
+        counts[recommendation.state] = counts.get(recommendation.state, 0) + 1
+    return counts
+
+
 def recommendation_policy_performance_snapshot(
     db: Session,
     policy: QueryRecipeRecommendationPolicy,
@@ -1038,6 +1093,132 @@ def recommendation_policy_performance_snapshot(
         "recommended_count": recommended_count,
         "suppressed_count": suppressed_count,
     }
+
+
+def build_recommendation_policy_simulation_rows(db: Session) -> list[RecommendationPolicySimulationRow]:
+    policy_rows = recommendation_policy_map(db)
+    ordered_keys = ["global"] + [strategy.value for strategy in RecipeSourceStrategy]
+    rows: list[RecommendationPolicySimulationRow] = []
+    for key in ordered_keys:
+        policy = policy_rows.get(key)
+        if policy is None:
+            continue
+        variant_query = select(QueryRecipeVariant)
+        if policy.source_strategy is not None:
+            variant_query = variant_query.where(QueryRecipeVariant.source_strategy == policy.source_strategy)
+        variants = db.scalars(variant_query).all()
+        if not variants:
+            rows.append(
+                RecommendationPolicySimulationRow(
+                    policy_key=policy.policy_key,
+                    policy_label=policy.label,
+                    current_state_mix={"trusted": 0, "recommended": 0, "experimental": 0, "suppressed": 0},
+                    simulated_state_mix={"trusted": 0, "recommended": 0, "experimental": 0, "suppressed": 0},
+                    suggested_thresholds={},
+                    impact_parts=["No variants yet"],
+                    summary="No recipe variants exist for this policy scope yet.",
+                )
+            )
+            continue
+
+        validation_scores = [max(0, variant.observed_validation_score or 0) for variant in variants if (variant.validation_count or 0) > 0]
+        production_scores = [max(0, variant.observed_production_score or 0) for variant in variants if (variant.production_run_count or 0) > 0]
+        activation_counts = [
+            max(0, (variant.planner_activation_count or 0) + (variant.prompt_activation_count or 0))
+            for variant in variants
+        ]
+
+        suggested_recommended_validation = max(
+            25,
+            min(95, _percentile_int(validation_scores, 0.55) if validation_scores else policy.recommended_validation_score),
+        )
+        suggested_trusted_validation = max(
+            suggested_recommended_validation + 5,
+            min(100, _percentile_int(validation_scores, 0.8) if validation_scores else policy.trusted_validation_score),
+        )
+        suggested_recommended_production = max(
+            5,
+            min(95, _percentile_int(production_scores, 0.55) if production_scores else policy.recommended_production_score),
+        )
+        suggested_trusted_production = max(
+            suggested_recommended_production + 5,
+            min(100, _percentile_int(production_scores, 0.8) if production_scores else policy.trusted_production_score),
+        )
+        suggested_suppression_validation = max(
+            0,
+            min(suggested_recommended_validation - 5, _percentile_int(validation_scores, 0.2) if validation_scores else policy.suppression_validation_score_max),
+        )
+        suggested_suppression_production = max(
+            0,
+            min(suggested_recommended_production - 3, _percentile_int(production_scores, 0.2) if production_scores else policy.suppression_production_score_max),
+        )
+        suggested_recommended_activations = max(0, min(3, round(median(activation_counts)) if activation_counts else policy.recommended_activation_count))
+        suggested_trusted_activations = max(
+            suggested_recommended_activations + 1,
+            min(5, _percentile_int(activation_counts, 0.75) if activation_counts else policy.trusted_activation_count),
+        )
+
+        simulated_policy = SimpleNamespace(
+            policy_key=policy.policy_key,
+            label=policy.label + " (simulated)",
+            source_strategy=policy.source_strategy,
+            recommended_validation_score=suggested_recommended_validation,
+            recommended_validation_runs=policy.recommended_validation_runs,
+            recommended_production_score=suggested_recommended_production,
+            recommended_production_runs=policy.recommended_production_runs,
+            recommended_activation_count=suggested_recommended_activations,
+            trusted_validation_score=suggested_trusted_validation,
+            trusted_validation_runs=policy.trusted_validation_runs,
+            trusted_production_score=suggested_trusted_production,
+            trusted_production_runs=policy.trusted_production_runs,
+            trusted_activation_count=suggested_trusted_activations,
+            suppression_validation_score_max=suggested_suppression_validation,
+            suppression_validation_runs_min=policy.suppression_validation_runs_min,
+            suppression_production_score_max=suggested_suppression_production,
+            suppression_production_runs_min=policy.suppression_production_runs_min,
+            is_active=policy.is_active,
+        )
+
+        current_mix = recommendation_policy_state_distribution(variants, policy)
+        simulated_mix = recommendation_policy_state_distribution(variants, simulated_policy)
+        impact_parts = [
+            f"{state} {simulated_mix.get(state, 0) - current_mix.get(state, 0):+d}"
+            for state in ("trusted", "recommended", "experimental", "suppressed")
+            if simulated_mix.get(state, 0) != current_mix.get(state, 0)
+        ]
+        if not impact_parts:
+            impact_parts = ["No state change"]
+
+        summary_parts: list[str] = []
+        if simulated_mix.get("trusted", 0) > current_mix.get("trusted", 0):
+            summary_parts.append("Loosens promotion enough to trust more variants.")
+        if simulated_mix.get("suppressed", 0) < current_mix.get("suppressed", 0):
+            summary_parts.append("Reduces unnecessary suppression.")
+        if simulated_mix.get("recommended", 0) < current_mix.get("recommended", 0):
+            summary_parts.append("Tightens recommendations around stronger-performing variants.")
+        summary = " ".join(summary_parts) if summary_parts else "Current thresholds are already close to observed performance."
+
+        rows.append(
+            RecommendationPolicySimulationRow(
+                policy_key=policy.policy_key,
+                policy_label=policy.label,
+                current_state_mix=current_mix,
+                simulated_state_mix=simulated_mix,
+                suggested_thresholds={
+                    "recommended_validation_score": suggested_recommended_validation,
+                    "recommended_production_score": suggested_recommended_production,
+                    "recommended_activation_count": suggested_recommended_activations,
+                    "trusted_validation_score": suggested_trusted_validation,
+                    "trusted_production_score": suggested_trusted_production,
+                    "trusted_activation_count": suggested_trusted_activations,
+                    "suppression_validation_score_max": suggested_suppression_validation,
+                    "suppression_production_score_max": suggested_suppression_production,
+                },
+                impact_parts=impact_parts,
+                summary=summary,
+            )
+        )
+    return rows
 
 
 def recommendation_policy_window_snapshot(
@@ -1850,6 +2031,7 @@ def recipe_editor(
     strategy_rows, cluster_rows, market_rows, strategy_market_rows, top_variants = build_recipe_analytics(db)
     strategy_threshold_rows = build_strategy_threshold_rows()
     recommendation_policy_rows = build_recommendation_policy_rows(db)
+    recommendation_policy_simulation_rows = build_recommendation_policy_simulation_rows(db)
     recommendation_policy_audit_rows = build_recommendation_policy_audit_rows(db)
     if draft_prompt:
         try:
@@ -1939,6 +2121,7 @@ def recipe_editor(
             "recipe_source_strategies": list(RecipeSourceStrategy),
             "strategy_activation_thresholds": strategy_threshold_rows,
             "recommendation_policy_rows": recommendation_policy_rows,
+            "recommendation_policy_simulation_rows": recommendation_policy_simulation_rows,
             "recommendation_policy_audit_rows": recommendation_policy_audit_rows,
             "activation_thresholds": {
                 "validation_score": settings.recipe_activation_min_validation_score,
@@ -2276,6 +2459,7 @@ def generate_recipe_draft_html(
     strategy_rows, cluster_rows, market_rows, strategy_market_rows, top_variants = build_recipe_analytics(db)
     strategy_threshold_rows = build_strategy_threshold_rows()
     recommendation_policy_rows = build_recommendation_policy_rows(db)
+    recommendation_policy_simulation_rows = build_recommendation_policy_simulation_rows(db)
     recommendation_policy_audit_rows = build_recommendation_policy_audit_rows(db)
     try:
         plan = plan_recipe_prompt(
@@ -2377,6 +2561,7 @@ def generate_recipe_draft_html(
             "top_variants": top_variants,
             "strategy_activation_thresholds": strategy_threshold_rows,
             "recommendation_policy_rows": recommendation_policy_rows,
+            "recommendation_policy_simulation_rows": recommendation_policy_simulation_rows,
             "recommendation_policy_audit_rows": recommendation_policy_audit_rows,
             "activation_thresholds": {
                 "validation_score": settings.recipe_activation_min_validation_score,
