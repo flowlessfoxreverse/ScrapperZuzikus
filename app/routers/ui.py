@@ -247,6 +247,23 @@ class RecipeTopVariantRow:
     production_runs: int
 
 
+@dataclass
+class PlannerVariantCompareRow:
+    variant_key: str
+    label: str
+    status: str
+    cluster_slug: str | None
+    selected_rank: int | None
+    selected_score: int | None
+    selected_template_score: int | None
+    selected_prompt_score: int | None
+    heuristic_rank: int | None
+    heuristic_score: int | None
+    heuristic_template_score: int | None
+    heuristic_prompt_score: int | None
+    score_delta: int | None
+
+
 def taxonomy_context(db: Session) -> tuple[list[TaxonomyVertical], list[NicheCluster]]:
     return list_active_verticals(db), list_active_clusters(db)
 
@@ -998,6 +1015,60 @@ def build_planner_info(plan) -> dict[str, object]:
     }
 
 
+def build_variant_compare_rows(
+    selected_variants: list[DraftProposal],
+    heuristic_variants: list[DraftProposal],
+) -> list[PlannerVariantCompareRow]:
+    selected_by_key = {variant.variant_key: (index + 1, variant) for index, variant in enumerate(selected_variants)}
+    heuristic_by_key = {variant.variant_key: (index + 1, variant) for index, variant in enumerate(heuristic_variants)}
+    all_keys = set(selected_by_key) | set(heuristic_by_key)
+
+    rows: list[PlannerVariantCompareRow] = []
+    for key in all_keys:
+        selected_entry = selected_by_key.get(key)
+        heuristic_entry = heuristic_by_key.get(key)
+        selected_variant = selected_entry[1] if selected_entry else None
+        heuristic_variant = heuristic_entry[1] if heuristic_entry else None
+        if selected_variant and heuristic_variant:
+            status = "shared"
+        elif selected_variant:
+            status = "selected_only"
+        else:
+            status = "heuristic_only"
+
+        score_delta = None
+        if selected_variant is not None and heuristic_variant is not None:
+            score_delta = selected_variant.fit_score - heuristic_variant.fit_score
+
+        rows.append(
+            PlannerVariantCompareRow(
+                variant_key=key,
+                label=(selected_variant or heuristic_variant).label,
+                status=status,
+                cluster_slug=(selected_variant or heuristic_variant).cluster_slug,
+                selected_rank=selected_entry[0] if selected_entry else None,
+                selected_score=selected_variant.fit_score if selected_variant else None,
+                selected_template_score=selected_variant.template_score if selected_variant else None,
+                selected_prompt_score=selected_variant.prompt_match_score if selected_variant else None,
+                heuristic_rank=heuristic_entry[0] if heuristic_entry else None,
+                heuristic_score=heuristic_variant.fit_score if heuristic_variant else None,
+                heuristic_template_score=heuristic_variant.template_score if heuristic_variant else None,
+                heuristic_prompt_score=heuristic_variant.prompt_match_score if heuristic_variant else None,
+                score_delta=score_delta,
+            )
+        )
+
+    status_order = {"shared": 0, "selected_only": 1, "heuristic_only": 2}
+    rows.sort(
+        key=lambda row: (
+            status_order.get(row.status, 9),
+            -(row.selected_score if row.selected_score is not None else row.heuristic_score or 0),
+            row.label,
+        )
+    )
+    return rows
+
+
 def activation_gate_errors(recipe: QueryRecipe, version: QueryRecipeVersion) -> list[str]:
     errors: list[str] = []
     thresholds = source_strategy_thresholds(version.source_strategy)
@@ -1301,6 +1372,7 @@ def recipe_editor(
     alternate_clusters: list[ClusterCandidate] = []
     planner_info: dict[str, object] | None = None
     planner_compare_info: dict[str, object] | None = None
+    planner_variant_compare_rows: list[PlannerVariantCompareRow] = []
     verticals, clusters = taxonomy_context(db)
     strategy_rows, cluster_rows, top_variants = build_recipe_analytics(db)
     strategy_threshold_rows = build_strategy_threshold_rows()
@@ -1327,6 +1399,10 @@ def recipe_editor(
                     requested_provider="heuristic",
                 )
                 planner_compare_info = build_planner_info(compare_plan)
+                planner_variant_compare_rows = build_variant_compare_rows(
+                    plan.draft_variants,
+                    compare_plan.draft_variants,
+                )
                 upsert_prompt_variants(db, draft_prompt, compare_plan.draft_variants)
             db.commit()
             draft_lint = lint_recipe_content(
@@ -1365,6 +1441,7 @@ def recipe_editor(
             "compare_with_heuristic": compare_with_heuristic,
             "planner_info": planner_info,
             "planner_compare_info": planner_compare_info,
+            "planner_variant_compare_rows": planner_variant_compare_rows,
             "cluster_choice": cluster_choice,
             "alternate_clusters": alternate_clusters,
             "strategy_rows": strategy_rows,
@@ -1664,6 +1741,7 @@ def generate_recipe_draft_html(
     alternate_clusters: list[ClusterCandidate] = []
     planner_info: dict[str, object] | None = None
     planner_compare_info: dict[str, object] | None = None
+    planner_variant_compare_rows: list[PlannerVariantCompareRow] = []
     verticals, clusters = taxonomy_context(db)
     strategy_rows, cluster_rows, top_variants = build_recipe_analytics(db)
     strategy_threshold_rows = build_strategy_threshold_rows()
@@ -1689,6 +1767,10 @@ def generate_recipe_draft_html(
                 requested_provider="heuristic",
             )
             planner_compare_info = build_planner_info(compare_plan)
+            planner_variant_compare_rows = build_variant_compare_rows(
+                plan.draft_variants,
+                compare_plan.draft_variants,
+            )
             upsert_prompt_variants(db, prompt, compare_plan.draft_variants)
         record_cluster_decision(db, prompt, cluster_choice, alternate_clusters)
         if selected_variant_slug:
@@ -1736,6 +1818,7 @@ def generate_recipe_draft_html(
             "compare_with_heuristic": compare_with_heuristic,
             "planner_info": planner_info,
             "planner_compare_info": planner_compare_info,
+            "planner_variant_compare_rows": planner_variant_compare_rows,
             "cluster_choice": cluster_choice,
             "alternate_clusters": alternate_clusters,
             "strategy_rows": strategy_rows,

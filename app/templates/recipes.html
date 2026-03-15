@@ -284,6 +284,66 @@
             </tr>
           </tbody>
         </table>
+        {% if planner_variant_compare_rows %}
+        <table>
+          <thead>
+            <tr>
+              <th>Variant</th>
+              <th>Status</th>
+              <th>Cluster</th>
+              <th>Selected Rank</th>
+              <th>Selected Score</th>
+              <th>Selected Split</th>
+              <th>Heuristic Rank</th>
+              <th>Heuristic Score</th>
+              <th>Heuristic Split</th>
+              <th>Delta</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in planner_variant_compare_rows %}
+            <tr>
+              <td><strong>{{ row.label }}</strong><br /><span class="subtle"><code>{{ row.variant_key }}</code></span></td>
+              <td>
+                {% if row.status == "shared" %}
+                <span class="badge muted">shared</span>
+                {% elif row.status == "selected_only" %}
+                <span class="badge">selected only</span>
+                {% else %}
+                <span class="badge warn">heuristic only</span>
+                {% endif %}
+              </td>
+              <td>{{ row.cluster_slug or "-" }}</td>
+              <td>{{ row.selected_rank or "-" }}</td>
+              <td>{{ row.selected_score or "-" }}</td>
+              <td>
+                {% if row.selected_template_score is not none %}
+                T{{ row.selected_template_score }} / P{{ row.selected_prompt_score }}
+                {% else %}
+                -
+                {% endif %}
+              </td>
+              <td>{{ row.heuristic_rank or "-" }}</td>
+              <td>{{ row.heuristic_score or "-" }}</td>
+              <td>
+                {% if row.heuristic_template_score is not none %}
+                T{{ row.heuristic_template_score }} / P{{ row.heuristic_prompt_score }}
+                {% else %}
+                -
+                {% endif %}
+              </td>
+              <td>
+                {% if row.score_delta is not none %}
+                {% if row.score_delta > 0 %}+{% endif %}{{ row.score_delta }}
+                {% else %}
+                -
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% endif %}
         {% endif %}
       </section>
 
