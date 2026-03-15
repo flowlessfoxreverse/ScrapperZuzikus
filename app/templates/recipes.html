@@ -778,6 +778,7 @@
               <th>Planner Selection</th>
               <th>Planner Drafts</th>
               <th>Planner Activation</th>
+              <th>Market Planner</th>
               <th>Prompt Selection</th>
               <th>Prompt Activation</th>
               <th>Variant Adoption</th>
@@ -824,6 +825,13 @@
               <td>{{ variant.planner_selection_count or "-" }}</td>
               <td>{{ variant.planner_draft_count or "-" }}</td>
               <td>{{ variant.planner_activation_count or "-" }}</td>
+              <td>
+                {% if variant.market_country_code %}
+                {{ variant.market_planner_selection_count or 0 }}/{{ variant.market_planner_draft_count or 0 }}/{{ variant.market_planner_activation_count or 0 }}
+                {% else %}
+                -
+                {% endif %}
+              </td>
               <td>{{ variant.prompt_selection_count or "-" }}</td>
               <td>{{ variant.prompt_activation_count or "-" }}</td>
               <td>{{ variant.variant_adoption_count or "-" }}</td>
@@ -972,6 +980,16 @@
           <div class="stat-card">
             <span class="subtle">Planner Activation</span>
             <strong>{{ draft_proposal.planner_activation_count or "-" }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Market Planner</span>
+            <strong>
+              {% if draft_proposal.market_country_code %}
+              {{ draft_proposal.market_planner_selection_count or 0 }}/{{ draft_proposal.market_planner_draft_count or 0 }}/{{ draft_proposal.market_planner_activation_count or 0 }}
+              {% else %}
+              -
+              {% endif %}
+            </strong>
           </div>
           <div class="stat-card">
             <span class="subtle">Prompt Selection</span>

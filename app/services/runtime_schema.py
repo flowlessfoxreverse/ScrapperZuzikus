@@ -629,6 +629,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 "model_name VARCHAR(64) NOT NULL, "
                 "planner_version VARCHAR(32) NOT NULL DEFAULT 'v1', "
                 "status VARCHAR(16) NOT NULL DEFAULT 'success', "
+                "market_country_code VARCHAR(2) NULL, "
                 "cache_key VARCHAR(96) NOT NULL, "
                 "raw_response TEXT NULL, "
                 "parsed_output JSONB NOT NULL DEFAULT '{}'::jsonb, "
@@ -650,6 +651,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 "model_name VARCHAR(64) NOT NULL, "
                 "planner_version VARCHAR(32) NOT NULL DEFAULT 'v1', "
                 "status VARCHAR(16) NOT NULL DEFAULT 'success', "
+                "market_country_code VARCHAR(2) NULL, "
                 "cache_key VARCHAR(96) NOT NULL, "
                 "raw_response TEXT NULL, "
                 "parsed_output JSON NOT NULL DEFAULT '{}', "
@@ -663,6 +665,12 @@ def ensure_recipe_schema(engine: Engine) -> None:
         statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_plans_cache_key ON query_recipe_plans(cache_key)")
         statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_plans_prompt_fingerprint ON query_recipe_plans(prompt_fingerprint)")
         statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_plans_created_at ON query_recipe_plans(created_at)")
+        statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_plans_market_country_code ON query_recipe_plans(market_country_code)")
+    else:
+        plan_columns = columns_by_table.get("query_recipe_plans", set())
+        if "market_country_code" not in plan_columns:
+            statements.append("ALTER TABLE query_recipe_plans ADD COLUMN market_country_code VARCHAR(2) NULL")
+        statements.append("CREATE INDEX IF NOT EXISTS ix_query_recipe_plans_market_country_code ON query_recipe_plans(market_country_code)")
 
     if "query_recipe_plan_variant_outcomes" not in tables:
         if dialect == "postgresql":
@@ -674,6 +682,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 "requested_provider VARCHAR(32) NOT NULL, "
                 "provider VARCHAR(32) NOT NULL, "
                 "model_name VARCHAR(64) NOT NULL, "
+                "market_country_code VARCHAR(2) NULL, "
                 "vertical VARCHAR(64) NOT NULL, "
                 "cluster_slug VARCHAR(64) NULL, "
                 "variant_key VARCHAR(96) NOT NULL, "
@@ -702,6 +711,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 "requested_provider VARCHAR(32) NOT NULL, "
                 "provider VARCHAR(32) NOT NULL, "
                 "model_name VARCHAR(64) NOT NULL, "
+                "market_country_code VARCHAR(2) NULL, "
                 "vertical VARCHAR(64) NOT NULL, "
                 "cluster_slug VARCHAR(64) NULL, "
                 "variant_key VARCHAR(96) NOT NULL, "
@@ -732,6 +742,18 @@ def ensure_recipe_schema(engine: Engine) -> None:
         statements.append(
             "CREATE INDEX IF NOT EXISTS ix_query_recipe_plan_variant_outcomes_variant_key "
             "ON query_recipe_plan_variant_outcomes(variant_key)"
+        )
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_recipe_plan_variant_outcomes_market_country_code "
+            "ON query_recipe_plan_variant_outcomes(market_country_code)"
+        )
+    else:
+        outcome_columns = columns_by_table.get("query_recipe_plan_variant_outcomes", set())
+        if "market_country_code" not in outcome_columns:
+            statements.append("ALTER TABLE query_recipe_plan_variant_outcomes ADD COLUMN market_country_code VARCHAR(2) NULL")
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS ix_query_recipe_plan_variant_outcomes_market_country_code "
+            "ON query_recipe_plan_variant_outcomes(market_country_code)"
         )
 
     if "query_recipe_variants" not in tables:

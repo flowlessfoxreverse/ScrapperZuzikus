@@ -207,6 +207,7 @@ def sync_plan_variant_outcomes(
                 requested_provider=plan.requested_provider,
                 provider=plan.provider,
                 model_name=plan.model_name,
+                market_country_code=getattr(plan, "market_country_code", None),
                 vertical=proposal.vertical,
                 cluster_slug=proposal.cluster_slug,
                 variant_key=proposal.variant_key,
@@ -218,6 +219,7 @@ def sync_plan_variant_outcomes(
         row.requested_provider = plan.requested_provider
         row.provider = plan.provider
         row.model_name = plan.model_name
+        row.market_country_code = getattr(plan, "market_country_code", None)
         row.vertical = proposal.vertical
         row.cluster_slug = proposal.cluster_slug
         row.source_variant_id = variant.id if variant is not None else None

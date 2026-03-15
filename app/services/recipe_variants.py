@@ -220,6 +220,13 @@ def _planner_conversion_bonus(selection_count: int, drafted_count: int, activate
     return selection_bonus + drafted_bonus + activated_bonus
 
 
+def _market_planner_conversion_bonus(selection_count: int, drafted_count: int, activated_count: int) -> int:
+    selection_bonus = min(selection_count, 6)
+    drafted_bonus = min(drafted_count, 6)
+    activated_bonus = min(activated_count, 6) * 2
+    return selection_bonus + drafted_bonus + activated_bonus
+
+
 def _production_bonus(score: int, run_count: int) -> int:
     if score <= 0 or run_count <= 0:
         return 0
@@ -584,6 +591,24 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
             .group_by(QueryRecipePlanVariantOutcome.variant_key)
         ).all()
     }
+    market_planner_conversion_counts: dict[str, tuple[int, int, int]] = {}
+    if prompt_market_country:
+        market_planner_conversion_counts = {
+            variant_key: (selected_count, drafted_count, activated_count)
+            for variant_key, selected_count, drafted_count, activated_count in session.execute(
+                select(
+                    QueryRecipePlanVariantOutcome.variant_key,
+                    func.count(case((QueryRecipePlanVariantOutcome.was_selected.is_(True), 1))).label("selected_count"),
+                    func.count(case((QueryRecipePlanVariantOutcome.was_drafted.is_(True), 1))).label("drafted_count"),
+                    func.count(case((QueryRecipePlanVariantOutcome.was_activated.is_(True), 1))).label("activated_count"),
+                )
+                .where(
+                    QueryRecipePlanVariantOutcome.variant_key.in_([proposal.variant_key for proposal in proposals]),
+                    QueryRecipePlanVariantOutcome.market_country_code == prompt_market_country,
+                )
+                .group_by(QueryRecipePlanVariantOutcome.variant_key)
+            ).all()
+        }
     template_keys = [proposal.template_key for proposal in proposals if proposal.template_key]
     cluster_strategy_pairs = {
         (proposal.cluster_slug, proposal.source_strategy.value)
@@ -677,10 +702,19 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
             proposal.variant_key,
             (0, 0, 0),
         )
+        market_planner_selection_count, market_planner_draft_count, market_planner_activation_count = market_planner_conversion_counts.get(
+            proposal.variant_key,
+            (0, 0, 0),
+        )
         planner_conversion_bonus = _planner_conversion_bonus(
             int(planner_selection_count or 0),
             int(planner_draft_count or 0),
             int(planner_activation_count or 0),
+        )
+        market_planner_conversion_bonus = _market_planner_conversion_bonus(
+            int(market_planner_selection_count or 0),
+            int(market_planner_draft_count or 0),
+            int(market_planner_activation_count or 0),
         )
         fit_reasons = list(proposal.fit_reasons)
         if total_runs:
@@ -711,6 +745,18 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
             fit_reasons.append(
                 f"Historically activated {planner_activation_count} time(s) across planner runs."
             )
+        if prompt_market_country and market_planner_selection_count:
+            fit_reasons.append(
+                f"Historically selected in {prompt_market_country} planner runs {market_planner_selection_count} time(s)."
+            )
+        if prompt_market_country and market_planner_draft_count:
+            fit_reasons.append(
+                f"Historically drafted in {prompt_market_country} planner runs {market_planner_draft_count} time(s)."
+            )
+        if prompt_market_country and market_planner_activation_count:
+            fit_reasons.append(
+                f"Historically activated in {prompt_market_country} planner runs {market_planner_activation_count} time(s)."
+            )
         if production_runs:
             fit_reasons.append(
                 f"Production yield score {production_score}/100 across {production_runs} completed production run(s)."
@@ -732,6 +778,9 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
                 planner_selection_count=int(planner_selection_count or 0),
                 planner_draft_count=int(planner_draft_count or 0),
                 planner_activation_count=int(planner_activation_count or 0),
+                market_planner_selection_count=int(market_planner_selection_count or 0),
+                market_planner_draft_count=int(market_planner_draft_count or 0),
+                market_planner_activation_count=int(market_planner_activation_count or 0),
                 prompt_selection_count=proposal.prompt_selection_count,
                 prompt_draft_count=proposal.prompt_draft_count,
                 prompt_activation_count=proposal.prompt_activation_count,
@@ -760,7 +809,7 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
                 market_production_run_count=market_runs,
                 strategy_production_score=strategy_score,
                 strategy_production_run_count=strategy_runs,
-                fit_score=proposal.template_score + proposal.prompt_match_score + validation_bonus + cluster_bonus + adoption_bonus + planner_conversion_bonus + production_bonus + market_bonus + strategy_bonus + recommendation.rank_bonus,
+                fit_score=proposal.template_score + proposal.prompt_match_score + validation_bonus + cluster_bonus + adoption_bonus + planner_conversion_bonus + market_planner_conversion_bonus + production_bonus + market_bonus + strategy_bonus + recommendation.rank_bonus,
                 fit_reasons=fit_reasons,
                 recommendation_state=recommendation.state,
                 recommendation_state_score=recommendation.score,
@@ -776,6 +825,8 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
             -item.fit_score,
             item.recommendation_state != "trusted",
             item.recommendation_state == "suppressed",
+            -item.market_planner_activation_count,
+            -item.market_planner_draft_count,
             -item.planner_activation_count,
             -item.planner_draft_count,
             -item.market_production_score,

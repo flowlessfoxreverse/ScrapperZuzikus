@@ -27,6 +27,7 @@ from app.services.recipe_drafts import (
     build_draft_variants_from_prompt,
 )
 from app.services.recipe_prompt_variants import apply_prompt_variant_history
+from app.services.recipe_prompt_normalization import resolve_prompt_country_code
 from app.services.recipe_variants import apply_variant_history, prompt_fingerprint
 
 
@@ -73,6 +74,9 @@ class PlannedVariant(BaseModel):
     planner_selection_count: int = 0
     planner_draft_count: int = 0
     planner_activation_count: int = 0
+    market_planner_selection_count: int = 0
+    market_planner_draft_count: int = 0
+    market_planner_activation_count: int = 0
     prompt_selection_count: int = 0
     prompt_draft_count: int = 0
     prompt_activation_count: int = 0
@@ -115,6 +119,7 @@ class RecipePromptPlanResult:
     used_fallback: bool
     fallback_reason: str | None
     plan_id: int | None
+    market_country_code: str | None
     cluster_choice: ClusterCandidate
     alternate_clusters: list[ClusterCandidate]
     draft_variants: list[DraftProposal]
@@ -258,6 +263,9 @@ def _model_to_variant(variant: PlannedVariant) -> DraftProposal:
         planner_selection_count=variant.planner_selection_count,
         planner_draft_count=variant.planner_draft_count,
         planner_activation_count=variant.planner_activation_count,
+        market_planner_selection_count=variant.market_planner_selection_count,
+        market_planner_draft_count=variant.market_planner_draft_count,
+        market_planner_activation_count=variant.market_planner_activation_count,
         prompt_selection_count=variant.prompt_selection_count,
         prompt_draft_count=variant.prompt_draft_count,
         prompt_activation_count=variant.prompt_activation_count,
@@ -445,6 +453,7 @@ def _persist_plan(
     payload: PlannedPromptPayload,
     actual_provider: str,
     model_name: str,
+    market_country_code: str | None,
     used_fallback: bool,
     fallback_reason: str | None,
     raw_response: str,
@@ -457,6 +466,7 @@ def _persist_plan(
         model_name=model_name,
         planner_version=PLANNER_VERSION,
         status="success",
+        market_country_code=market_country_code,
         cache_key=cache_key,
         raw_response=raw_response,
         parsed_output=payload.model_dump(mode="json"),
@@ -475,6 +485,7 @@ def _persist_plan_error(
     prompt: str,
     cache_key: str,
     requested_provider: str,
+    market_country_code: str | None,
     error_text: str,
 ) -> QueryRecipePlan:
     plan = QueryRecipePlan(
@@ -485,6 +496,7 @@ def _persist_plan_error(
         model_name=settings.recipe_planner_model,
         planner_version=PLANNER_VERSION,
         status="error",
+        market_country_code=market_country_code,
         cache_key=cache_key,
         raw_response=None,
         parsed_output={},
@@ -507,6 +519,7 @@ def plan_recipe_prompt(
     prompt_text = prompt.strip()
     if not prompt_text:
         raise ValueError("Prompt is required.")
+    prompt_market_country = resolve_prompt_country_code(session, prompt_text)
 
     requested_provider = _provider_name(requested_provider)
     requested_model = _provider_model(requested_provider, requested_model)
@@ -536,6 +549,7 @@ def plan_recipe_prompt(
                 payload=payload,
                 actual_provider=actual_provider,
                 model_name=model_name,
+                market_country_code=prompt_market_country,
                 used_fallback=used_fallback,
                 fallback_reason=fallback_reason,
                 raw_response=raw_response,
@@ -546,6 +560,7 @@ def plan_recipe_prompt(
                 prompt=prompt_text,
                 cache_key=cache_key,
                 requested_provider=requested_provider,
+                market_country_code=prompt_market_country,
                 error_text=str(exc),
             )
             raise
@@ -582,6 +597,7 @@ def plan_recipe_prompt(
         used_fallback=used_fallback,
         fallback_reason=fallback_reason,
         plan_id=plan_id,
+        market_country_code=prompt_market_country,
         cluster_choice=cluster_choice,
         alternate_clusters=alternate_clusters,
         draft_variants=draft_variants,
