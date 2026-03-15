@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote_plus
 from urllib.parse import urlparse
 import re
@@ -315,6 +315,9 @@ class RecommendationPolicyAuditRow:
     snapshot_json: dict[str, object]
     current_json: dict[str, object]
     delta_parts: list[str]
+    before_window_json: dict[str, object]
+    after_window_json: dict[str, object]
+    window_delta_parts: list[str]
 
 
 @dataclass
@@ -1037,6 +1040,54 @@ def recommendation_policy_performance_snapshot(
     }
 
 
+def recommendation_policy_window_snapshot(
+    db: Session,
+    policy: QueryRecipeRecommendationPolicy,
+    start_at: datetime,
+    end_at: datetime,
+) -> dict[str, object]:
+    row = db.execute(
+        select(
+            func.count(QueryRecipeVariantRunStat.id),
+            func.avg(QueryRecipeVariantRunStat.score),
+            func.sum(QueryRecipeVariantRunStat.discovered_count),
+            func.sum(QueryRecipeVariantRunStat.crawled_count),
+            func.sum(QueryRecipeVariantRunStat.contact_company_count),
+            func.sum(QueryRecipeVariantRunStat.email_company_count),
+            func.sum(QueryRecipeVariantRunStat.phone_company_count),
+        )
+        .select_from(QueryRecipeVariantRunStat)
+        .join(QueryRecipeVariant, QueryRecipeVariant.id == QueryRecipeVariantRunStat.variant_id)
+        .where(QueryRecipeVariantRunStat.created_at >= start_at)
+        .where(QueryRecipeVariantRunStat.created_at < end_at)
+        .where(
+            QueryRecipeVariant.source_strategy == policy.source_strategy
+            if policy.source_strategy is not None
+            else True
+        )
+    ).one()
+    run_count = int(row[0] or 0)
+    avg_score = round(row[1] or 0)
+    discovered_total = int(row[2] or 0)
+    crawled_total = int(row[3] or 0)
+    contact_total = int(row[4] or 0)
+    email_total = int(row[5] or 0)
+    phone_total = int(row[6] or 0)
+    crawl_rate = round((crawled_total / discovered_total) * 100) if discovered_total else 0
+    contact_rate = round((contact_total / discovered_total) * 100) if discovered_total else 0
+    email_rate = round((email_total / discovered_total) * 100) if discovered_total else 0
+    phone_rate = round((phone_total / discovered_total) * 100) if discovered_total else 0
+    return {
+        "run_count": run_count,
+        "avg_score": avg_score,
+        "discovered_total": discovered_total,
+        "crawl_rate": crawl_rate,
+        "contact_rate": contact_rate,
+        "email_rate": email_rate,
+        "phone_rate": phone_rate,
+    }
+
+
 def build_recommendation_policy_audit_rows(db: Session, limit: int = 20) -> list[RecommendationPolicyAuditRow]:
     policy_rows = recommendation_policy_map(db)
     audits = db.scalars(
@@ -1048,23 +1099,49 @@ def build_recommendation_policy_audit_rows(db: Session, limit: int = 20) -> list
         policy_key: recommendation_policy_performance_snapshot(db, policy)
         for policy_key, policy in policy_rows.items()
     }
-    return [
-        RecommendationPolicyAuditRow(
-            policy_key=audit.policy_key,
-            policy_label=audit.policy_label,
-            change_summary=audit.change_summary,
-            changed_at=audit.changed_at,
-            before_json=audit.before_json or {},
-            after_json=audit.after_json or {},
-            snapshot_json=audit.performance_snapshot_json or {},
-            current_json=current_snapshots.get(audit.policy_key, {}),
-            delta_parts=[
-                f"{key} {current_snapshots.get(audit.policy_key, {}).get(key, 0) - int((audit.performance_snapshot_json or {}).get(key, 0)):+d}"
-                for key in ("avg_validation_score", "avg_production_score", "avg_rank_score", "trusted_count", "recommended_count", "suppressed_count")
-            ],
+    rows: list[RecommendationPolicyAuditRow] = []
+    window_days = 7
+    now = datetime.now(timezone.utc)
+    for audit in audits:
+        policy = policy_rows.get(audit.policy_key)
+        if policy is None:
+            continue
+        before_window = recommendation_policy_window_snapshot(
+            db,
+            policy,
+            audit.changed_at - timedelta(days=window_days),
+            audit.changed_at,
         )
-        for audit in audits
-    ]
+        after_window = recommendation_policy_window_snapshot(
+            db,
+            policy,
+            audit.changed_at,
+            min(audit.changed_at + timedelta(days=window_days), now),
+        )
+        current_snapshot = current_snapshots.get(audit.policy_key, {})
+        rows.append(
+            RecommendationPolicyAuditRow(
+                policy_key=audit.policy_key,
+                policy_label=audit.policy_label,
+                change_summary=audit.change_summary,
+                changed_at=audit.changed_at,
+                before_json=audit.before_json or {},
+                after_json=audit.after_json or {},
+                snapshot_json=audit.performance_snapshot_json or {},
+                current_json=current_snapshot,
+                delta_parts=[
+                    f"{key} {current_snapshot.get(key, 0) - int((audit.performance_snapshot_json or {}).get(key, 0)):+d}"
+                    for key in ("avg_validation_score", "avg_production_score", "avg_rank_score", "trusted_count", "recommended_count", "suppressed_count")
+                ],
+                before_window_json=before_window,
+                after_window_json=after_window,
+                window_delta_parts=[
+                    f"{key} {int(after_window.get(key, 0)) - int(before_window.get(key, 0)):+d}"
+                    for key in ("run_count", "avg_score", "crawl_rate", "contact_rate", "email_rate", "phone_rate")
+                ],
+            )
+        )
+    return rows
 
 
 def build_category_rows(db: Session) -> list[CategoryRow]:

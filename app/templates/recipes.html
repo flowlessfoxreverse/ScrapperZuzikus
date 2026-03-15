@@ -207,6 +207,9 @@
               <th>Snapshot At Change</th>
               <th>Current</th>
               <th>Delta</th>
+              <th>7d Before</th>
+              <th>7d After</th>
+              <th>7d Delta</th>
             </tr>
           </thead>
           <tbody>
@@ -225,9 +228,12 @@
               <td><code>{{ row.snapshot_json }}</code></td>
               <td><code>{{ row.current_json }}</code></td>
               <td>{{ row.delta_parts|join(", ") }}</td>
+              <td><code>{{ row.before_window_json }}</code></td>
+              <td><code>{{ row.after_window_json }}</code></td>
+              <td>{{ row.window_delta_parts|join(", ") }}</td>
             </tr>
             {% else %}
-            <tr><td colspan="7">No policy changes recorded yet.</td></tr>
+            <tr><td colspan="10">No policy changes recorded yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>
