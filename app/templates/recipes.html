@@ -75,7 +75,9 @@
               <th>Variant</th>
               <th>Vertical</th>
               <th>Cluster</th>
-              <th>Fit Score</th>
+              <th>Template Score</th>
+              <th>Prompt Match</th>
+              <th>Rank Score</th>
               <th>Signals</th>
               <th>Action</th>
             </tr>
@@ -89,6 +91,8 @@
               </td>
               <td>{{ variant.vertical }}</td>
               <td>{{ variant.cluster_slug or "-" }}</td>
+              <td>{{ variant.template_score }}</td>
+              <td>{{ variant.prompt_match_score }}</td>
               <td>{{ variant.fit_score }}</td>
               <td>{{ variant.fit_reasons|join(" ") }}</td>
               <td>
@@ -131,17 +135,25 @@
             <strong>{{ draft_proposal.adapter.value }}</strong>
           </div>
           <div class="stat-card">
-            <span class="subtle">Fit Score</span>
+            <span class="subtle">Template Score</span>
+            <strong>{{ draft_proposal.template_score }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Prompt Match</span>
+            <strong>{{ draft_proposal.prompt_match_score }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Rank Score</span>
             <strong>{{ draft_proposal.fit_score }}</strong>
           </div>
         </div>
         <ul>
           {% for reason in draft_proposal.rationale %}
           <li>{{ reason }}</li>
-          {% endfor %}
+        {% endfor %}
         </ul>
         {% if draft_proposal.fit_reasons %}
-        <p class="subtle">Fit reasons: {{ draft_proposal.fit_reasons|join(" ") }}</p>
+        <p class="subtle">Prompt-match reasons: {{ draft_proposal.fit_reasons|join(" ") }}</p>
         {% endif %}
         {% if draft_lint %}
         <div class="country-summary">

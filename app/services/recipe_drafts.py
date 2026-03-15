@@ -22,6 +22,8 @@ class DraftProposal:
     language_hints: list[str]
     rationale: list[str]
     variant_key: str
+    template_score: int
+    prompt_match_score: int
     fit_score: int
     fit_reasons: list[str]
 
@@ -149,18 +151,20 @@ def _match_cluster(normalized: str) -> tuple[str, str, list[str]]:
     ]
 
 
-def _variant_score(template: VariantTemplate, normalized: str, location_hint: str | None) -> tuple[int, list[str]]:
+def _variant_score(template: VariantTemplate, normalized: str, location_hint: str | None) -> tuple[int, int, int, list[str]]:
     reasons: list[str] = []
     alias_hits = [alias for alias in template.aliases if alias in normalized]
-    score = template.priority + (10 * len(alias_hits))
+    template_score = template.priority
+    prompt_match_score = 10 * len(alias_hits)
     if alias_hits:
         reasons.append(f"Matches intent terms: {', '.join(alias_hits[:3])}.")
     else:
         reasons.append("Added as a closely related variant within the selected cluster.")
     if location_hint:
-        score += 5
+        prompt_match_score += 5
         reasons.append(f"Localized search terms for {location_hint}.")
-    return score, reasons
+    fit_score = template_score + prompt_match_score
+    return template_score, prompt_match_score, fit_score, reasons
 
 
 def _proposal_from_template(prompt: str, normalized: str, template: VariantTemplate, location_hint: str | None, cluster_rationale: list[str]) -> DraftProposal:
@@ -169,7 +173,7 @@ def _proposal_from_template(prompt: str, normalized: str, template: VariantTempl
         search_terms = [f"{term} {location_hint}" for term in template.search_terms[:3]] + search_terms
     search_terms = list(dict.fromkeys(search_terms))[:8]
     website_keywords = list(dict.fromkeys(list(template.website_keywords) + search_terms))[:10]
-    fit_score, fit_reasons = _variant_score(template, normalized, location_hint)
+    template_score, prompt_match_score, fit_score, fit_reasons = _variant_score(template, normalized, location_hint)
     slug_source = f"{template.key} {location_hint or ''}".strip()
     return DraftProposal(
         prompt=prompt.strip(),
@@ -189,6 +193,8 @@ def _proposal_from_template(prompt: str, normalized: str, template: VariantTempl
             "Use multiple high-scoring variants when the niche spans several sub-services.",
         ],
         variant_key=template.key,
+        template_score=template_score,
+        prompt_match_score=prompt_match_score,
         fit_score=fit_score,
         fit_reasons=fit_reasons,
     )
@@ -217,6 +223,8 @@ def build_draft_variants_from_prompt(prompt: str) -> list[DraftProposal]:
                 language_hints=_language_hints_for_prompt(normalized),
                 rationale=cluster_rationale,
                 variant_key=_slugify(normalized),
+                template_score=50,
+                prompt_match_score=0,
                 fit_score=50,
                 fit_reasons=["Fallback draft generated because no curated variants exist for this cluster yet."],
             )
