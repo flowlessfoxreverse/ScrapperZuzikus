@@ -318,6 +318,33 @@ class QueryPromptClusterDecision(Base):
     cluster_ref: Mapped["NicheCluster | None"] = relationship(foreign_keys=[cluster_slug])
 
 
+class QueryPromptVariantDecision(Base):
+    __tablename__ = "query_prompt_variant_decisions"
+    __table_args__ = (
+        UniqueConstraint("prompt_fingerprint", "variant_key", name="uq_prompt_variant_decision"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    prompt_text: Mapped[str] = mapped_column(Text)
+    prompt_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    vertical: Mapped[str] = mapped_column(String(64), ForeignKey("taxonomy_verticals.slug"), index=True)
+    cluster_slug: Mapped[str | None] = mapped_column(String(64), ForeignKey("niche_clusters.slug"), nullable=True, index=True)
+    variant_key: Mapped[str] = mapped_column(String(96), index=True)
+    source_variant_id: Mapped[int | None] = mapped_column(ForeignKey("query_recipe_variants.id"), nullable=True, index=True)
+    selected_count: Mapped[int] = mapped_column(Integer, default=0)
+    draft_created_count: Mapped[int] = mapped_column(Integer, default=0)
+    activated_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_selected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_drafted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    vertical_ref: Mapped["TaxonomyVertical | None"] = relationship(foreign_keys=[vertical])
+    cluster_ref: Mapped["NicheCluster | None"] = relationship(foreign_keys=[cluster_slug])
+    source_variant: Mapped["QueryRecipeVariant | None"] = relationship(foreign_keys=[source_variant_id])
+
+
 class Company(Base):
     __tablename__ = "companies"
     __table_args__ = (

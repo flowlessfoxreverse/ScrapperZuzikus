@@ -23,6 +23,7 @@ from app.services.proxy_pool import active_proxy_count, effective_proxy_capacity
 from app.services.recipe_clusters import apply_cluster_decision_history, record_cluster_decision
 from app.services.recipe_drafts import ClusterCandidate, DraftProposal, analyze_prompt_clusters, build_draft_variants_from_prompt, select_draft_variant
 from app.services.recipe_lint import RecipeLintResult, lint_recipe_content, parse_tag_block
+from app.services.recipe_prompt_variants import apply_prompt_variant_history, record_prompt_variant_activation, record_prompt_variant_decisions
 from app.services.taxonomy import list_active_clusters, list_active_verticals
 from app.services.recipe_validation import get_validation_quota_snapshot, validate_recipe_version
 from app.services.recipe_variants import apply_variant_history, prompt_variant_recipe_map, upsert_prompt_variants
@@ -1037,6 +1038,7 @@ def recipe_editor(
             cluster_choice, alternate_clusters = apply_cluster_decision_history(db, draft_prompt, cluster_choice, alternate_clusters)
             draft_variants, draft_proposal = select_draft_variant(draft_prompt, draft_variant_slug)
             draft_variants = apply_variant_history(db, draft_variants)
+            draft_variants = apply_prompt_variant_history(db, draft_prompt, draft_variants)
             draft_proposal = next(
                 (proposal for proposal in draft_variants if proposal.variant_key == draft_proposal.variant_key),
                 draft_variants[0],
@@ -1208,6 +1210,7 @@ def create_recipe_variants_html(
 ) -> RedirectResponse:
     try:
         proposals = apply_variant_history(db, build_draft_variants_from_prompt(prompt))
+        proposals = apply_prompt_variant_history(db, prompt, proposals)
     except ValueError as exc:
         return RedirectResponse(url=f"/recipes?error={quote_plus(str(exc)[:200])}", status_code=303)
     saved_variants = upsert_prompt_variants(db, prompt, proposals)
@@ -1223,6 +1226,7 @@ def create_recipe_variants_html(
 
     created = 0
     skipped: list[str] = []
+    drafted_variant_keys: list[str] = []
     for proposal in selected:
         existing = db.scalar(select(QueryRecipe).where(QueryRecipe.slug == proposal.slug))
         if existing is not None:
@@ -1255,6 +1259,15 @@ def create_recipe_variants_html(
             )
         )
         created += 1
+        drafted_variant_keys.append(proposal.variant_key)
+
+    record_prompt_variant_decisions(
+        db,
+        prompt,
+        saved_variants,
+        selected_variant_keys=[proposal.variant_key for proposal in selected],
+        drafted_variant_keys=drafted_variant_keys,
+    )
 
     db.commit()
 
@@ -1287,12 +1300,20 @@ def generate_recipe_draft_html(
         cluster_choice, alternate_clusters = apply_cluster_decision_history(db, prompt, cluster_choice, alternate_clusters)
         draft_variants, draft_proposal = select_draft_variant(prompt, selected_variant_slug or None)
         draft_variants = apply_variant_history(db, draft_variants)
+        draft_variants = apply_prompt_variant_history(db, prompt, draft_variants)
         draft_proposal = next(
             (proposal for proposal in draft_variants if proposal.variant_key == draft_proposal.variant_key),
             draft_variants[0],
         )
-        upsert_prompt_variants(db, prompt, draft_variants)
+        saved_variants = upsert_prompt_variants(db, prompt, draft_variants)
         record_cluster_decision(db, prompt, cluster_choice, alternate_clusters)
+        if selected_variant_slug:
+            record_prompt_variant_decisions(
+                db,
+                prompt,
+                saved_variants,
+                selected_variant_keys=[draft_proposal.variant_key],
+            )
         db.commit()
         draft_lint = lint_recipe_content(
             osm_tags=draft_proposal.osm_tags,
@@ -1391,6 +1412,7 @@ def promote_recipe_html(
                 url="/recipes?error=Recipe%20must%20be%20validated%20before%20activation.",
                 status_code=303,
             )
+        record_prompt_variant_activation(db, recipe)
         sync_recipe_to_category(db, recipe, version)
 
     recipe.status = target_status

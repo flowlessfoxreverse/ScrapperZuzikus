@@ -32,6 +32,9 @@ class DraftProposal:
     cluster_validation_count: int = 0
     variant_adoption_count: int = 0
     cluster_adoption_count: int = 0
+    prompt_selection_count: int = 0
+    prompt_draft_count: int = 0
+    prompt_activation_count: int = 0
 
 
 @dataclass(frozen=True)

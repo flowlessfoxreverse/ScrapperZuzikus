@@ -160,6 +160,8 @@
               <th>Observed Validation</th>
               <th>Validation Runs</th>
               <th>Cluster Baseline</th>
+              <th>Prompt Selection</th>
+              <th>Prompt Activation</th>
               <th>Variant Adoption</th>
               <th>Cluster Adoption</th>
               <th>Rank Score</th>
@@ -187,6 +189,8 @@
                 -
                 {% endif %}
               </td>
+              <td>{{ variant.prompt_selection_count or "-" }}</td>
+              <td>{{ variant.prompt_activation_count or "-" }}</td>
               <td>{{ variant.variant_adoption_count or "-" }}</td>
               <td>{{ variant.cluster_adoption_count or "-" }}</td>
               <td>{{ variant.fit_score }}</td>
@@ -281,6 +285,14 @@
               -
               {% endif %}
             </strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Prompt Selection</span>
+            <strong>{{ draft_proposal.prompt_selection_count or "-" }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Prompt Activation</span>
+            <strong>{{ draft_proposal.prompt_activation_count or "-" }}</strong>
           </div>
           <div class="stat-card">
             <span class="subtle">Variant Adoption</span>
