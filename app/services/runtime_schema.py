@@ -927,7 +927,9 @@ def ensure_recipe_schema(engine: Engine) -> None:
         )
     else:
         cluster_columns = columns_by_table.get("query_prompt_cluster_decisions", set())
+        cluster_needs_market_index_upgrade = False
         if "market_country_code" not in cluster_columns:
+            cluster_needs_market_index_upgrade = True
             if dialect == "postgresql":
                 statements.append(
                     "ALTER TABLE query_prompt_cluster_decisions ADD COLUMN IF NOT EXISTS market_country_code VARCHAR(2) NULL"
@@ -936,7 +938,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
                 statements.append(
                     "ALTER TABLE query_prompt_cluster_decisions ADD COLUMN market_country_code VARCHAR(2) NULL"
                 )
-        if dialect == "postgresql":
+        if dialect == "postgresql" and cluster_needs_market_index_upgrade:
             statements.append("DROP INDEX IF EXISTS uq_prompt_cluster_decision")
             statements.append(
                 "CREATE UNIQUE INDEX IF NOT EXISTS uq_prompt_cluster_decision "
@@ -1008,6 +1010,7 @@ def ensure_recipe_schema(engine: Engine) -> None:
         )
     else:
         prompt_variant_columns = columns_by_table.get("query_prompt_variant_decisions", set())
+        prompt_variant_needs_market_index_upgrade = False
         prompt_variant_additions = {
             "market_country_code": "VARCHAR(2) NULL",
             "source_variant_id": "INTEGER NULL",
@@ -1021,13 +1024,15 @@ def ensure_recipe_schema(engine: Engine) -> None:
         }
         for column_name, column_def in prompt_variant_additions.items():
             if column_name not in prompt_variant_columns:
+                if column_name == "market_country_code":
+                    prompt_variant_needs_market_index_upgrade = True
                 if dialect == "postgresql":
                     statements.append(
                         f"ALTER TABLE query_prompt_variant_decisions ADD COLUMN IF NOT EXISTS {column_name} {column_def}"
                     )
                 else:
                     statements.append(f"ALTER TABLE query_prompt_variant_decisions ADD COLUMN {column_name} {column_def}")
-        if dialect == "postgresql":
+        if dialect == "postgresql" and prompt_variant_needs_market_index_upgrade:
             statements.append("DROP INDEX IF EXISTS uq_prompt_variant_decision")
             statements.append(
                 "CREATE UNIQUE INDEX IF NOT EXISTS uq_prompt_variant_decision "
@@ -1058,5 +1063,8 @@ def ensure_recipe_schema(engine: Engine) -> None:
         return
 
     with engine.begin() as connection:
+        if dialect == "postgresql":
+            # Serialize recipe-schema DDL across app and worker startups.
+            connection.execute(text("SELECT pg_advisory_xact_lock(2147483601)"))
         for statement in statements:
             connection.execute(text(statement))
