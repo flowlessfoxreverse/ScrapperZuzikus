@@ -200,9 +200,38 @@
         <table>
           <thead>
             <tr>
+              <th>Scope</th>
+              <th>Experiments</th>
+              <th>Improved</th>
+              <th>Neutral</th>
+              <th>Degraded</th>
+              <th>Insufficient Data</th>
+              <th>Avg Delta</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in recommendation_policy_scoreboard_rows %}
+            <tr>
+              <td>{{ row.scope_label }}</td>
+              <td>{{ row.experiment_count }}</td>
+              <td>{{ row.improved_count }}</td>
+              <td>{{ row.neutral_count }}</td>
+              <td>{{ row.degraded_count }}</td>
+              <td>{{ row.insufficient_data_count }}</td>
+              <td>{% if row.avg_delta is not none %}{{ "%+d"|format(row.avg_delta) }}{% else %}<span class="subtle">-</span>{% endif %}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7">No policy experiment history available yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <table>
+          <thead>
+            <tr>
               <th>Changed</th>
               <th>Policy</th>
               <th>Type</th>
+              <th>Outcome</th>
               <th>Summary</th>
               <th>Thresholds</th>
               <th>Snapshot At Change</th>
@@ -227,6 +256,13 @@
                 <br /><span class="subtle">{{ row.experiment_note }}</span>
                 {% endif %}
               </td>
+              <td>
+                <strong>{{ row.experiment_outcome }}</strong>
+                {% if row.outcome_score_delta is not none %}
+                <br /><span class="subtle">{{ "%+d"|format(row.outcome_score_delta) }}</span>
+                {% endif %}
+                <br /><span class="subtle">{{ row.outcome_summary }}</span>
+              </td>
               <td>{{ row.change_summary }}</td>
               <td>
                 <div class="subtle">Before: <code>{{ row.before_json }}</code></div>
@@ -240,7 +276,7 @@
               <td>{{ row.window_delta_parts|join(", ") }}</td>
             </tr>
             {% else %}
-            <tr><td colspan="11">No policy changes recorded yet.</td></tr>
+            <tr><td colspan="12">No policy changes recorded yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>

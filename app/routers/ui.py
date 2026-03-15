@@ -334,6 +334,20 @@ class RecommendationPolicyAuditRow:
     before_window_json: dict[str, object]
     after_window_json: dict[str, object]
     window_delta_parts: list[str]
+    experiment_outcome: str
+    outcome_score_delta: int | None
+    outcome_summary: str
+
+
+@dataclass
+class RecommendationPolicyExperimentScoreboardRow:
+    scope_label: str
+    experiment_count: int
+    improved_count: int
+    neutral_count: int
+    degraded_count: int
+    insufficient_data_count: int
+    avg_delta: int | None
 
 
 @dataclass
@@ -1291,6 +1305,64 @@ def recommendation_policy_window_snapshot(
     }
 
 
+def classify_recommendation_policy_outcome(
+    before_window: dict[str, object],
+    after_window: dict[str, object],
+) -> tuple[str, int | None, str]:
+    before_runs = int(before_window.get("run_count", 0) or 0)
+    after_runs = int(after_window.get("run_count", 0) or 0)
+    minimum_runs = 3
+    if before_runs < minimum_runs or after_runs < minimum_runs:
+        return (
+            "insufficient_data",
+            None,
+            f"Needs at least {minimum_runs} runs in both windows to judge impact.",
+        )
+
+    def weighted_score(window: dict[str, object]) -> float:
+        return (
+            float(window.get("avg_score", 0) or 0) * 0.4
+            + float(window.get("contact_rate", 0) or 0) * 0.2
+            + float(window.get("email_rate", 0) or 0) * 0.2
+            + float(window.get("phone_rate", 0) or 0) * 0.1
+            + float(window.get("crawl_rate", 0) or 0) * 0.1
+        )
+
+    delta = round(weighted_score(after_window) - weighted_score(before_window))
+    if delta >= 5:
+        return ("improved", delta, f"7-day weighted outcome improved by {delta} points.")
+    if delta <= -5:
+        return ("degraded", delta, f"7-day weighted outcome declined by {abs(delta)} points.")
+    return ("neutral", delta, f"7-day weighted outcome stayed within {abs(delta)} points.")
+
+
+def build_recommendation_policy_experiment_scoreboard(
+    audit_rows: list[RecommendationPolicyAuditRow],
+) -> list[RecommendationPolicyExperimentScoreboardRow]:
+    buckets: dict[str, list[RecommendationPolicyAuditRow]] = {"all": audit_rows}
+    for row in audit_rows:
+        buckets.setdefault(row.change_kind, []).append(row)
+
+    scoreboard_rows: list[RecommendationPolicyExperimentScoreboardRow] = []
+    labels = {"all": "All Policy Changes", "manual": "Manual Changes", "suggested_accept": "Accepted Suggestions"}
+    for key, rows in buckets.items():
+        if not rows:
+            continue
+        deltas = [row.outcome_score_delta for row in rows if row.outcome_score_delta is not None]
+        scoreboard_rows.append(
+            RecommendationPolicyExperimentScoreboardRow(
+                scope_label=labels.get(key, key.replace("_", " ").title()),
+                experiment_count=len(rows),
+                improved_count=sum(1 for row in rows if row.experiment_outcome == "improved"),
+                neutral_count=sum(1 for row in rows if row.experiment_outcome == "neutral"),
+                degraded_count=sum(1 for row in rows if row.experiment_outcome == "degraded"),
+                insufficient_data_count=sum(1 for row in rows if row.experiment_outcome == "insufficient_data"),
+                avg_delta=round(sum(deltas) / len(deltas)) if deltas else None,
+            )
+        )
+    return scoreboard_rows
+
+
 def build_recommendation_policy_audit_rows(db: Session, limit: int = 20) -> list[RecommendationPolicyAuditRow]:
     policy_rows = recommendation_policy_map(db)
     audits = db.scalars(
@@ -1321,6 +1393,10 @@ def build_recommendation_policy_audit_rows(db: Session, limit: int = 20) -> list
             audit.changed_at,
             min(audit.changed_at + timedelta(days=window_days), now),
         )
+        experiment_outcome, outcome_score_delta, outcome_summary = classify_recommendation_policy_outcome(
+            before_window,
+            after_window,
+        )
         current_snapshot = current_snapshots.get(audit.policy_key, {})
         rows.append(
             RecommendationPolicyAuditRow(
@@ -1344,6 +1420,9 @@ def build_recommendation_policy_audit_rows(db: Session, limit: int = 20) -> list
                     f"{key} {int(after_window.get(key, 0)) - int(before_window.get(key, 0)):+d}"
                     for key in ("run_count", "avg_score", "crawl_rate", "contact_rate", "email_rate", "phone_rate")
                 ],
+                experiment_outcome=experiment_outcome,
+                outcome_score_delta=outcome_score_delta,
+                outcome_summary=outcome_summary,
             )
         )
     return rows
@@ -2082,6 +2161,9 @@ def recipe_editor(
     recommendation_policy_rows = build_recommendation_policy_rows(db)
     recommendation_policy_simulation_rows = build_recommendation_policy_simulation_rows(db)
     recommendation_policy_audit_rows = build_recommendation_policy_audit_rows(db)
+    recommendation_policy_scoreboard_rows = build_recommendation_policy_experiment_scoreboard(
+        recommendation_policy_audit_rows
+    )
     if draft_prompt:
         try:
             plan = plan_recipe_prompt(
@@ -2172,6 +2254,7 @@ def recipe_editor(
             "recommendation_policy_rows": recommendation_policy_rows,
             "recommendation_policy_simulation_rows": recommendation_policy_simulation_rows,
             "recommendation_policy_audit_rows": recommendation_policy_audit_rows,
+            "recommendation_policy_scoreboard_rows": recommendation_policy_scoreboard_rows,
             "activation_thresholds": {
                 "validation_score": settings.recipe_activation_min_validation_score,
                 "validation_runs": settings.recipe_activation_min_validation_runs,
@@ -2510,6 +2593,9 @@ def generate_recipe_draft_html(
     recommendation_policy_rows = build_recommendation_policy_rows(db)
     recommendation_policy_simulation_rows = build_recommendation_policy_simulation_rows(db)
     recommendation_policy_audit_rows = build_recommendation_policy_audit_rows(db)
+    recommendation_policy_scoreboard_rows = build_recommendation_policy_experiment_scoreboard(
+        recommendation_policy_audit_rows
+    )
     try:
         plan = plan_recipe_prompt(
             db,
@@ -2612,6 +2698,7 @@ def generate_recipe_draft_html(
             "recommendation_policy_rows": recommendation_policy_rows,
             "recommendation_policy_simulation_rows": recommendation_policy_simulation_rows,
             "recommendation_policy_audit_rows": recommendation_policy_audit_rows,
+            "recommendation_policy_scoreboard_rows": recommendation_policy_scoreboard_rows,
             "activation_thresholds": {
                 "validation_score": settings.recipe_activation_min_validation_score,
                 "validation_runs": settings.recipe_activation_min_validation_runs,
