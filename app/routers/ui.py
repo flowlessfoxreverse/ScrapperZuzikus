@@ -20,7 +20,7 @@ from app.services.category_recipes import latest_recipe_version, sync_recipe_to_
 from app.services.host_suppression import normalize_host_key
 from app.services.overpass import fetch_status
 from app.services.proxy_pool import active_proxy_count, effective_proxy_capacity, lease_counts, list_proxies, release_proxy, upsert_proxy
-from app.services.recipe_drafts import DraftProposal, select_draft_variant
+from app.services.recipe_drafts import DraftProposal, build_draft_variants_from_prompt, select_draft_variant
 from app.services.recipe_lint import RecipeLintResult, lint_recipe_content, parse_tag_block
 from app.services.taxonomy import list_active_clusters, list_active_verticals
 from app.services.recipe_validation import get_validation_quota_snapshot, validate_recipe_version
@@ -1178,6 +1178,70 @@ def create_recipe_html(
         )
         db.commit()
     return RedirectResponse(url="/recipes", status_code=303)
+
+
+@router.post("/recipes/bulk-from-prompt", response_class=HTMLResponse)
+def create_recipe_variants_html(
+    prompt: str = Form(...),
+    selected_variant_keys: list[str] = Form([]),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    try:
+        proposals = build_draft_variants_from_prompt(prompt)
+    except ValueError as exc:
+        return RedirectResponse(url=f"/recipes?error={quote_plus(str(exc)[:200])}", status_code=303)
+
+    if not selected_variant_keys:
+        return RedirectResponse(url="/recipes?error=Select%20at%20least%20one%20variant.", status_code=303)
+
+    selected = [proposal for proposal in proposals if proposal.variant_key in set(selected_variant_keys)]
+    if not selected:
+        return RedirectResponse(url="/recipes?error=Selected%20variants%20were%20not%20found.", status_code=303)
+
+    created = 0
+    skipped: list[str] = []
+    for proposal in selected:
+        existing = db.scalar(select(QueryRecipe).where(QueryRecipe.slug == proposal.slug))
+        if existing is not None:
+            skipped.append(proposal.slug)
+            continue
+        recipe = QueryRecipe(
+            slug=proposal.slug,
+            label=proposal.label,
+            description=proposal.description or None,
+            vertical=proposal.vertical,
+            cluster_slug=proposal.cluster_slug,
+            status=RecipeStatus.DRAFT,
+            is_platform_template=True,
+        )
+        db.add(recipe)
+        db.flush()
+        db.add(
+            QueryRecipeVersion(
+                recipe_id=recipe.id,
+                version_number=1,
+                status=RecipeStatus.DRAFT,
+                adapter=proposal.adapter,
+                osm_tags=proposal.osm_tags,
+                exclude_tags=proposal.exclude_tags,
+                search_terms=proposal.search_terms,
+                website_keywords=proposal.website_keywords,
+                language_hints=proposal.language_hints,
+                notes=f"Draft recipe created from prompt '{proposal.prompt}'.",
+            )
+        )
+        created += 1
+
+    db.commit()
+
+    if created and skipped:
+        message = f"Created {created} draft recipes. Skipped existing slugs: {', '.join(skipped[:5])}"
+        if len(skipped) > 5:
+            message += f" and {len(skipped) - 5} more."
+        return RedirectResponse(url=f"/recipes?message={quote_plus(message)}", status_code=303)
+    if created:
+        return RedirectResponse(url=f"/recipes?message={quote_plus(f'Created {created} draft recipes.')}", status_code=303)
+    return RedirectResponse(url=f"/recipes?error={quote_plus('All selected variants already exist.')}", status_code=303)
 
 
 @router.post("/recipes/draft", response_class=HTMLResponse)
