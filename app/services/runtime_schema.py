@@ -1047,7 +1047,12 @@ def ensure_recipe_schema(engine: Engine) -> None:
         }
         for column_name, column_def in prompt_variant_additions.items():
             if column_name not in prompt_variant_columns:
-                statements.append(f"ALTER TABLE query_prompt_variant_decisions ADD COLUMN {column_name} {column_def}")
+                if dialect == "postgresql":
+                    statements.append(
+                        f"ALTER TABLE query_prompt_variant_decisions ADD COLUMN IF NOT EXISTS {column_name} {column_def}"
+                    )
+                else:
+                    statements.append(f"ALTER TABLE query_prompt_variant_decisions ADD COLUMN {column_name} {column_def}")
         if dialect == "postgresql":
             statements.append("DROP INDEX IF EXISTS uq_prompt_variant_decision")
             statements.append(
