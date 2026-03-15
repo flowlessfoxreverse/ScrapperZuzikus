@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 import hashlib
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import QueryRecipe, QueryRecipeValidation, QueryRecipeVariant
@@ -67,6 +67,12 @@ def _validation_bonus(score: int, validation_count: int) -> int:
     return round(score * 0.4 * confidence_factor)
 
 
+def _adoption_bonus(adoption_count: int, cluster_adoption_count: int) -> int:
+    variant_bonus = min(adoption_count, 6) * 2
+    cluster_bonus = min(cluster_adoption_count, 12)
+    return variant_bonus + cluster_bonus
+
+
 def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> list[DraftProposal]:
     if not proposals:
         return proposals
@@ -89,6 +95,34 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
         if variant.cluster_slug:
             by_cluster.setdefault(variant.cluster_slug, []).append(variant)
 
+    adoption_by_variant = {
+        variant_id: recipe_count
+        for variant_id, recipe_count in session.execute(
+            select(QueryRecipe.source_variant_id, func.count(QueryRecipe.id))
+            .where(
+                QueryRecipe.source_variant_id.is_not(None),
+                QueryRecipe.source_variant_id.in_([row.id for rows in by_key.values() for row in rows]),
+            )
+            .group_by(QueryRecipe.source_variant_id)
+        ).all()
+        if variant_id is not None
+    }
+    cluster_adoption_counts = {
+        cluster_slug: recipe_count
+        for cluster_slug, recipe_count in session.execute(
+            select(QueryRecipeVariant.cluster_slug, func.count(QueryRecipe.id))
+            .select_from(QueryRecipe)
+            .join(QueryRecipeVariant, QueryRecipe.source_variant_id == QueryRecipeVariant.id)
+            .where(
+                QueryRecipeVariant.cluster_slug.in_(
+                    [proposal.cluster_slug for proposal in proposals if proposal.cluster_slug]
+                )
+            )
+            .group_by(QueryRecipeVariant.cluster_slug)
+        ).all()
+        if cluster_slug
+    }
+
     adjusted: list[DraftProposal] = []
     for proposal in proposals:
         history_rows = by_key.get(proposal.variant_key, [])
@@ -103,6 +137,9 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
         )
         cluster_score = round(cluster_weighted_sum / cluster_runs) if cluster_runs else 0
         cluster_bonus = round(cluster_score * 0.15 * (min(cluster_runs, 8) / 8)) if cluster_runs else 0
+        adoption_count = sum(adoption_by_variant.get(row.id, 0) for row in history_rows)
+        cluster_adoption_count = cluster_adoption_counts.get(proposal.cluster_slug or "", 0)
+        adoption_bonus = _adoption_bonus(adoption_count, cluster_adoption_count)
         fit_reasons = list(proposal.fit_reasons)
         if total_runs:
             fit_reasons.append(
@@ -112,6 +149,14 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
             fit_reasons.append(
                 f"Cluster baseline {cluster_score}/100 across {cluster_runs} validation run(s)."
             )
+        if adoption_count:
+            fit_reasons.append(
+                f"Variant already reused in {adoption_count} recipe draft(s)."
+            )
+        if cluster_adoption_count:
+            fit_reasons.append(
+                f"Cluster already reused in {cluster_adoption_count} recipe draft(s)."
+            )
         adjusted.append(
             replace(
                 proposal,
@@ -119,7 +164,9 @@ def apply_variant_history(session: Session, proposals: list[DraftProposal]) -> l
                 historical_validation_count=total_runs,
                 cluster_validation_score=cluster_score,
                 cluster_validation_count=cluster_runs,
-                fit_score=proposal.template_score + proposal.prompt_match_score + validation_bonus + cluster_bonus,
+                variant_adoption_count=adoption_count,
+                cluster_adoption_count=cluster_adoption_count,
+                fit_score=proposal.template_score + proposal.prompt_match_score + validation_bonus + cluster_bonus + adoption_bonus,
                 fit_reasons=fit_reasons,
             )
         )

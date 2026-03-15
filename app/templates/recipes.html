@@ -136,6 +136,8 @@
               <th>Observed Validation</th>
               <th>Validation Runs</th>
               <th>Cluster Baseline</th>
+              <th>Variant Adoption</th>
+              <th>Cluster Adoption</th>
               <th>Rank Score</th>
               <th>Signals</th>
               <th>Action</th>
@@ -161,6 +163,8 @@
                 -
                 {% endif %}
               </td>
+              <td>{{ variant.variant_adoption_count or "-" }}</td>
+              <td>{{ variant.cluster_adoption_count or "-" }}</td>
               <td>{{ variant.fit_score }}</td>
               <td>{{ variant.fit_reasons|join(" ") }}</td>
               <td>
@@ -253,6 +257,14 @@
               -
               {% endif %}
             </strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Variant Adoption</span>
+            <strong>{{ draft_proposal.variant_adoption_count or "-" }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="subtle">Cluster Adoption</span>
+            <strong>{{ draft_proposal.cluster_adoption_count or "-" }}</strong>
           </div>
           <div class="stat-card">
             <span class="subtle">Rank Score</span>
